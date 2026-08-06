@@ -54,8 +54,27 @@ jobs:
         run: flutter test
 
       # Compiles the generated Kotlin against the hand-written plugin and the
-      # real SDK. This is the Android half of the contract check.
+      # real SDK. This is the Android half of the contract check, and the only
+      # step here that needs the SDK to exist as a resolvable artifact.
+      #
+      # Skipped rather than failed while com.pay-cross:paycross-android is
+      # unpublished: a red build that means "not released yet" trains people to
+      # ignore red builds. Delete this guard once the SDK is on Maven Central,
+      # which is already in the example's repository list.
+      - name: Is the SDK published?
+        id: sdk
+        run: |
+          set -uo pipefail
+          URL=https://repo1.maven.org/maven2/com/pay-cross/paycross-android/0.2.0/paycross-android-0.2.0.pom
+          if curl -sfI "$URL" >/dev/null; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::com.pay-cross:paycross-android:0.2.0 is not on Maven Central yet, so the example APK cannot be built here. Everything else in this job still gates."
+          fi
+
       - name: Build example APK
+        if: steps.sdk.outputs.available == 'true'
         run: flutter build apk --debug
         working-directory: example
 
