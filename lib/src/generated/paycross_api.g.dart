@@ -10,9 +10,9 @@ import 'package:flutter/services.dart';
 import 'package:meta/meta.dart' show immutable, protected, visibleForTesting;
 
 Object? _extractReplyValueOrThrow(
-  List<Object?>? replyList,
-  String channelName, {
-  required bool isNullValid,
+    List<Object?>? replyList,
+    String channelName, {
+    required bool isNullValid,
 }) {
   if (replyList == null) {
     throw PlatformException(
@@ -46,9 +46,8 @@ bool _deepEquals(Object? a, Object? b) {
   }
   if (a is List && b is List) {
     return a.length == b.length &&
-        a.indexed.every(
-          ((int, dynamic) item) => _deepEquals(item.$2, b[item.$1]),
-        );
+        a.indexed
+            .every(((int, dynamic) item) => _deepEquals(item.$2, b[item.$1]));
   }
   if (a is Map && b is Map) {
     if (a.length != b.length) {
@@ -97,13 +96,17 @@ int _deepHash(Object? value) {
   return value.hashCode;
 }
 
+
 /// The backend the native SDK talks to.
 ///
 /// Two cases only. iOS additionally has a `.custom(baseURL:)`; Android has no
 /// equivalent, and its Retrofit client derives the base URL from the enum. A
 /// `custom` case here would mean the same Dart call did different things on
 /// each platform.
-enum PcEnvironment { sandbox, production }
+enum PcEnvironment {
+  sandbox,
+  production,
+}
 
 /// Prefills the native card form for manual test runs.
 ///
@@ -151,8 +154,7 @@ class PcTestCardPrefill {
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PcTestCardPrefill decode(Object result) {
     result as List<Object?>;
@@ -175,12 +177,7 @@ class PcTestCardPrefill {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(cardholderName, other.cardholderName) &&
-        _deepEquals(pan, other.pan) &&
-        _deepEquals(expireMonth, other.expireMonth) &&
-        _deepEquals(expireYear, other.expireYear) &&
-        _deepEquals(cvv, other.cvv) &&
-        _deepEquals(saveCard, other.saveCard);
+    return _deepEquals(cardholderName, other.cardholderName) && _deepEquals(pan, other.pan) && _deepEquals(expireMonth, other.expireMonth) && _deepEquals(expireYear, other.expireYear) && _deepEquals(cvv, other.cvv) && _deepEquals(saveCard, other.saveCard);
   }
 
   @override
@@ -217,12 +214,15 @@ class PcConfiguration {
   PcTestCardPrefill? testCardPrefill;
 
   List<Object?> _toList() {
-    return <Object?>[environment, brandColorArgb, testCardPrefill];
+    return <Object?>[
+      environment,
+      brandColorArgb,
+      testCardPrefill,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PcConfiguration decode(Object result) {
     result as List<Object?>;
@@ -242,9 +242,7 @@ class PcConfiguration {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(environment, other.environment) &&
-        _deepEquals(brandColorArgb, other.brandColorArgb) &&
-        _deepEquals(testCardPrefill, other.testCardPrefill);
+    return _deepEquals(environment, other.environment) && _deepEquals(brandColorArgb, other.brandColorArgb) && _deepEquals(testCardPrefill, other.testCardPrefill);
   }
 
   @override
@@ -258,7 +256,10 @@ class PcConfiguration {
 }
 
 class PcVersionInfo {
-  PcVersionInfo({required this.pluginVersion, this.nativeSdkVersion});
+  PcVersionInfo({
+    required this.pluginVersion,
+    this.nativeSdkVersion,
+  });
 
   String pluginVersion;
 
@@ -267,12 +268,14 @@ class PcVersionInfo {
   String? nativeSdkVersion;
 
   List<Object?> _toList() {
-    return <Object?>[pluginVersion, nativeSdkVersion];
+    return <Object?>[
+      pluginVersion,
+      nativeSdkVersion,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PcVersionInfo decode(Object result) {
     result as List<Object?>;
@@ -291,8 +294,7 @@ class PcVersionInfo {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(pluginVersion, other.pluginVersion) &&
-        _deepEquals(nativeSdkVersion, other.nativeSdkVersion);
+    return _deepEquals(pluginVersion, other.pluginVersion) && _deepEquals(nativeSdkVersion, other.nativeSdkVersion);
   }
 
   @override
@@ -310,7 +312,10 @@ class PcVersionInfo {
 /// Pigeon `int` is Kotlin `Long` and Swift `Int64`. Never a double: a double
 /// amount is the most expensive bug class in payments.
 class PcAmount {
-  PcAmount({required this.minorUnits, required this.currencyCode});
+  PcAmount({
+    required this.minorUnits,
+    required this.currencyCode,
+  });
 
   int minorUnits;
 
@@ -319,12 +324,14 @@ class PcAmount {
   String currencyCode;
 
   List<Object?> _toList() {
-    return <Object?>[minorUnits, currencyCode];
+    return <Object?>[
+      minorUnits,
+      currencyCode,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PcAmount decode(Object result) {
     result as List<Object?>;
@@ -343,8 +350,7 @@ class PcAmount {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(minorUnits, other.minorUnits) &&
-        _deepEquals(currencyCode, other.currencyCode);
+    return _deepEquals(minorUnits, other.minorUnits) && _deepEquals(currencyCode, other.currencyCode);
   }
 
   @override
@@ -363,7 +369,8 @@ class PcAmount {
 /// Pigeon supports, and only in the Kotlin, Swift and Dart generators — which
 /// are exactly the three targets here. That is what lets the exhaustiveness the
 /// native SDKs were built around survive the crossing.
-sealed class PcPaymentResult {}
+sealed class PcPaymentResult {
+}
 
 class PcSuccess extends PcPaymentResult {
   PcSuccess({
@@ -383,12 +390,15 @@ class PcSuccess extends PcPaymentResult {
   PcAmount amount;
 
   List<Object?> _toList() {
-    return <Object?>[transactionId, status, amount];
+    return <Object?>[
+      transactionId,
+      status,
+      amount,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PcSuccess decode(Object result) {
     result as List<Object?>;
@@ -408,9 +418,7 @@ class PcSuccess extends PcPaymentResult {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(transactionId, other.transactionId) &&
-        _deepEquals(status, other.status) &&
-        _deepEquals(amount, other.amount);
+    return _deepEquals(transactionId, other.transactionId) && _deepEquals(status, other.status) && _deepEquals(amount, other.amount);
   }
 
   @override
@@ -424,7 +432,10 @@ class PcSuccess extends PcPaymentResult {
 }
 
 class PcFailure extends PcPaymentResult {
-  PcFailure({this.transactionId, required this.recovery});
+  PcFailure({
+    this.transactionId,
+    required this.recovery,
+  });
 
   /// Null for failures that happen before a transaction exists.
   String? transactionId;
@@ -441,12 +452,14 @@ class PcFailure extends PcPaymentResult {
   String recovery;
 
   List<Object?> _toList() {
-    return <Object?>[transactionId, recovery];
+    return <Object?>[
+      transactionId,
+      recovery,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PcFailure decode(Object result) {
     result as List<Object?>;
@@ -465,8 +478,7 @@ class PcFailure extends PcPaymentResult {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(transactionId, other.transactionId) &&
-        _deepEquals(recovery, other.recovery);
+    return _deepEquals(transactionId, other.transactionId) && _deepEquals(recovery, other.recovery);
   }
 
   @override
@@ -483,16 +495,17 @@ class PcCancelled extends PcPaymentResult {
   PcCancelled();
 
   List<Object?> _toList() {
-    return <Object?>[];
+    return <Object?>[
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PcCancelled decode(Object result) {
     result as List<Object?>;
-    return PcCancelled();
+    return PcCancelled(
+    );
   }
 
   @override
@@ -514,6 +527,7 @@ class PcCancelled extends PcPaymentResult {
   }
 }
 
+
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
   @override
@@ -521,28 +535,28 @@ class _PigeonCodec extends StandardMessageCodec {
     if (value is int) {
       buffer.putUint8(4);
       buffer.putInt64(value);
-    } else if (value is PcEnvironment) {
+    }    else if (value is PcEnvironment) {
       buffer.putUint8(129);
       writeValue(buffer, value.index);
-    } else if (value is PcTestCardPrefill) {
+    }    else if (value is PcTestCardPrefill) {
       buffer.putUint8(130);
       writeValue(buffer, value.encode());
-    } else if (value is PcConfiguration) {
+    }    else if (value is PcConfiguration) {
       buffer.putUint8(131);
       writeValue(buffer, value.encode());
-    } else if (value is PcVersionInfo) {
+    }    else if (value is PcVersionInfo) {
       buffer.putUint8(132);
       writeValue(buffer, value.encode());
-    } else if (value is PcAmount) {
+    }    else if (value is PcAmount) {
       buffer.putUint8(133);
       writeValue(buffer, value.encode());
-    } else if (value is PcSuccess) {
+    }    else if (value is PcSuccess) {
       buffer.putUint8(134);
       writeValue(buffer, value.encode());
-    } else if (value is PcFailure) {
+    }    else if (value is PcFailure) {
       buffer.putUint8(135);
       writeValue(buffer, value.encode());
-    } else if (value is PcCancelled) {
+    }    else if (value is PcCancelled) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
     } else {
@@ -580,13 +594,9 @@ class PayCrossHostApi {
   /// Constructor for [PayCrossHostApi]. The [binaryMessenger] named argument is
   /// available for dependency injection. If it is left null, the default
   /// BinaryMessenger will be used which routes to the host platform.
-  PayCrossHostApi({
-    BinaryMessenger? binaryMessenger,
-    String messageChannelSuffix = '',
-  }) : pigeonVar_binaryMessenger = binaryMessenger,
-       pigeonVar_messageChannelSuffix = messageChannelSuffix.isNotEmpty
-           ? '.$messageChannelSuffix'
-           : '';
+  PayCrossHostApi({BinaryMessenger? binaryMessenger, String messageChannelSuffix = ''})
+      : pigeonVar_binaryMessenger = binaryMessenger,
+        pigeonVar_messageChannelSuffix = messageChannelSuffix.isNotEmpty ? '.$messageChannelSuffix' : '';
   final BinaryMessenger? pigeonVar_binaryMessenger;
 
   static const MessageCodec<Object?> pigeonChannelCodec = _PigeonCodec();
@@ -600,28 +610,25 @@ class PayCrossHostApi {
   /// loses the Dart-side flag while the native process keeps running, and iOS
   /// hits assertionFailure — a hard trap in a debug build.
   Future<void> configure(PcConfiguration configuration) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.paycross_flutter.PayCrossHostApi.configure$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.paycross_flutter.PayCrossHostApi.configure$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[configuration],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[configuration]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<PcVersionInfo> versionInfo() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.paycross_flutter.PayCrossHostApi.versionInfo$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.paycross_flutter.PayCrossHostApi.versionInfo$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -631,10 +638,11 @@ class PayCrossHostApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as PcVersionInfo;
   }
 
@@ -649,23 +657,21 @@ class PayCrossHostApi {
   /// Declines are NOT errors; they arrive as PcFailure. An error from this
   /// method always means an integration mistake.
   Future<PcPaymentResult> presentPayment(String sessionToken) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.paycross_flutter.PayCrossHostApi.presentPayment$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.paycross_flutter.PayCrossHostApi.presentPayment$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionToken],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionToken]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as PcPaymentResult;
   }
 }

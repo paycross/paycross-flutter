@@ -32,8 +32,11 @@ jobs:
 
       - run: flutter pub get
 
+      # lib/src/generated is excluded on purpose: it is Pigeon's output and must
+      # stay byte-identical to what the generator emits, or the freshness check
+      # below diffs against our own reformatting.
       - name: Format
-        run: dart format --output=none --set-exit-if-changed lib test pigeons example/lib
+        run: dart format --output=none --set-exit-if-changed lib/*.dart lib/src/*.dart test pigeons example/lib
 
       - name: Analyze
         run: flutter analyze --fatal-infos
