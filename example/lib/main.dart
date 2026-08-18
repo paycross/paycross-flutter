@@ -109,7 +109,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ),
           if (_outcome != null) ...[
             const SizedBox(height: 24),
-            SelectableText(_outcome!, style: const TextStyle(height: 1.4)),
+            // Plain Text, and deliberately unwrapped. Verified against a
+            // live simulator: SelectableText produces no node in the iOS
+            // accessibility tree at all, and wrapping either widget in
+            // Semantics suppressed it too -- only a bare Text surfaced. The
+            // payment outcome is the one string here that must never be
+            // silent, so it trades selection for being readable at all.
+            Text(_outcome!, style: const TextStyle(height: 1.4)),
           ],
         ],
       ),
