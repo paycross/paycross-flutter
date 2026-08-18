@@ -1,4 +1,5 @@
 import Flutter
+import Foundation
 import PayCross
 import PayCrossCore
 import UIKit
@@ -21,14 +22,14 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
     // MARK: - PayCrossHostApi
 
     func configure(configuration: PcConfiguration) throws {
-        if Self.isPresenting {
+        if Self.state.isPresenting {
             throw PigeonError(
                 code: Self.errorBusy,
                 message: "Cannot reconfigure while a payment is in flight.",
                 details: nil
             )
         }
-        Self.cached = configuration
+        Self.state.cached = configuration
         Self.apply(configuration)
     }
 
@@ -47,7 +48,7 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
             return completion(.failure(Self.error(Self.errorInvalidToken, "The session token is empty.")))
         }
 
-        guard let configuration = Self.cached else {
+        guard let configuration = Self.state.cached else {
             return completion(.failure(
                 Self.error(Self.errorNotConfigured, "configure() must be called before presentPayment().")
             ))
@@ -56,25 +57,36 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
         // Process-wide, matching Android. Two engines in an add-to-app host get
         // two plugin instances but share one window, so an instance-scoped flag
         // would let the second stack a sheet on the first.
-        guard !Self.isPresenting else {
+        //
+        // Claimed atomically rather than checked-then-set: the check ran on the
+        // channel thread while the set ran on the main actor, so two calls in
+        // quick succession could both pass a plain guard and present twice.
+        guard Self.state.beginPresenting() else {
             return completion(.failure(Self.error(Self.errorBusy, "A payment is already in flight.")))
         }
 
+        // Pigeon generates this completion without @Sendable, so Swift 6 refuses
+        // to let it cross onto the main actor. It is safe in fact: the generated
+        // handler builds the closure per message and it is invoked exactly once,
+        // from this Task and nowhere else. The annotation states that assertion
+        // rather than hiding it behind a wrapper type.
+        nonisolated(unsafe) let completion = completion
+
         Task { @MainActor in
             guard let presenter = Self.topmostViewController() else {
+                Self.state.endPresenting()
                 return completion(.failure(
                     Self.error(Self.errorNoPresenter, "No view controller is available to present from.")
                 ))
             }
 
-            Self.isPresenting = true
             // Re-applied rather than assumed: a hot restart leaves the Dart side
             // believing it configured an SDK whose process state was reset, and
             // PaymentSheet.present traps on a missing configuration in debug.
             Self.apply(configuration)
 
             let result = await PaymentSheet(sessionToken: sessionToken).present(from: presenter)
-            Self.isPresenting = false
+            Self.state.endPresenting()
             completion(.success(result.toPigeon()))
         }
     }
@@ -108,9 +120,10 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
     // MARK: - State
 
     // Static, for the same reason Android's is: per-instance state is wrong when
-    // instances are per-engine and the window is not.
-    private static var cached: PcConfiguration?
-    private static var isPresenting = false
+    // instances are per-engine and the window is not. Behind a lock because the
+    // reads happen on the platform-channel thread and the writes on the main
+    // actor -- which is precisely what Swift 6 refuses to let us assume away.
+    private static let state = PluginState()
 
     private static let pluginVersion = "0.1.0"
 
@@ -196,5 +209,38 @@ private extension Recovery {
         case .doNotRetry: return "do_not_retry"
         case let .unrecognized(value): return value
         }
+    }
+}
+
+// MARK: - Shared state
+
+/// Process-wide plugin state, serialised by a lock.
+///
+/// `@unchecked Sendable` is the honest annotation here: safety comes from the
+/// lock, which the compiler cannot verify, rather than from the type system.
+private final class PluginState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedConfiguration: PcConfiguration?
+    private var presenting = false
+
+    var cached: PcConfiguration? {
+        get { lock.withLock { storedConfiguration } }
+        set { lock.withLock { storedConfiguration = newValue } }
+    }
+
+    var isPresenting: Bool { lock.withLock { presenting } }
+
+    /// Claims the presentation slot, returning false if it was already taken.
+    /// Test and set are one critical section so two callers cannot both win.
+    func beginPresenting() -> Bool {
+        lock.withLock {
+            if presenting { return false }
+            presenting = true
+            return true
+        }
+    }
+
+    func endPresenting() {
+        lock.withLock { presenting = false }
     }
 }
