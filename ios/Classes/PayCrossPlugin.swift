@@ -19,6 +19,18 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
         )
     }
 
+    public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+        PayCrossHostApiSetup.setUp(binaryMessenger: registrar.messenger(), api: nil)
+        // A payment sheet may still be on screen. Nothing can route its result
+        // anywhere now, so say so rather than leaving the caller waiting on a
+        // Future that can never complete. Mirrors Android's onDetachedFromEngine.
+        Self.finishPending(.failure(Self.error(
+            Self.errorResultUnknown,
+            "The Flutter engine detached while a payment was in flight. "
+                + "The payment may still have succeeded; reconcile server-side."
+        )))
+    }
+
     // MARK: - PayCrossHostApi
 
     func configure(configuration: PcConfiguration) throws {
@@ -61,21 +73,18 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
         // Claimed atomically rather than checked-then-set: the check ran on the
         // channel thread while the set ran on the main actor, so two calls in
         // quick succession could both pass a plain guard and present twice.
-        guard Self.state.beginPresenting() else {
+        //
+        // The completion is retained in the claim so detachFromEngine can still
+        // complete it. From here on the payment finishes only through
+        // finishPending, which is what makes exactly-once hold between the
+        // sheet's own result and an engine detach racing it.
+        guard Self.state.beginPresenting(completion) else {
             return completion(.failure(Self.error(Self.errorBusy, "A payment is already in flight.")))
         }
 
-        // Pigeon generates this completion without @Sendable, so Swift 6 refuses
-        // to let it cross onto the main actor. It is safe in fact: the generated
-        // handler builds the closure per message and it is invoked exactly once,
-        // from this Task and nowhere else. The annotation states that assertion
-        // rather than hiding it behind a wrapper type.
-        nonisolated(unsafe) let completion = completion
-
         Task { @MainActor in
             guard let presenter = Self.topmostViewController() else {
-                Self.state.endPresenting()
-                return completion(.failure(
+                return Self.finishPending(.failure(
                     Self.error(Self.errorNoPresenter, "No view controller is available to present from.")
                 ))
             }
@@ -86,9 +95,13 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
             Self.apply(configuration)
 
             let result = await PaymentSheet(sessionToken: sessionToken).present(from: presenter)
-            Self.state.endPresenting()
-            completion(.success(result.toPigeon()))
+            Self.finishPending(.success(result.toPigeon()))
         }
+    }
+
+    /// Completes the outstanding call exactly once, clearing the slot first.
+    private static func finishPending(_ result: Result<PcPaymentResult, Error>) {
+        state.takePending()?(result)
     }
 
     // MARK: - Presentation
@@ -131,6 +144,7 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
     private static let errorBusy = "paycross_busy"
     private static let errorNoPresenter = "paycross_no_presenter"
     private static let errorInvalidToken = "paycross_invalid_token"
+    private static let errorResultUnknown = "paycross_result_unknown"
 
     private static func error(_ code: String, _ message: String) -> PigeonError {
         PigeonError(code: code, message: message, details: nil)
@@ -221,26 +235,32 @@ private extension Recovery {
 private final class PluginState: @unchecked Sendable {
     private let lock = NSLock()
     private var storedConfiguration: PcConfiguration?
-    private var presenting = false
+    private var pending: ((Result<PcPaymentResult, Error>) -> Void)?
 
     var cached: PcConfiguration? {
         get { lock.withLock { storedConfiguration } }
         set { lock.withLock { storedConfiguration = newValue } }
     }
 
-    var isPresenting: Bool { lock.withLock { presenting } }
+    var isPresenting: Bool { lock.withLock { pending != nil } }
 
-    /// Claims the presentation slot, returning false if it was already taken.
-    /// Test and set are one critical section so two callers cannot both win.
-    func beginPresenting() -> Bool {
+    /// Claims the presentation slot and retains the caller's completion,
+    /// returning false if the slot was already taken. Test and set are one
+    /// critical section so two callers cannot both win.
+    func beginPresenting(_ completion: @escaping (Result<PcPaymentResult, Error>) -> Void) -> Bool {
         lock.withLock {
-            if presenting { return false }
-            presenting = true
+            if pending != nil { return false }
+            pending = completion
             return true
         }
     }
 
-    func endPresenting() {
-        lock.withLock { presenting = false }
+    /// Releases the slot and hands back the retained completion, or nil if
+    /// something else already finished this payment.
+    func takePending() -> ((Result<PcPaymentResult, Error>) -> Void)? {
+        lock.withLock {
+            defer { pending = nil }
+            return pending
+        }
     }
 }
