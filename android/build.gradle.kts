@@ -77,5 +77,4 @@ dependencies {
     api("com.pay-cross:paycross-android:0.2.0")
 
     testImplementation("org.jetbrains.kotlin:kotlin-test")
-    testImplementation("org.mockito:mockito-core:5.0.0")
 }

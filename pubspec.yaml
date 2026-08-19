@@ -2,6 +2,13 @@ name: paycross_flutter
 description: "PayCross payment SDK for Flutter: card payments, 3-D Secure v2 and saved cards, wrapping the native Android and iOS SDKs."
 version: 0.1.0
 homepage: https://github.com/paycross/paycross-flutter
+repository: https://github.com/paycross/paycross-flutter
+issue_tracker: https://github.com/paycross/paycross-flutter/issues
+# "3ds" is not a legal pub.dev topic (topics must start with a letter).
+topics:
+  - payments
+  - checkout
+  - three-ds
 
 environment:
   sdk: ^3.12.2
@@ -10,7 +17,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  plugin_platform_interface: ^2.0.2
+  # Imported by Pigeon's generated Dart, so a direct dependency by pub's rules.
+  meta: ^1.16.0
 
 dev_dependencies:
   flutter_test:

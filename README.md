@@ -1,15 +1,103 @@
 # paycross_flutter
 
-A new Flutter plugin project.
+PayCross checkout for Flutter. One call presents the native PayCross payment
+UI — card form, 3-D Secure v2 challenge, saved cards, status polling — and
+returns one result. No card data ever passes through Dart.
 
-## Getting Started
+Card payments only for now; Apple Pay and Google Pay are on the roadmap.
 
-This project is a starting point for a Flutter
-[plug-in package](https://flutter.dev/to/develop-plugins),
-a specialized package that includes platform-specific implementation code for
-Android and/or iOS.
+## Requirements
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+| Platform | Minimum |
+|----------|---------|
+| Android | minSdk 24 (Android 7.0) |
+| iOS | 16.0 |
 
+## Install
+
+```yaml
+dependencies:
+  paycross_flutter: ^0.1.0
+```
+
+## Quickstart
+
+Configure once, before taking a payment:
+
+```dart
+await PayCross.configure(environment: PayCrossEnvironment.sandbox);
+```
+
+Then present a payment with a session token and switch over the result:
+
+```dart
+final result = await PayCross.presentPayment(sessionToken);
+
+switch (result) {
+  case PayCrossSuccess(:final transactionId, :final amount):
+    // Paid. Fulfil the order; verify server-side against transactionId.
+  case PayCrossFailure(:final recovery) when recovery.isRetryable:
+    // Declined, but the shopper may try again in the same session.
+  case PayCrossFailure():
+    // Declined, terminal for this session.
+  case PayCrossCancelled():
+    // The shopper dismissed the sheet.
+}
+```
+
+The switch is exhaustive: `PayCrossResult` is sealed, so a result case added in
+a future version is a compile error rather than a silently unhandled outcome.
+
+The [example app](example/lib/main.dart) is this quickstart as a runnable
+screen, including the error handling below.
+
+### Session tokens
+
+`presentPayment` takes no amount, currency or customer. All of that is carried
+by the session token, which your **server** creates against the PayCross API
+and hands to the app. The client cannot alter what is charged; it can only
+present the session it was given.
+
+### The call can take minutes
+
+The SDK polls the server for up to eight minutes, and a 3-D Secure challenge
+waits on the shopper's bank. Do not wrap the returned Future in
+`Future.timeout`: abandoning the Future does not stop the native payment, and
+the card may still be charged.
+
+## Environments
+
+| Environment | Backend | Cards |
+|-------------|---------|-------|
+| `PayCrossEnvironment.sandbox` | Test | Test cards only |
+| `PayCrossEnvironment.production` | Live | Real money |
+
+In sandbox, `PayCrossTestCardPrefill` can pre-fill the card form; combining a
+prefill with production throws.
+
+## Errors
+
+A decline is **not** an error — it arrives as `PayCrossFailure` with a
+`PayCrossRecovery` hint. Thrown errors are always `PayCrossIntegrationError`,
+meaning the SDK was asked to do something it cannot:
+
+| Code | Meaning |
+|------|---------|
+| `notConfigured` | `PayCross.configure` was never called in this process. |
+| `busy` | A payment is already in flight. One at a time, per process. |
+| `noActivity` | Android: the plugin is not attached to an Activity, or the host Activity uses a launchMode that cannot receive results. |
+| `noPresenter` | iOS: no view controller to present from. |
+| `invalidToken` | The session token was empty. |
+| `resultUnknown` | The payment's outcome is genuinely unknown — the engine or Activity was destroyed mid-flight. It **may have succeeded**; reconcile server-side rather than re-charging. |
+| `unknown` | Anything the plugin did not recognise. |
+
+Every code except `resultUnknown` points at a fixable mistake in merchant code.
+
+## Branding
+
+`brandColorArgb` in `PayCross.configure` currently applies on **Android only**;
+the iOS SDK exposes no brand-colour hook, so it is ignored there.
+
+## License
+
+Proprietary. See [LICENSE](LICENSE).
