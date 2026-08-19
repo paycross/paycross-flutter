@@ -45,6 +45,9 @@ abstract final class PayCross {
 
   /// Points the SDK at an environment. Call once, before [presentPayment].
   ///
+  /// [brandColorArgb] currently applies on Android only; the iOS SDK exposes
+  /// no brand-colour hook, so it is ignored there.
+  ///
   /// Throws [PayCrossIntegrationError] if a payment is in flight, or if a test
   /// card prefill is supplied alongside [PayCrossEnvironment.production].
   static Future<void> configure({
