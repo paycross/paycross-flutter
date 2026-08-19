@@ -5,8 +5,10 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 ///
 /// Paste a session token your server minted and press Pay. That is the whole
 /// integration: the SDK owns the card form, 3-D Secure and the polling.
-void main() {
-  PayCross.configure(environment: PayCrossEnvironment.sandbox);
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Awaited so a fast first tap on Pay cannot race the configure call.
+  await PayCross.configure(environment: PayCrossEnvironment.sandbox);
   runApp(const ExampleApp());
 }
 
