@@ -116,6 +116,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The PayCross pods are not on CocoaPods trunk yet, so pod install can
+      # only resolve them from a sibling checkout of the SDK repo. The Podfile
+      # redirects only when PAYCROSS_IOS_SDK_PATH is set, and only this job
+      # sets it, so merchants keep the trunk dependency. Delete this step, the
+      # env var below, and the Podfile override once the pods are published.
+      - uses: actions/checkout@v4
+        with:
+          repository: paycross/payment-ios-sdk
+          ssh-key: ${{ secrets.PAYCROSS_IOS_SDK_DEPLOY_KEY }}
+          path: payment-ios-sdk
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -126,3 +137,5 @@ jobs:
       - name: Build example for simulator
         run: flutter build ios --simulator --no-codesign
         working-directory: example
+        env:
+          PAYCROSS_IOS_SDK_PATH: ${{ github.workspace }}/payment-ios-sdk
