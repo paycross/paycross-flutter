@@ -74,7 +74,7 @@ kotlin {
 dependencies {
     // api, not implementation: PayCrossResult and Recovery appear in this
     // plugin's own public Kotlin surface.
-    api("com.pay-cross:paycross-android:0.2.1")
+    api("com.pay-cross:paycross-android:0.3.0")
 
     testImplementation("org.jetbrains.kotlin:kotlin-test")
 }
