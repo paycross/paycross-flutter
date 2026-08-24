@@ -121,7 +121,7 @@ jobs:
       # redirects only when PAYCROSS_IOS_SDK_PATH is set, and only this job
       # sets it, so merchants keep the trunk dependency. Delete this step, the
       # env var below, and the Podfile override once the pods are published.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: paycross/payment-ios-sdk
           ssh-key: ${{ secrets.PAYCROSS_IOS_SDK_DEPLOY_KEY }}
