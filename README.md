@@ -21,6 +21,31 @@ dependencies:
   paycross_flutter: ^0.1.0
 ```
 
+Then raise both platform minimums to match the table above. Neither default is
+high enough, and both fail late — Android at the manifest merge, iOS during pod
+resolution — rather than at `pub get`.
+
+**Android** — in your app's `android/app/build.gradle.kts`:
+
+```kotlin
+android {
+    defaultConfig {
+        minSdk = 24
+    }
+}
+```
+
+(`android/app/build.gradle` if your project still uses the Groovy DSL.)
+
+**iOS** — the first line of your app's `ios/Podfile`:
+
+```ruby
+platform :ios, '16.0'
+```
+
+Bump the deployment target in Xcode to match (Runner target → General → Minimum
+Deployments), then `cd ios && pod install`.
+
 ## Quickstart
 
 Configure once, before taking a payment:
@@ -125,4 +150,4 @@ the iOS SDK exposes no brand-colour hook, so it is ignored there.
 
 ## License
 
-Proprietary. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
