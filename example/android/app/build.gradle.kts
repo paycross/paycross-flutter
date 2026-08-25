@@ -15,10 +15,10 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.paycross.paycross_flutter_example"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        // flutter.minSdkVersion is 24 on the Flutter versions this plugin
+        // supports, which is what the plugin itself requires. A merchant app
+        // pinned lower must raise minSdk to 24 explicitly.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -27,8 +27,9 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Debug keys are deliberate: this example is never distributed, and
+            // signing it with them keeps `flutter run --release` working with no
+            // keystore. A real app replaces this with its own signing config.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
