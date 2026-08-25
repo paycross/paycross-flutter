@@ -51,7 +51,8 @@ abstract final class PayCross {
   /// [googlePayMerchantId] is Android-only for now. It is the merchant id from
   /// the Google Business Console, and Google **requires** it for
   /// [PayCrossEnvironment.production] Google Pay requests; sandbox works
-  /// without one. iOS ignores it until Apple Pay and Google Pay land there.
+  /// without one. iOS ignores it: Google Pay's in-app API is Android and web
+  /// only, and Apple Pay is not wired through this plugin yet.
   ///
   /// Throws [PayCrossIntegrationError] if a payment is in flight, or if a test
   /// card prefill is supplied alongside [PayCrossEnvironment.production].

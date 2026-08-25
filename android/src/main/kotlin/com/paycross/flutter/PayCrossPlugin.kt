@@ -230,8 +230,8 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
             testCardPrefill = configuration.testCardPrefill?.toNative(),
             // The SDK renders the Google Pay button itself; this is the only
             // thing it cannot infer. Google rejects a production request whose
-            // merchantInfo lacks it, so passing null straight through is
-            // correct - the SDK then omits merchantInfo rather than sending "".
+            // merchantInfo lacks it, so it is passed straight through - null
+            // being "not configured", which the SDK adds only when non-blank.
             googlePayMerchantId = configuration.googlePayMerchantId
         )
     }

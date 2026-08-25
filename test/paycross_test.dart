@@ -247,8 +247,8 @@ void main() {
       expect(host.lastConfiguration?.googlePayMerchantId, 'BCR2DN4T2ABCDEFG');
     });
 
-    /// Null rather than an empty string: the native SDK omits `merchantInfo`
-    /// entirely when it is absent, and "" is not the same request.
+    /// Null is what "not configured" means: the native SDK adds `merchantId` to
+    /// `merchantInfo` only when a non-blank id is present.
     test('an absent Google Pay merchant id crosses as null', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);

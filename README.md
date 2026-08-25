@@ -97,9 +97,9 @@ Every code except `resultUnknown` points at a fixable mistake in merchant code.
 ## Google Pay
 
 On **Android**, the native SDK renders the Google Pay button itself, without
-any extra call: it appears when the payment session allows wallets and the
-device supports Google Pay, and is simply absent otherwise. There is no flag to
-turn it on.
+any extra call: it appears when the payment session allows wallets, the device
+supports Google Pay, and the session is not an account-funding one — and is
+simply absent otherwise. There is no flag to turn it on.
 
 Going live needs one thing from you — the merchant id from your
 [Google Business Console](https://pay.google.com/business/console), which Google

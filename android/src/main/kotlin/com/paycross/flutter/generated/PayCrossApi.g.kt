@@ -305,9 +305,9 @@ data class PcConfiguration (
    * SDK renders itself when the session allows wallets.
    *
    * Google requires it in `merchantInfo` for PRODUCTION requests; the TEST
-   * environment works without one. Null must stay a real null rather than "":
-   * the native SDK omits `merchantInfo` when it is absent, and an empty string
-   * is a different, rejected request.
+   * environment works without one. Null is what "not configured" means: the
+   * native SDK adds `merchantId` to `merchantInfo` only when a non-blank id is
+   * present.
    *
    * Android only. iOS is card-only — no Google Pay, and Apple Pay is not wired
    * through this plugin yet — so it accepts and ignores this.
