@@ -8,7 +8,7 @@ Pod::Spec.new do |s|
     reimplementing it, so no card data passes through Dart.
   DESC
   s.homepage         = 'https://github.com/paycross/paycross-flutter'
-  s.license          = { :file => '../LICENSE' }
+  s.license          = { :type => 'MIT', :file => '../LICENSE' }
   s.author           = 'PayCross'
   s.source           = { :path => '.' }
 
