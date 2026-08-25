@@ -32,11 +32,14 @@ jobs:
 
       - run: flutter pub get
 
-      # lib/src/generated is excluded on purpose: it is Pigeon's output and must
-      # stay byte-identical to what the generator emits, or the freshness check
-      # below diffs against our own reformatting.
+      # lib/src/generated is included. It used to be excluded so it could stay
+      # byte-identical to Pigeon's raw output, but Pigeon does not emit
+      # `dart format`-clean Dart and pana scores the whole package's
+      # formatting. The freshness check below closes the gap by formatting
+      # immediately after generating, so "generated" and "formatted" are one
+      # state rather than two competing ones.
       - name: Format
-        run: dart format --output=none --set-exit-if-changed lib/*.dart lib/src/*.dart test pigeons example/lib
+        run: dart format --output=none --set-exit-if-changed lib test pigeons example/lib
 
       - name: Analyze
         run: flutter analyze --fatal-infos
@@ -48,8 +51,14 @@ jobs:
         run: |
           set -euo pipefail
           dart run pigeon --input pigeons/paycross_api.dart
+          # Part of generating, not a separate tidy-up: the committed Dart is
+          # formatted, so the comparison has to be against formatted output or
+          # this step fails on every clean tree. Kotlin and Swift are left as
+          # Pigeon emits them — `dart format` cannot read them, and pana only
+          # scores Dart.
+          dart format lib/src/generated
           if ! git diff --exit-code -- lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/Classes/generated; then
-            echo "::error::Pigeon output is stale. Run: dart run pigeon --input pigeons/paycross_api.dart"
+            echo "::error::Pigeon output is stale. Run: dart run pigeon --input pigeons/paycross_api.dart && dart format lib/src/generated"
             exit 1
           fi
 
