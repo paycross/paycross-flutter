@@ -54,8 +54,10 @@ abstract final class PayCross {
   /// without one. iOS ignores it: Google Pay's in-app API is Android and web
   /// only, and Apple Pay is not wired through this plugin yet.
   ///
-  /// Throws [PayCrossIntegrationError] if a payment is in flight, or if a test
-  /// card prefill is supplied alongside [PayCrossEnvironment.production].
+  /// Throws [PayCrossIntegrationError] with
+  /// [PayCrossErrorCode.testPrefillInProduction] if [testCardPrefill] is
+  /// supplied alongside [PayCrossEnvironment.production], or with
+  /// [PayCrossErrorCode.busy] if a payment is in flight.
   static Future<void> configure({
     required PayCrossEnvironment environment,
     int? brandColorArgb,
@@ -65,7 +67,7 @@ abstract final class PayCross {
     if (testCardPrefill != null &&
         environment == PayCrossEnvironment.production) {
       throw const PayCrossIntegrationError(
-        PayCrossErrorCode.notConfigured,
+        PayCrossErrorCode.testPrefillInProduction,
         'A test card prefill cannot be used with the production environment.',
       );
     }

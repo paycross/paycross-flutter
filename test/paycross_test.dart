@@ -200,6 +200,9 @@ void main() {
   });
 
   group('configure', () {
+    /// Its own code, not `notConfigured`: configure *was* called here, and
+    /// reusing the "never called" code sent merchants looking for a missing
+    /// call that is right in front of them.
     test('a test card prefill is refused in production', () async {
       PayCross.debugHostApi = FakeHost();
 
@@ -210,7 +213,43 @@ void main() {
             pan: '4111111111111111',
           ),
         ),
-        throwsA(isA<PayCrossIntegrationError>()),
+        throwsA(
+          isA<PayCrossIntegrationError>().having(
+            (e) => e.code,
+            'code',
+            PayCrossErrorCode.testPrefillInProduction,
+          ),
+        ),
+      );
+    });
+
+    /// A PAN in a crash report is the failure mode this guard exists to
+    /// prevent, so the refusal it throws must not carry one either — not the
+    /// full number, not the last four, not the CVV. Both the raw message and
+    /// toString() are checked, since either can reach a log.
+    test('the production-prefill refusal leaks no card data', () async {
+      PayCross.debugHostApi = FakeHost();
+
+      const pan = '4111111111111111';
+      const cvv = '737';
+      final lastFour = pan.substring(pan.length - 4);
+
+      await expectLater(
+        PayCross.configure(
+          environment: PayCrossEnvironment.production,
+          testCardPrefill: const PayCrossTestCardPrefill(pan: pan, cvv: cvv),
+        ),
+        throwsA(
+          isA<PayCrossIntegrationError>().having(
+            (e) => '${e.message}|$e',
+            'message and toString',
+            allOf(
+              isNot(contains(pan)),
+              isNot(contains(lastFour)),
+              isNot(contains(cvv)),
+            ),
+          ),
+        ),
       );
     });
 

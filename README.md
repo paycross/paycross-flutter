@@ -21,6 +21,31 @@ dependencies:
   paycross_flutter: ^0.1.0
 ```
 
+Then raise both platform minimums to match the table above. Neither default is
+high enough, and both fail late — Android at the manifest merge, iOS during pod
+resolution — rather than at `pub get`.
+
+**Android** — in your app's `android/app/build.gradle.kts`:
+
+```kotlin
+android {
+    defaultConfig {
+        minSdk = 24
+    }
+}
+```
+
+(`android/app/build.gradle` if your project still uses the Groovy DSL.)
+
+**iOS** — the first line of your app's `ios/Podfile`:
+
+```ruby
+platform :ios, '16.0'
+```
+
+Bump the deployment target in Xcode to match (Runner target → General → Minimum
+Deployments), then `cd ios && pod install`.
+
 ## Quickstart
 
 Configure once, before taking a payment:
@@ -74,7 +99,7 @@ the card may still be charged.
 | `PayCrossEnvironment.production` | Live | Real money |
 
 In sandbox, `PayCrossTestCardPrefill` can pre-fill the card form; combining a
-prefill with production throws.
+prefill with production throws `testPrefillInProduction`.
 
 ## Errors
 
@@ -85,6 +110,7 @@ meaning the SDK was asked to do something it cannot:
 | Code | Meaning |
 |------|---------|
 | `notConfigured` | `PayCross.configure` was never called in this process. |
+| `testPrefillInProduction` | A `PayCrossTestCardPrefill` was passed to `PayCross.configure` together with `PayCrossEnvironment.production`. Prefills are sandbox-only. |
 | `busy` | A payment is already in flight. One at a time, per process. |
 | `noActivity` | Android: the plugin is not attached to an Activity, or the host Activity uses a launchMode that cannot receive results. |
 | `noPresenter` | iOS: no view controller to present from. |
@@ -125,4 +151,4 @@ the iOS SDK exposes no brand-colour hook, so it is ignored there.
 
 ## License
 
-Proprietary. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

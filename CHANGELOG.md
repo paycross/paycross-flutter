@@ -12,8 +12,10 @@ Initial release.
   `PayCross.configure` — Google requires it on production requests, though
   sandbox works without one.
 * Sealed `PayCrossResult` (success / failure / cancelled) with a
-  `PayCrossRecovery` hint on declines, and `PayCrossIntegrationError` with
-  stable `paycross_*` codes for integration mistakes.
+  `PayCrossRecovery` hint on declines, and `PayCrossIntegrationError` for
+  integration mistakes. Most of its codes map from stable `paycross_*` strings
+  raised by the native SDKs; `testPrefillInProduction` is Dart-side only, raised
+  before anything crosses the platform channel.
 * Sandbox and production environments; optional test-card prefill in sandbox.
 * Android minSdk 24, iOS 16.0.
 
