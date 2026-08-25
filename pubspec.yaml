@@ -12,7 +12,10 @@ topics:
 
 environment:
   sdk: ^3.12.2
-  flutter: '>=3.3.0'
+  # 3.44.2 is the first stable Flutter that ships Dart 3.12.2, so it is the
+  # oldest one the sdk constraint above can actually be satisfied on. The
+  # template's '>=3.3.0' claimed a Flutter that shipped Dart 2.18.
+  flutter: '>=3.44.2'
 
 dependencies:
   flutter:
