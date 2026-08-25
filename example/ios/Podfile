@@ -33,14 +33,6 @@ target 'Runner' do
   use_frameworks!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-
-  # Until the PayCross pods are published to CocoaPods trunk, CI resolves them
-  # from a sibling checkout of the SDK repo. Never set this variable outside
-  # CI: merchants must exercise the same trunk resolution their apps will use.
-  if (sdk_path = ENV['PAYCROSS_IOS_SDK_PATH'])
-    pod 'PayCross', :path => sdk_path
-    pod 'PayCrossCore', :path => sdk_path
-  end
   target 'RunnerTests' do
     inherit! :search_paths
   end
