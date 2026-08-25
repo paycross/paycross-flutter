@@ -299,7 +299,20 @@ data class PcConfiguration (
    * merchant's entire app. iOS accepts and ignores this.
    */
   val brandColorArgb: Long? = null,
-  val testCardPrefill: PcTestCardPrefill? = null
+  val testCardPrefill: PcTestCardPrefill? = null,
+  /**
+   * Google Business Console merchant id, for the Google Pay button the Android
+   * SDK renders itself when the session allows wallets.
+   *
+   * Google requires it in `merchantInfo` for PRODUCTION requests; the TEST
+   * environment works without one. Null must stay a real null rather than "":
+   * the native SDK omits `merchantInfo` when it is absent, and an empty string
+   * is a different, rejected request.
+   *
+   * Android only. iOS is card-only — no Google Pay, and Apple Pay is not wired
+   * through this plugin yet — so it accepts and ignores this.
+   */
+  val googlePayMerchantId: String? = null
 )
  {
   companion object {
@@ -307,7 +320,8 @@ data class PcConfiguration (
       val environment = pigeonVar_list[0] as PcEnvironment
       val brandColorArgb = pigeonVar_list[1] as Long?
       val testCardPrefill = pigeonVar_list[2] as PcTestCardPrefill?
-      return PcConfiguration(environment, brandColorArgb, testCardPrefill)
+      val googlePayMerchantId = pigeonVar_list[3] as String?
+      return PcConfiguration(environment, brandColorArgb, testCardPrefill, googlePayMerchantId)
     }
   }
   fun toList(): List<Any?> {
@@ -315,6 +329,7 @@ data class PcConfiguration (
       environment,
       brandColorArgb,
       testCardPrefill,
+      googlePayMerchantId,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -325,7 +340,7 @@ data class PcConfiguration (
       return true
     }
     val other = other as PcConfiguration
-    return PayCrossApiPigeonUtils.deepEquals(this.environment, other.environment) && PayCrossApiPigeonUtils.deepEquals(this.brandColorArgb, other.brandColorArgb) && PayCrossApiPigeonUtils.deepEquals(this.testCardPrefill, other.testCardPrefill)
+    return PayCrossApiPigeonUtils.deepEquals(this.environment, other.environment) && PayCrossApiPigeonUtils.deepEquals(this.brandColorArgb, other.brandColorArgb) && PayCrossApiPigeonUtils.deepEquals(this.testCardPrefill, other.testCardPrefill) && PayCrossApiPigeonUtils.deepEquals(this.googlePayMerchantId, other.googlePayMerchantId)
   }
 
   override fun hashCode(): Int {
@@ -333,10 +348,11 @@ data class PcConfiguration (
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.environment)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.brandColorArgb)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.testCardPrefill)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.googlePayMerchantId)
     return result
   }
   override fun toString(): String {
-    return "PcConfiguration(environment=$environment, brandColorArgb=$brandColorArgb, testCardPrefill=$testCardPrefill)"
+    return "PcConfiguration(environment=$environment, brandColorArgb=$brandColorArgb, testCardPrefill=$testCardPrefill, googlePayMerchantId=$googlePayMerchantId)"
   }
 }
 

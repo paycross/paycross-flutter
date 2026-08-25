@@ -195,6 +195,7 @@ class PcConfiguration {
     required this.environment,
     this.brandColorArgb,
     this.testCardPrefill,
+    this.googlePayMerchantId,
   });
 
   PcEnvironment environment;
@@ -213,11 +214,24 @@ class PcConfiguration {
 
   PcTestCardPrefill? testCardPrefill;
 
+  /// Google Business Console merchant id, for the Google Pay button the Android
+  /// SDK renders itself when the session allows wallets.
+  ///
+  /// Google requires it in `merchantInfo` for PRODUCTION requests; the TEST
+  /// environment works without one. Null must stay a real null rather than "":
+  /// the native SDK omits `merchantInfo` when it is absent, and an empty string
+  /// is a different, rejected request.
+  ///
+  /// Android only. iOS is card-only — no Google Pay, and Apple Pay is not wired
+  /// through this plugin yet — so it accepts and ignores this.
+  String? googlePayMerchantId;
+
   List<Object?> _toList() {
     return <Object?>[
       environment,
       brandColorArgb,
       testCardPrefill,
+      googlePayMerchantId,
     ];
   }
 
@@ -230,6 +244,7 @@ class PcConfiguration {
       environment: result[0]! as PcEnvironment,
       brandColorArgb: result[1] as int?,
       testCardPrefill: result[2] as PcTestCardPrefill?,
+      googlePayMerchantId: result[3] as String?,
     );
   }
 
@@ -242,7 +257,7 @@ class PcConfiguration {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(environment, other.environment) && _deepEquals(brandColorArgb, other.brandColorArgb) && _deepEquals(testCardPrefill, other.testCardPrefill);
+    return _deepEquals(environment, other.environment) && _deepEquals(brandColorArgb, other.brandColorArgb) && _deepEquals(testCardPrefill, other.testCardPrefill) && _deepEquals(googlePayMerchantId, other.googlePayMerchantId);
   }
 
   @override
@@ -251,7 +266,7 @@ class PcConfiguration {
 
   @override
   String toString() {
-    return 'PcConfiguration(environment: $environment, brandColorArgb: $brandColorArgb, testCardPrefill: $testCardPrefill)';
+    return 'PcConfiguration(environment: $environment, brandColorArgb: $brandColorArgb, testCardPrefill: $testCardPrefill, googlePayMerchantId: $googlePayMerchantId)';
   }
 }
 

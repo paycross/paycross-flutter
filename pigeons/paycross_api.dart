@@ -68,6 +68,7 @@ class PcConfiguration {
     required this.environment,
     this.brandColorArgb,
     this.testCardPrefill,
+    this.googlePayMerchantId,
   });
 
   PcEnvironment environment;
@@ -85,6 +86,18 @@ class PcConfiguration {
   int? brandColorArgb;
 
   PcTestCardPrefill? testCardPrefill;
+
+  /// Google Business Console merchant id, for the Google Pay button the Android
+  /// SDK renders itself when the session allows wallets.
+  ///
+  /// Google requires it in `merchantInfo` for PRODUCTION requests; the TEST
+  /// environment works without one. Null must stay a real null rather than "":
+  /// the native SDK omits `merchantInfo` when it is absent, and an empty string
+  /// is a different, rejected request.
+  ///
+  /// Android only. iOS is card-only — no Google Pay, and Apple Pay is not wired
+  /// through this plugin yet — so it accepts and ignores this.
+  String? googlePayMerchantId;
 }
 
 class PcVersionInfo {

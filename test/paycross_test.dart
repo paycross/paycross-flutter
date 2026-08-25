@@ -232,6 +232,32 @@ void main() {
       expect(host.lastConfiguration?.testCardPrefill?.pan, '4111111111111111');
     });
 
+    /// Google requires the merchant id in `merchantInfo` for production Google
+    /// Pay requests. Losing it between Dart and the native SDK is invisible in
+    /// sandbox and breaks the wallet only once the merchant goes live.
+    test('a Google Pay merchant id reaches the platform', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.production,
+        googlePayMerchantId: 'BCR2DN4T2ABCDEFG',
+      );
+
+      expect(host.lastConfiguration?.googlePayMerchantId, 'BCR2DN4T2ABCDEFG');
+    });
+
+    /// Null rather than an empty string: the native SDK omits `merchantInfo`
+    /// entirely when it is absent, and "" is not the same request.
+    test('an absent Google Pay merchant id crosses as null', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(environment: PayCrossEnvironment.sandbox);
+
+      expect(host.lastConfiguration?.googlePayMerchantId, isNull);
+    });
+
     /// A PAN must not be reachable through a log line or a crash report.
     test('the prefill redacts itself', () {
       const prefill = PayCrossTestCardPrefill(

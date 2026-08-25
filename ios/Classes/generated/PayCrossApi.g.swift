@@ -283,6 +283,17 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
   /// merchant's entire app. iOS accepts and ignores this.
   var brandColorArgb: Int64? = nil
   var testCardPrefill: PcTestCardPrefill? = nil
+  /// Google Business Console merchant id, for the Google Pay button the Android
+  /// SDK renders itself when the session allows wallets.
+  ///
+  /// Google requires it in `merchantInfo` for PRODUCTION requests; the TEST
+  /// environment works without one. Null must stay a real null rather than "":
+  /// the native SDK omits `merchantInfo` when it is absent, and an empty string
+  /// is a different, rejected request.
+  ///
+  /// Android only. iOS is card-only — no Google Pay, and Apple Pay is not wired
+  /// through this plugin yet — so it accepts and ignores this.
+  var googlePayMerchantId: String? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -290,11 +301,13 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
     let environment = pigeonVar_list[0] as! PcEnvironment
     let brandColorArgb: Int64? = nilOrValue(pigeonVar_list[1])
     let testCardPrefill: PcTestCardPrefill? = nilOrValue(pigeonVar_list[2])
+    let googlePayMerchantId: String? = nilOrValue(pigeonVar_list[3])
 
     return PcConfiguration(
       environment: environment,
       brandColorArgb: brandColorArgb,
-      testCardPrefill: testCardPrefill
+      testCardPrefill: testCardPrefill,
+      googlePayMerchantId: googlePayMerchantId
     )
   }
   func toList() -> [Any?] {
@@ -302,13 +315,14 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
       environment,
       brandColorArgb,
       testCardPrefill,
+      googlePayMerchantId,
     ]
   }
   static func == (lhs: PcConfiguration, rhs: PcConfiguration) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return PayCrossApiPigeonInternal.deepEquals(lhs.environment, rhs.environment) && PayCrossApiPigeonInternal.deepEquals(lhs.brandColorArgb, rhs.brandColorArgb) && PayCrossApiPigeonInternal.deepEquals(lhs.testCardPrefill, rhs.testCardPrefill)
+    return PayCrossApiPigeonInternal.deepEquals(lhs.environment, rhs.environment) && PayCrossApiPigeonInternal.deepEquals(lhs.brandColorArgb, rhs.brandColorArgb) && PayCrossApiPigeonInternal.deepEquals(lhs.testCardPrefill, rhs.testCardPrefill) && PayCrossApiPigeonInternal.deepEquals(lhs.googlePayMerchantId, rhs.googlePayMerchantId)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -316,10 +330,11 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
     PayCrossApiPigeonInternal.deepHash(value: environment, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: brandColorArgb, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: testCardPrefill, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: googlePayMerchantId, hasher: &hasher)
   }
 
   public var description: String {
-    return "PcConfiguration(environment: \(String(describing: environment)), brandColorArgb: \(String(describing: brandColorArgb)), testCardPrefill: \(String(describing: testCardPrefill)))"
+    return "PcConfiguration(environment: \(String(describing: environment)), brandColorArgb: \(String(describing: brandColorArgb)), testCardPrefill: \(String(describing: testCardPrefill)), googlePayMerchantId: \(String(describing: googlePayMerchantId)))"
   }
 }
 
