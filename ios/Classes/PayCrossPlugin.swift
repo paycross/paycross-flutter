@@ -158,6 +158,9 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
         // brandColorArgb is deliberately ignored. The iOS SDK has no brand-colour
         // hook; its only colour source is the window tint, and setting that here
         // would inherit down the hierarchy and repaint the merchant's whole app.
+        //
+        // googlePayMerchantId is deliberately ignored: the iOS SDK is card-only
+        // and offers no wallet, so the parameter is reserved until one lands.
     }
 }
 

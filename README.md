@@ -4,7 +4,8 @@ PayCross checkout for Flutter. One call presents the native PayCross payment
 UI — card form, 3-D Secure v2 challenge, saved cards, status polling — and
 returns one result. No card data ever passes through Dart.
 
-Card payments only for now; Apple Pay and Google Pay are on the roadmap.
+Cards on both platforms, plus Google Pay on Android. Apple Pay is on the
+roadmap.
 
 ## Requirements
 
@@ -92,6 +93,30 @@ meaning the SDK was asked to do something it cannot:
 | `unknown` | Anything the plugin did not recognise. |
 
 Every code except `resultUnknown` points at a fixable mistake in merchant code.
+
+## Google Pay
+
+On **Android**, the native SDK renders the Google Pay button itself, without
+any extra call: it appears when the payment session allows wallets, the device
+supports Google Pay, and the session is not an account-funding one — and is
+simply absent otherwise. There is no flag to turn it on.
+
+Going live needs one thing from you — the merchant id from your
+[Google Business Console](https://pay.google.com/business/console), which Google
+requires on **production** Google Pay requests:
+
+```dart
+await PayCross.configure(
+  environment: PayCrossEnvironment.production,
+  googlePayMerchantId: 'BCR2DN4T...',
+);
+```
+
+Sandbox works without one, so a missing merchant id is invisible in testing and
+only breaks the wallet in production. Configure it before you ship.
+
+**iOS is card-only.** It has no Google Pay, `googlePayMerchantId` is accepted
+and ignored there, and Apple Pay is on the roadmap.
 
 ## Branding
 

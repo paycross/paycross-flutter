@@ -48,12 +48,19 @@ abstract final class PayCross {
   /// [brandColorArgb] currently applies on Android only; the iOS SDK exposes
   /// no brand-colour hook, so it is ignored there.
   ///
+  /// [googlePayMerchantId] is Android-only for now. It is the merchant id from
+  /// the Google Business Console, and Google **requires** it for
+  /// [PayCrossEnvironment.production] Google Pay requests; sandbox works
+  /// without one. iOS ignores it: Google Pay's in-app API is Android and web
+  /// only, and Apple Pay is not wired through this plugin yet.
+  ///
   /// Throws [PayCrossIntegrationError] if a payment is in flight, or if a test
   /// card prefill is supplied alongside [PayCrossEnvironment.production].
   static Future<void> configure({
     required PayCrossEnvironment environment,
     int? brandColorArgb,
     PayCrossTestCardPrefill? testCardPrefill,
+    String? googlePayMerchantId,
   }) async {
     if (testCardPrefill != null &&
         environment == PayCrossEnvironment.production) {
@@ -80,6 +87,7 @@ abstract final class PayCross {
                   cvv: testCardPrefill.cvv,
                   saveCard: testCardPrefill.saveCard,
                 ),
+          googlePayMerchantId: googlePayMerchantId,
         ),
       ),
     );

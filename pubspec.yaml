@@ -1,5 +1,5 @@
 name: paycross_flutter
-description: "PayCross payment SDK for Flutter: card payments, 3-D Secure v2 and saved cards, wrapping the native Android and iOS SDKs."
+description: "PayCross payment SDK for Flutter: card payments, 3-D Secure v2, saved cards, and Google Pay on Android, wrapping the native Android and iOS SDKs."
 version: 0.1.0
 homepage: https://github.com/paycross/paycross-flutter
 repository: https://github.com/paycross/paycross-flutter
