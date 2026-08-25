@@ -200,6 +200,9 @@ void main() {
   });
 
   group('configure', () {
+    /// Its own code, not `notConfigured`: configure *was* called here, and
+    /// reusing the "never called" code sent merchants looking for a missing
+    /// call that is right in front of them.
     test('a test card prefill is refused in production', () async {
       PayCross.debugHostApi = FakeHost();
 
@@ -210,7 +213,36 @@ void main() {
             pan: '4111111111111111',
           ),
         ),
-        throwsA(isA<PayCrossIntegrationError>()),
+        throwsA(
+          isA<PayCrossIntegrationError>().having(
+            (e) => e.code,
+            'code',
+            PayCrossErrorCode.testPrefillInProduction,
+          ),
+        ),
+      );
+    });
+
+    /// A PAN in a crash report is the failure mode this guard exists to
+    /// prevent, so the message it throws must not carry one either.
+    test('the production-prefill refusal does not echo the card', () async {
+      PayCross.debugHostApi = FakeHost();
+
+      await expectLater(
+        PayCross.configure(
+          environment: PayCrossEnvironment.production,
+          testCardPrefill: const PayCrossTestCardPrefill(
+            pan: '4111111111111111',
+            cvv: '123',
+          ),
+        ),
+        throwsA(
+          isA<PayCrossIntegrationError>().having(
+            (e) => e.toString(),
+            'toString',
+            isNot(contains('4111')),
+          ),
+        ),
       );
     });
 

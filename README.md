@@ -99,7 +99,7 @@ the card may still be charged.
 | `PayCrossEnvironment.production` | Live | Real money |
 
 In sandbox, `PayCrossTestCardPrefill` can pre-fill the card form; combining a
-prefill with production throws.
+prefill with production throws `testPrefillInProduction`.
 
 ## Errors
 
@@ -110,6 +110,7 @@ meaning the SDK was asked to do something it cannot:
 | Code | Meaning |
 |------|---------|
 | `notConfigured` | `PayCross.configure` was never called in this process. |
+| `testPrefillInProduction` | A `PayCrossTestCardPrefill` was passed to `PayCross.configure` together with `PayCrossEnvironment.production`. Prefills are sandbox-only. |
 | `busy` | A payment is already in flight. One at a time, per process. |
 | `noActivity` | Android: the plugin is not attached to an Activity, or the host Activity uses a launchMode that cannot receive results. |
 | `noPresenter` | iOS: no view controller to present from. |

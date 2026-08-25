@@ -17,6 +17,14 @@ enum PayCrossErrorCode {
   /// `PayCross.configure` was never called in this process.
   notConfigured,
 
+  /// `PayCross.configure` was given a `testCardPrefill` alongside
+  /// `PayCrossEnvironment.production`.
+  ///
+  /// Raised in Dart, before anything crosses to the native side. A prefill is a
+  /// sandbox-only debugging aid; both native SDKs drop it outside sandbox
+  /// anyway, so accepting it here would silently do nothing.
+  testPrefillInProduction,
+
   /// A payment is already in flight. One at a time, per process.
   busy,
 
