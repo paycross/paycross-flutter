@@ -25,12 +25,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Pinned, not `channel: stable`: the freshness check below diffs
+      # `dart format` output, so a floating formatter would break a clean tree
+      # the day Dart changes its formatting. 3.44.2 is the pubspec floor.
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.44.2'
           cache: true
 
       - run: flutter pub get
+
+      # flutter pub get rewrites both analysis_options.yaml files, adding an
+      # analyzer.exclude block. They are committed in exactly that shape, so
+      # this stays silent — and shouts if anyone hand-edits them back.
+      - name: analysis_options survives pub get
+        run: git diff --exit-code -- analysis_options.yaml example/analysis_options.yaml
 
       # lib/src/generated is included. It used to be excluded so it could stay
       # byte-identical to Pigeon's raw output, but Pigeon does not emit
@@ -57,7 +66,12 @@ jobs:
           # Pigeon emits them — `dart format` cannot read them, and pana only
           # scores Dart.
           dart format lib/src/generated
-          if ! git diff --exit-code -- lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/Classes/generated; then
+          # Staged first, then compared --cached: a plain `git diff` only sees
+          # files git already tracks, so output landing in a NEW file — a
+          # renamed class, a generator that starts splitting its output — would
+          # sit there untracked and the check would pass.
+          git add -A lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/Classes/generated
+          if ! git diff --cached --exit-code -- lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/Classes/generated; then
             echo "::error::Pigeon output is stale. Run: dart run pigeon --input pigeons/paycross_api.dart && dart format lib/src/generated"
             exit 1
           fi
@@ -125,9 +139,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Pinned to the same floor as the Linux job, so both halves of the Pigeon
+      # contract are proven against the oldest Flutter the pubspec allows.
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.44.2'
           cache: true
 
       - run: flutter pub get
