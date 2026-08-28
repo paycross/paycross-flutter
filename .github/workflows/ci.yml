@@ -48,7 +48,7 @@ jobs:
       # immediately after generating, so "generated" and "formatted" are one
       # state rather than two competing ones.
       - name: Format
-        run: dart format --output=none --set-exit-if-changed lib test pigeons example/lib
+        run: dart format --output=none --set-exit-if-changed lib test pigeons example/lib example/test
 
       - name: Analyze
         run: flutter analyze --fatal-infos
