@@ -18,7 +18,7 @@ Pod::Spec.new do |s|
   s.source_files = 'Classes/**/*.swift'
 
   s.dependency 'Flutter'
-  s.dependency 'PayCross', '0.1.0'
+  s.dependency 'PayCross', '0.1.1'
 
   # 16.0, not the template's 13.0: PayCross declares platforms: [.iOS(.v16)],
   # and CocoaPods surfaces that mismatch as an opaque resolution failure rather
