@@ -1,3 +1,4 @@
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -408,6 +409,34 @@ def test_a_5xx_is_retried_once_and_then_reported():
     assert len(transport.calls) == 3
     assert clock.slept == [sandbox.RETRY_BACKOFF_SECONDS]
     assert "503" in str(excinfo.value)
+
+    # The invariant that makes retrying a mint safe at all: replay the key,
+    # never regenerate it, or the retry bills a second live session.
+    first, second = transport.calls[1][2], transport.calls[2][2]
+    assert first["Idempotency-Key"] == second["Idempotency-Key"]
+
+
+def test_a_truncated_response_is_retried_like_a_connection_failure():
+    # A short read raises out of response.read(), after the status line, so it
+    # is not a URLError and would otherwise escape as a raw HTTPException.
+    client, transport, clock = client_with(
+        http.client.IncompleteRead(b"partial"), access_token_response(), MINTED
+    )
+
+    assert client.mint(amount=1000, currency="EUR", options={})["id"] == "01a0-sess"
+    assert len(transport.calls) == 3
+    assert clock.slept == [sandbox.RETRY_BACKOFF_SECONDS]
+
+
+def test_a_truncated_response_that_persists_is_reported():
+    failure = http.client.IncompleteRead(b"partial")
+    client, transport, _ = client_with(failure, failure)
+
+    with pytest.raises(sandbox.SandboxError) as excinfo:
+        client.mint(amount=1000, currency="EUR", options={})
+
+    assert "IncompleteRead" in str(excinfo.value)
+    assert len(transport.calls) == sandbox.MAX_ATTEMPTS
 
 
 def test_a_4xx_is_never_retried():

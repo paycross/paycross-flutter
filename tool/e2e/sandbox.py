@@ -20,6 +20,7 @@ flag would print both into the run log.
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import re
 import time
@@ -57,6 +58,12 @@ DEFAULT_TOKEN_LIFETIME_SECONDS = 3600.0
 #: 3300 s. Refreshing 300 s early both avoids expiring mid-run and lands past
 #: that cache TTL, which is what makes the replacement actually fresh.
 TOKEN_REFRESH_MARGIN_SECONDS = 300.0
+
+#: Failures worth one more try. HTTPException covers the short reads and bad
+#: status lines that surface out of `response.read()`, after the status line
+#: has already arrived: those are not URLErrors and would otherwise escape
+#: this module as a raw http.client exception.
+TRANSIENT = (urllib.error.URLError, TimeoutError, http.client.HTTPException)
 
 #: Any JWT in a body: the session token is one, and so is the M2M token.
 _JWT = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
@@ -286,7 +293,8 @@ class Sandbox:
 
         A 4xx is the API's considered answer and is never retried: repeating a
         refusal only spends run time. Retrying a mint is safe because its
-        Idempotency-Key is generated before the call and replayed with it.
+        Idempotency-Key is generated before the call and replayed unchanged
+        with it -- regenerating it here would bill a second live session.
         """
         attempt = 0
         while True:
@@ -294,7 +302,7 @@ class Sandbox:
             final = attempt >= MAX_ATTEMPTS
             try:
                 status, payload = self._transport(method, url, headers, body)
-            except (urllib.error.URLError, TimeoutError) as error:
+            except TRANSIENT as error:
                 if final:
                     raise SandboxError(
                         f"{method} {url} failed after {attempt} attempts: "
