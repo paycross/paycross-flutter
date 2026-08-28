@@ -79,6 +79,13 @@ jobs:
       - name: Test
         run: flutter test
 
+      # A separate step because `flutter test` at the root does not descend
+      # into example/. Without this the E2E label contract is only analyzed,
+      # never executed, so a wrong-but-compiling label would ship green.
+      - name: Test example
+        run: flutter test
+        working-directory: example
+
       # Compiles the generated Kotlin against the hand-written plugin and the
       # real SDK. This is the Android half of the contract check, and the only
       # step here that needs the SDK to exist as a resolvable artifact.

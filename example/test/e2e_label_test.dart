@@ -25,7 +25,7 @@ void main() {
       );
     });
 
-    test('round-trips every token PayCrossRecovery.fromApiValue parses', () {
+    test('round-trips every canonical token fromApiValue parses', () {
       for (final token in const [
         'retry',
         'change_method',
@@ -84,13 +84,29 @@ void main() {
       );
     });
 
-    test('covers every code the enum declares', () {
-      for (final code in PayCrossErrorCode.values) {
-        expect(
-          labelForError(PayCrossIntegrationError(code, 'x')),
-          'error:${code.name}',
-        );
-      }
+    test('spells every declared code as a pinned literal', () {
+      // Written out rather than derived from code.name: deriving the
+      // expectation from the implementation's own expression would assert
+      // nothing. These are the strings cell files compare against.
+      const pinned = <PayCrossErrorCode, String>{
+        PayCrossErrorCode.notConfigured: 'error:notConfigured',
+        PayCrossErrorCode.testPrefillInProduction:
+            'error:testPrefillInProduction',
+        PayCrossErrorCode.busy: 'error:busy',
+        PayCrossErrorCode.noActivity: 'error:noActivity',
+        PayCrossErrorCode.noPresenter: 'error:noPresenter',
+        PayCrossErrorCode.invalidToken: 'error:invalidToken',
+        PayCrossErrorCode.resultUnknown: 'error:resultUnknown',
+        PayCrossErrorCode.unknown: 'error:unknown',
+      };
+
+      pinned.forEach((code, label) {
+        expect(labelForError(PayCrossIntegrationError(code, 'x')), label);
+      });
+
+      // A code added to the enum fails here rather than reaching a cell file
+      // as an unpinned label; a renamed one fails on the map key above.
+      expect(pinned.keys.toSet(), PayCrossErrorCode.values.toSet());
     });
   });
 }
