@@ -72,7 +72,9 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
     if "txn_count" in expected:
         actual = len(_transactions(resource))
         if actual != expected["txn_count"]:
-            problems.append(f"txn_count: expected {expected['txn_count']}, got {actual}")
+            problems.append(
+                f"txn_count: expected {expected['txn_count']}, got {actual}"
+            )
 
     if "txn_status" in expected:
         actual = latest.get("status") if latest else None
@@ -82,7 +84,9 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
             )
 
     if expected.get("no_succeeded_txn"):
-        succeeded = [t for t in _transactions(resource) if t.get("status") == "succeeded"]
+        succeeded = [
+            t for t in _transactions(resource) if t.get("status") == "succeeded"
+        ]
         if succeeded:
             problems.append(
                 "no_succeeded_txn: the session holds "
@@ -97,7 +101,8 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
         actual = ((latest or {}).get("failure") or {}).get("recovery")
         if actual != expected["failure_recovery"]:
             problems.append(
-                f"failure_recovery: expected {expected['failure_recovery']!r}, got {actual!r}"
+                f"failure_recovery: expected {expected['failure_recovery']!r}, "
+                f"got {actual!r}"
             )
 
     if "threeds" in expected:
