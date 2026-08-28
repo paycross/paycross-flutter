@@ -163,5 +163,8 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
         # changing the banner's wording, which would break a text match
         # mid-campaign. Visibility is not required -- CardFormView puts the
         # banner last in the ScrollView, below the pinned footer.
-        return bool(find_identifier(nodes, "errorBanner") and find_identifier(nodes, "payButton"))
+        return bool(
+            find_identifier(nodes, "errorBanner")
+            and find_identifier(nodes, "payButton")
+        )
     raise ValueError(f"unknown platform {platform!r}")
