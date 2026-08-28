@@ -142,4 +142,270 @@ def test_validation_rejects(tmp_path, mutation, message):
     with pytest.raises(cells.CellError) as excinfo:
         cells.load_cell(path)
 
-    assert message in str(excinfo.value)
+    # Every message is `<path>: <detail>`. Matching on the detail keeps a
+    # tmp_path that happens to contain the word from passing the case for us.
+    assert str(excinfo.value).startswith(f"{path}: ")
+    assert message in str(excinfo.value).removeprefix(f"{path}: ")
+
+
+# --- Helpers for the follow-up review items -------------------------------
+
+
+def with_action(body, action):
+    """CONTROL with one extra action spliced in after `tap_pay`."""
+    return body.replace("  - tap_pay", f"  - tap_pay\n  - {action}")
+
+
+def with_merchant(body, block):
+    """CONTROL with its whole merchant block replaced."""
+    head, marker, _ = body.partition("  merchant:\n")
+    assert marker, "the merchant block moved; fix this helper"
+    return head + marker + block
+
+
+def with_label(body, label):
+    return body.replace('  label: "result:success:<txn>"', f'  label: "{label}"')
+
+
+def expect_rejected(tmp_path, body, name="control.yaml"):
+    with pytest.raises(cells.CellError) as excinfo:
+        cells.load_cell(write(tmp_path, name, body))
+    return str(excinfo.value)
+
+
+# --- C1: argument grammar -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        "acs:authentication_failed",
+        "acs:approve",
+        "airplane on",
+        "airplane off",
+        "background 5",
+        "expect rearmed",
+        "wait_result 1.5",
+    ],
+)
+def test_accepts_valid_action_arguments(tmp_path, action):
+    cell = cells.load_cell(write(tmp_path, "control.yaml", with_action(CONTROL, action)))
+
+    verb, _, _ = action.partition(":") if ":" in action else action.partition(" ")
+    assert verb in [a.verb for a in cell.actions]
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        "acs:Authentication_Failed",
+        "acs:auth-failed",
+        "acs:123",
+        "airplane maybe",
+        "background 0",
+        "background -1",
+        "expect success",
+        "wait_result 0",
+        "wait_result -5",
+        "wait_result soon",
+        "wait_result inf",
+    ],
+)
+def test_rejects_invalid_action_arguments(tmp_path, action):
+    message = expect_rejected(tmp_path, with_action(CONTROL, action))
+
+    assert action in message
+
+
+def test_arg_actions_still_reads_as_a_set_of_verbs():
+    # Task 9 does `verb in ARG_ACTIONS`; carrying validators must not break it.
+    assert "wait_result" in cells.ARG_ACTIONS
+    assert "tap_pay" not in cells.ARG_ACTIONS
+    assert set(cells.ARG_ACTIONS) == {
+        "acs",
+        "airplane",
+        "background",
+        "expect",
+        "wait_result",
+    }
+
+
+# --- I1: `expected` is the unmerged base ----------------------------------
+
+
+def test_expected_is_the_unmerged_base_and_expected_for_merges(tmp_path):
+    body = CONTROL + textwrap.dedent(
+        """\
+        expected.ios:
+          merchant:
+            failure_recovery: change_method
+        """
+    )
+    cell = cells.load_cell(write(tmp_path, "control.yaml", body))
+
+    # `.expected` is the base and is wrong for iOS; consumers go through
+    # `.expected_for(platform)`.
+    assert "failure_recovery" not in cell.expected.merchant
+    assert cell.expected_for("ios") != cell.expected
+    assert cell.expected_for("ios").merchant["failure_recovery"] == "change_method"
+    assert cell.expected_for("android") == cell.expected
+
+
+# --- I2: load_cells directory errors --------------------------------------
+
+
+def test_load_cells_rejects_a_missing_directory(tmp_path):
+    missing = tmp_path / "nope"
+
+    with pytest.raises(cells.CellError) as excinfo:
+        cells.load_cells(missing, "android")
+
+    assert str(missing) in str(excinfo.value)
+
+
+def test_load_cells_rejects_a_directory_with_no_cells(tmp_path):
+    with pytest.raises(cells.CellError) as excinfo:
+        cells.load_cells(tmp_path, "android")
+
+    message = str(excinfo.value)
+    assert str(tmp_path) in message
+    # The glob is not recursive, so it must point at the likely mistake.
+    assert "d0" in message
+
+
+# --- I3: unknown keys in an expectation block -----------------------------
+
+
+@pytest.mark.parametrize("block", ["expected", "expected.ios"])
+def test_rejects_unknown_keys_in_an_expectation_block(tmp_path, block):
+    if block == "expected":
+        body = CONTROL.replace("expected:\n", "expected:\n  bogus: 1\n")
+    else:
+        body = CONTROL + "expected.ios:\n  bogus: 1\n"
+
+    message = expect_rejected(tmp_path, body)
+
+    assert "bogus" in message
+    assert block in message
+
+
+# --- I4: merchant value types ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "block, key",
+    [
+        ("    session_status: 1\n", "session_status"),
+        ("    session_status: ''\n", "session_status"),
+        ("    txn_count: -1\n", "txn_count"),
+        ("    txn_count: true\n", "txn_count"),
+        ("    txn_count: '1'\n", "txn_count"),
+        ("    txn_status: null\n", "txn_status"),
+        ("    no_succeeded_txn: 'false'\n", "no_succeeded_txn"),
+        ("    failure_recovery: 7\n", "failure_recovery"),
+        ("    threeds: 3\n", "threeds"),
+    ],
+)
+def test_rejects_bad_merchant_values(tmp_path, block, key):
+    message = expect_rejected(tmp_path, with_merchant(CONTROL, block))
+
+    assert key in message
+
+
+def test_accepts_a_full_merchant_block(tmp_path):
+    body = with_merchant(
+        CONTROL,
+        "    session_status: completed\n"
+        "    txn_count: 0\n"
+        "    txn_status: failed\n"
+        "    no_succeeded_txn: true\n"
+        "    failure_recovery: null\n"
+        "    threeds:\n"
+        "      flow: challenge\n",
+    )
+    merchant = cells.load_cell(
+        write(tmp_path, "control.yaml", body)
+    ).expected_for("android").merchant
+
+    assert merchant["txn_count"] == 0
+    assert merchant["failure_recovery"] is None
+    assert merchant["threeds"] == {"flow": "challenge"}
+
+
+def test_rejects_bad_merchant_values_in_an_override(tmp_path):
+    body = CONTROL + "expected.ios:\n  merchant:\n    txn_count: -1\n"
+
+    assert "txn_count" in expect_rejected(tmp_path, body)
+
+
+# --- I5: the frozen label vocabulary --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "result:success:txn_123",
+        "result:success:",
+        "result:failure:retry:txn_1",
+        "result:failure:change_method:txn_1",
+        "result:failure:restart:txn_1",
+        "result:failure:do_not_retry:txn_1",
+        "result:failure:contact_support:txn_1",
+        "result:failure:unrecognized(weird:raw):txn_1",
+        "result:cancelled",
+        "error:sessionExpired",
+    ],
+)
+def test_accepts_every_frozen_label_form(tmp_path, label):
+    cell = cells.load_cell(write(tmp_path, "control.yaml", with_label(CONTROL, label)))
+
+    assert cell.expected_for("android").label == label
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "result:succes:txn_1",
+        "result:failure:banana:txn_1",
+        "result:failure:retry",
+        "result:cancelled:txn_1",
+        "error:session_expired",
+        "result:success:txn 1",
+        "cancelled",
+        "",
+    ],
+)
+def test_rejects_labels_outside_the_frozen_vocabulary(tmp_path, label):
+    assert "label" in expect_rejected(tmp_path, with_label(CONTROL, label))
+
+
+# --- M3: errors name the path, not the basename ---------------------------
+
+
+def test_the_error_names_the_path_not_just_the_basename(tmp_path):
+    d0 = tmp_path / "d0"
+    d0.mkdir()
+    path = d0 / "control.yaml"
+    path.write_text(CONTROL.replace('"4111111111170000"', '"41x1"'), encoding="utf-8")
+
+    with pytest.raises(cells.CellError) as excinfo:
+        cells.load_cell(path)
+
+    assert str(excinfo.value).startswith(f"{path}: ")
+
+
+# --- M6: rearmed is a bool ------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["'yes'", "1", "null"])
+def test_rearmed_must_be_a_bool(tmp_path, value):
+    body = CONTROL.replace("expected:\n", f"expected:\n  rearmed: {value}\n")
+
+    assert "rearmed" in expect_rejected(tmp_path, body)
+
+
+def test_rearmed_true_is_carried_through(tmp_path):
+    body = CONTROL.replace("expected:\n", "expected:\n  rearmed: true\n")
+    cell = cells.load_cell(write(tmp_path, "control.yaml", body))
+
+    assert cell.expected_for("android").rearmed is True
