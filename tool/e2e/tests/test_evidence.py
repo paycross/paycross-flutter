@@ -109,3 +109,30 @@ def test_passed_cells_ignores_interleaved_control_checks(tmp_path):
 
 def test_passed_cells_on_an_empty_root_is_empty(tmp_path):
     assert evidence.passed_cells(tmp_path, "android") == set()
+
+
+def test_passed_cells_survives_a_run_killed_mid_append(tmp_path):
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+    run.append_progress({"cell": "control", "status": "pass"})
+    # What a WSL reboot leaves behind: the last record never finished.
+    with run.progress_path.open("ab") as handle:
+        handle.write(b'{"at": "2026-08-28T12:00:00Z", "platform": "android", "cell')
+
+    assert evidence.passed_cells(tmp_path, "android") == {"control"}
+
+
+def test_passed_cells_ignores_a_pass_record_with_no_cell_id(tmp_path):
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+    run.append_progress({"cell": "control", "status": "pass"})
+    run.append_progress({"status": "pass"})
+
+    assert evidence.passed_cells(tmp_path, "android") == {"control"}
+
+
+def test_the_runs_own_platform_wins_over_the_record(tmp_path):
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+
+    run.append_progress({"cell": "control", "status": "pass", "platform": "ios"})
+
+    assert evidence.passed_cells(tmp_path, "android") == {"control"}
+    assert evidence.passed_cells(tmp_path, "ios") == set()

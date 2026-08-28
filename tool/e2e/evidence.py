@@ -66,8 +66,14 @@ class Run:
         return path
 
     def append_progress(self, record: dict[str, Any]) -> None:
-        """Appends one line, flushed, so a killed run leaves usable progress."""
-        line = json.dumps({"at": _now(), "platform": self.platform, **record})
+        """Appends one line, flushed, so a killed run leaves usable progress.
+
+        The run's own stamps are written last so a record cannot shadow them.
+        `platform` is the key resume filters on: a record carrying one of its
+        own would file this run's results under the other platform's ledger,
+        and resume would then skip a cell that never ran there.
+        """
+        line = json.dumps({**record, "at": _now(), "platform": self.platform})
         with self.progress_path.open("ab") as handle:
             handle.write(redact(line.encode()) + b"\n")
 
@@ -84,10 +90,19 @@ def passed_cells(root: Path, platform: str) -> set[str]:
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            record = json.loads(line)
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                # A run killed mid-append leaves a partial last line. Skipping
+                # it costs one cell a re-run; raising would strand the whole
+                # resume, which is the failure this file exists to prevent.
+                continue
             if (
                 record.get("platform") == platform
                 and record.get("status") == "pass"
+                # A pass with no cell id is a runner bug. Same direction as
+                # above: drop the record rather than crash the next run.
+                and record.get("cell")
                 # An interleaved control check is a rig probe, not the control
                 # cell's own run. Counting it would let a resumed run skip
                 # `control` -- and then the next failure's skepticism check
