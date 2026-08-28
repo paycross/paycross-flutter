@@ -152,6 +152,39 @@ def test_dump_tree_returns_the_device_xml():
     assert driver(shell).dump_tree() == xml
 
 
+def test_dump_tree_clears_the_stale_dump_in_the_same_round_trip():
+    # `uiautomator dump` writes nothing when it cannot get an idle state. If
+    # the previous file survived, `cat` would hand back a stale tree that
+    # parses perfectly and the caller would tap a screen that is already gone.
+    xml = (FIXTURES / "android-rearmed.uix").read_text()
+    shell = FakeShell("", xml)
+
+    driver(shell).dump_tree()
+
+    dumped, fetched = shell.argv_text()
+    assert dumped == "shell rm -f /sdcard/ui.xml; uiautomator dump /sdcard/ui.xml"
+    assert fetched == "shell cat /sdcard/ui.xml"
+
+
+def test_dump_tree_retries_a_read_that_came_back_unparsable():
+    # A partly-flushed `cat` raises ParseError out of _nodes -- which is not a
+    # DriverError, so it escapes every polling loop and aborts the cell for one
+    # transient read.
+    good = (FIXTURES / "android-rearmed.uix").read_text()
+    shell = FakeShell("", "<hierarchy><node ", "", good)
+
+    assert driver(shell).dump_tree(interval=0) == good.encode("utf-8")
+
+
+def test_dump_tree_gives_up_as_a_driver_error_not_a_parse_error():
+    shell = FakeShell(*(["", ""] * 3))
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).dump_tree(attempts=3, interval=0)
+
+    assert "dump" in str(excinfo.value)
+
+
 def test_wait_rearmed_polls_until_the_banner_appears():
     empty = "<hierarchy></hierarchy>"
     rearmed = (FIXTURES / "android-rearmed.uix").read_text()
@@ -202,6 +235,19 @@ def test_type_card_clears_then_fills_every_field():
     assert "shell input text 1228" in text
     assert "shell input text 123" in text
     assert "shell input text John%sDoe" in text
+
+
+def test_tapping_an_empty_needle_is_refused_rather_than_matching_every_node():
+    # find_text_exact("") matches every node whose text is empty, which is most
+    # of a real tree, so the tap would land on an arbitrary one.
+    shell = FakeShell(tree=(FIXTURES / "android-rearmed.uix").read_text())
+    d = driver(shell)
+
+    for call in (lambda: d._tap_text(""), lambda: d._tap_desc("")):
+        with pytest.raises(DriverError):
+            call()
+
+    assert shell.calls == []
 
 
 def test_the_d3_actions_are_declared_and_refuse_rather_than_no_op():

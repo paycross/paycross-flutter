@@ -19,6 +19,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from .. import tree
 from ..cells import Card
@@ -31,6 +32,14 @@ PACKAGE = "com.paycross.paycross_flutter_example"
 STAGING_DIR = "/mnt/c/dev/tmp"
 WINDOWS_STAGING = r"C:\dev\tmp"
 STAGED_APK = "paycross-e2e.apk"
+
+#: Where `uiautomator dump` is told to write, and how many times a dump is
+#: attempted before the driver calls the device unusable.
+_DUMP_PATH = "/sdcard/ui.xml"
+_DUMP_ATTEMPTS = 3
+
+#: The category `monkey` needs in order to start the launcher activity.
+_LAUNCHER = "android.intent.category.LAUNCHER"
 
 #: `input text` splits its argument on spaces; %s is its escape.
 _SPACE = "%s"
@@ -102,7 +111,9 @@ class AndroidDriver(Driver):
     def _nodes(self):
         return tree.parse_uiautomator(self.dump_tree())
 
-    def _find(self, finder, needle: str, what: str, timeout: float = 30, interval: float = 2):
+    def _find(
+        self, finder, needle: str, what: str, timeout: float = 30, interval: float = 2
+    ):
         deadline = time.monotonic() + timeout
         while True:
             hits = finder(self._nodes(), needle)
@@ -113,11 +124,21 @@ class AndroidDriver(Driver):
             time.sleep(interval)
 
     def _tap_text(self, text: str, **kw) -> None:
+        # An empty needle matches every node whose text is empty, which is
+        # most of the tree: the tap would land on an arbitrary one instead
+        # of failing. Nothing in Phase 0 passes one, so this is about the
+        # caller a later phase adds.
+        if not text:
+            raise DriverError("refusing to tap on an empty text match")
         self._tap(self._find(tree.find_text_exact, text, "node with text", **kw).centre)
 
     def _tap_desc(self, desc: str, **kw) -> None:
+        if not desc:
+            raise DriverError("refusing to tap on an empty content-desc match")
         self._tap(
-            self._find(tree.find_content_desc, desc, "node with content-desc", **kw).centre
+            self._find(
+                tree.find_content_desc, desc, "node with content-desc", **kw
+            ).centre
         )
 
     # -- lifecycle -----------------------------------------------------------
@@ -142,16 +163,18 @@ class AndroidDriver(Driver):
                 "button text would not match"
             )
         self._shell(["shell", "am", "force-stop", PACKAGE])
-        self._shell(
-            ["shell", "monkey", "-p", PACKAGE, "-c", "android.intent.category.LAUNCHER", "1"]
-        )
+        self._shell(["shell", "monkey", "-p", PACKAGE, "-c", _LAUNCHER, "1"])
         time.sleep(6)
 
     # -- actions -------------------------------------------------------------
 
     def paste_token(self, token_path: Path) -> None:
         token_path = Path(token_path)
-        expected = token_path.stat().st_size
+        # Compared in characters against what the field shows, and stripped:
+        # a trailing newline in the minted file would otherwise be typed into
+        # the form and then read back as a one-character truncation.
+        text = token_path.read_text(encoding="utf-8").strip()
+        expected = len(text)
 
         field = self._find(
             lambda nodes, _: [n for n in nodes if n.type.endswith("EditText")],
@@ -162,7 +185,6 @@ class AndroidDriver(Driver):
         time.sleep(1)
 
         # ~1011 characters, well past what one `input text` reliably delivers.
-        text = token_path.read_text(encoding="utf-8")
         for start in range(0, len(text), 80):
             self._input_text(text[start : start + 80])
 
@@ -197,7 +219,9 @@ class AndroidDriver(Driver):
         time.sleep(1)
 
         if verify_pan:
-            grouped = {n.text for n in self._nodes() if n.text.replace(" ", "") == card.pan}
+            grouped = {
+                n.text for n in self._nodes() if n.text.replace(" ", "") == card.pan
+            }
             if not grouped:
                 raise DriverError(
                     f"the card field does not hold {card.pan} after typing -- "
@@ -264,9 +288,41 @@ class AndroidDriver(Driver):
 
     # -- evidence ------------------------------------------------------------
 
-    def dump_tree(self) -> bytes:
-        self._shell(["shell", "uiautomator", "dump", "/sdcard/ui.xml"])
-        return self._shell(["shell", "cat", "/sdcard/ui.xml"]).encode("utf-8")
+    def dump_tree(self, attempts: int = _DUMP_ATTEMPTS, interval: float = 1) -> bytes:
+        """One accessibility dump, retaken until it parses.
+
+        Two failures hide behind a plain dump-then-cat. `uiautomator dump`
+        refuses while the UI is animating -- it prints `ERROR: could not get
+        idle state.` and writes nothing -- so the previous dump is still on
+        the device and `cat` hands back a *stale* tree that parses perfectly.
+        A polling caller then matches a screen that is already gone and taps
+        its coordinates. Removing the file in the same round trip turns that
+        into an empty read, which is detectable.
+
+        A partly-flushed `cat` is the other failure and presents the same
+        way. Untreated it raises `ParseError` out of `_nodes`, which is not a
+        `DriverError` and so escapes every polling loop -- one transient read
+        would abort the cell.
+        """
+        problem = "the device wrote no dump"
+        for attempt in range(attempts):
+            # One round trip, so this stays two adb invocations: a dump that
+            # never ran cannot leave the previous one behind to be read.
+            self._shell(
+                ["shell", f"rm -f {_DUMP_PATH}; uiautomator dump {_DUMP_PATH}"]
+            )
+            raw = self._shell(["shell", "cat", _DUMP_PATH]).encode("utf-8")
+            try:
+                ET.fromstring(raw)
+            except ET.ParseError as exc:
+                problem = str(exc)
+            else:
+                return raw
+            if attempt + 1 < attempts:
+                time.sleep(interval)
+        raise DriverError(
+            f"no parsable uiautomator dump in {attempts} attempts: {problem}"
+        )
 
     def screenshot(self) -> bytes:
         """Black for the whole sheet: PaymentActivity sets FLAG_SECURE.
