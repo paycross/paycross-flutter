@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Paycross Flutter" label="Paycross Flutter" enabled="true" visible="true" x="0" y="0" width="402" height="874" index="0">
+  <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" x="0" y="0" width="402" height="874" index="0">
+    <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" x="0" y="0" width="402" height="874" index="0">
+      <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="PayCross Example" label="PayCross Example" value="PayCross Example" enabled="true" visible="true" x="115" y="76" width="172" height="28" index="0"/>
+      <XCUIElementTypeTextField type="XCUIElementTypeTextField" name="Session token" label="Session token" value="[REDACTED-SESSION-TOKEN]" enabled="true" visible="true" x="20" y="190" width="362" height="152" index="1"/>
+      <XCUIElementTypeButton type="XCUIElementTypeButton" name="Pay" label="Pay" value="" enabled="true" visible="true" x="20" y="362" width="362" height="48" index="2"/>
+      <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="result:success:7d8e12aa-98c9-4032-9e03-6567d8db7bea" label="result:success:7d8e12aa-98c9-4032-9e03-6567d8db7bea" value="result:success:7d8e12aa-98c9-4032-9e03-6567d8db7bea" enabled="true" visible="true" x="20" y="434" width="362" height="40" index="3"/>
+      <XCUIElementTypeOther type="XCUIElementTypeOther" name="errorBanner" label="Payment failed. Please try again." enabled="true" visible="false" x="16" y="852" width="370" height="44" index="4"/>
+      <XCUIElementTypeButton type="XCUIElementTypeButton" name="payButton" label="Pay €10.00" value="" enabled="true" visible="true" x="16" y="790" width="370" height="50" index="5"/>
+      <XCUIElementTypeButton type="XCUIElementTypeButton" name="Cancel" label="Cancel" value="" enabled="true" visible="true" x="16" y="76" width="80" height="32" index="6"/>
+      <XCUIElementTypeButton type="XCUIElementTypeButton" name="threeDSCancel" label="Cancel" value="" enabled="true" visible="true" x="20" y="74" width="78" height="30" index="7"/>
+      <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="amount" label="10.00 EUR" value="10.00 EUR" enabled="true" visible="true" x="16" y="192" width="370" height="44" index="8"/>
+      <XCUIElementTypeButton type="XCUIElementTypeButton" name="approve" label="approve" value="" enabled="true" visible="true" x="16" y="302" width="370" height="44" index="9"/>
+      <XCUIElementTypeButton type="XCUIElementTypeButton" name="fraud_suspected" label="fraud_suspected" value="" enabled="true" visible="false" x="16" y="1402" width="370" height="44" index="10"/>
+    </XCUIElementTypeOther>
+  </XCUIElementTypeWindow>
+</XCUIElementTypeApplication>
