@@ -43,6 +43,8 @@ class Node:
     identifier: str
     value: str
     bounds: tuple[int, int, int, int]
+    # Android: derived from the bounds area -- "has a box", not "on screen".
+    # iOS: WDA's own attribute, so an absent one reads False.
     visible: bool
 
     @property
@@ -55,7 +57,7 @@ def parse_uiautomator(xml: str | bytes) -> list[Node]:
     nodes: list[Node] = []
     for element in ET.fromstring(xml).iter("node"):
         match = _BOUNDS.match(element.get("bounds", ""))
-        bounds = tuple(int(g) for g in match.groups()) if match else (0, 0, 0, 0)
+        x1, y1, x2, y2 = map(int, match.groups()) if match else (0, 0, 0, 0)
         nodes.append(
             Node(
                 type=element.get("class", ""),
@@ -63,10 +65,10 @@ def parse_uiautomator(xml: str | bytes) -> list[Node]:
                 content_desc=element.get("content-desc", ""),
                 identifier=element.get("resource-id", ""),
                 value="",
-                bounds=bounds,  # type: ignore[arg-type]
+                bounds=(x1, y1, x2, y2),
                 # uiautomator has no `visible` attribute; a degenerate box is
                 # the only thing it can mean here.
-                visible=bounds[2] > bounds[0] and bounds[3] > bounds[1],
+                visible=x2 > x1 and y2 > y1,
             )
         )
     return nodes
@@ -139,6 +141,10 @@ def format_amount_en_us(minor_units: int, currency: str) -> str:
     the only handle the SDK offers -- it tags nothing -- so the matcher has to
     track the cell's amount. The driver pins the emulator locale to `en-US`;
     a different locale is a rig fault, not a cell failure.
+
+    Two minor digits are assumed, which is right for EUR/USD-style currencies
+    and wrong for JPY. `cells.py` constrains a cell to positive integer minor
+    units and an ISO 4217 code, not to that subset.
     """
     body = f"{Decimal(minor_units) / 100:,.2f}"
     symbol = _CURRENCY_SYMBOLS.get(currency)
@@ -152,6 +158,10 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
     observe a non-result. It is half of a `rearmed` verdict: the other half is
     criterion 2's merchant check (transaction `failed`, session still `open`),
     because the banner is not unique to a retryable decline.
+
+    `amount_text` applies to Android only, where the Pay button's text is the
+    only handle. iOS matches identifiers, so a sheet re-armed at a different
+    amount satisfies it too; tightening that is a Task 9 decision.
     """
     if platform == "android":
         return bool(

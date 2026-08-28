@@ -10,3 +10,7 @@ local.properties
 Pods/
 Podfile.lock
 .symlinks/
+
+__pycache__/
+.pytest_cache/
+.ruff_cache/

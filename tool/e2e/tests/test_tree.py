@@ -104,6 +104,10 @@ def test_sheet_rearmed_on_android_needs_the_banner_and_the_pay_button():
     assert tree.sheet_rearmed(result_screen, "android", amount) is False
     # A different amount means a different Pay button, so no false positive.
     assert tree.sheet_rearmed(rearmed, "android", "€12.50") is False
+    # The result screen happens to carry neither half, so it cannot show that
+    # the banner is required. Drop only the banner from a tree that has both.
+    without_banner = [n for n in rearmed if n.text != tree.ANDROID_REARM_BANNER]
+    assert tree.sheet_rearmed(without_banner, "android", amount) is False
 
 
 def test_sheet_rearmed_on_ios_matches_identifiers_not_copy():
@@ -113,6 +117,9 @@ def test_sheet_rearmed_on_ios_matches_identifiers_not_copy():
 
     without_banner = [n for n in nodes if n.identifier != "errorBanner"]
     assert tree.sheet_rearmed(without_banner, "ios", "€10.00") is False
+
+    without_pay = [n for n in nodes if n.identifier != "payButton"]
+    assert tree.sheet_rearmed(without_pay, "ios", "€10.00") is False
 
 
 def test_sheet_rearmed_rejects_an_unknown_platform():
