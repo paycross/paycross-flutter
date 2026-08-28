@@ -2,10 +2,6 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        // STAGING ONLY. Remove once com.pay-cross is on Maven Central - which is
-        // already in this list, so a merchant will need no repository entry at
-        // all. This line exists purely because the SDK is not published yet.
-        mavenLocal()
     }
 }
 
