@@ -1,5 +1,8 @@
 import json
+import os
 import zlib
+
+import pytest
 
 from tool.e2e import evidence
 
@@ -136,3 +139,56 @@ def test_the_runs_own_platform_wins_over_the_record(tmp_path):
 
     assert evidence.passed_cells(tmp_path, "android") == {"control"}
     assert evidence.passed_cells(tmp_path, "ios") == set()
+
+
+def test_two_platforms_starting_in_the_same_second_get_their_own_run_dirs(
+    tmp_path, monkeypatch
+):
+    # Android and iOS are run from two shells. Without the platform in the id
+    # they would share a run directory and overwrite each other's artifacts.
+    monkeypatch.setattr(evidence, "_stamp", lambda: "20260828-120000")
+
+    android = evidence.Run(tmp_path, platform="android")
+    ios = evidence.Run(tmp_path, platform="ios")
+
+    assert android.dir == tmp_path / "20260828-120000-android"
+    assert ios.dir == tmp_path / "20260828-120000-ios"
+
+
+def test_progress_reaches_the_disk_before_the_next_cell_starts(tmp_path, monkeypatch):
+    # The docstring promises a killed run leaves usable progress, and a WSL
+    # reboot has killed a run before. A buffer the kernel never wrote does not
+    # keep that promise.
+    synced = []
+    real_fsync = os.fsync
+
+    def spy(fd):
+        synced.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(evidence.os, "fsync", spy)
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+
+    run.append_progress({"cell": "control", "status": "pass"})
+
+    assert len(synced) == 1
+
+
+@pytest.mark.parametrize("cell_id", ["..", "../escape", "a/b", "a\\b", ""])
+def test_cell_dir_refuses_a_cell_id_that_could_leave_the_run_directory(
+    tmp_path, cell_id
+):
+    # A cell file named `...yaml` has stem `..`.
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+
+    with pytest.raises(ValueError):
+        run.cell_dir(cell_id)
+
+
+def test_write_refuses_it_too_before_anything_touches_disk(tmp_path):
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+
+    with pytest.raises(ValueError):
+        run.write("../escape", "form.uix", b"x")
+
+    assert not (tmp_path / "escape").exists()

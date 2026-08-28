@@ -9,6 +9,7 @@ interrupted run can be resumed rather than restarted.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,12 +42,32 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
+#: A cell id becomes a directory name directly, so anything that could climb
+#: out of the run directory is refused rather than sanitised. Cell ids come
+#: from filenames, and a cell file named `...yaml` has stem `..`; quietly
+#: rewriting that would file a cell's evidence where nobody looks for it.
+UNSAFE_IN_PATH = ("/", "\\", "..")
+
+
+def _check_cell_id(cell_id: str) -> None:
+    if not cell_id or any(bad in cell_id for bad in UNSAFE_IN_PATH):
+        raise ValueError(f"unsafe cell id: {cell_id!r}")
+
+
 class Run:
     """One invocation of the runner, and the directory tree it fills."""
 
     def __init__(self, root: Path, platform: str, run_id: str | None = None):
+        # The generated id carries the platform because the two platforms are
+        # driven from two shells: on a bare timestamp, an Android and an iOS
+        # run started in the same second share a directory and overwrite each
+        # other's artifacts cell for cell.
         self.platform = platform
-        self.run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        self.run_id = run_id or f"{_stamp()}-{platform}"
         self.dir = Path(root) / self.run_id
         self.dir.mkdir(parents=True, exist_ok=True)
 
@@ -55,6 +76,7 @@ class Run:
         return self.dir / "progress.jsonl"
 
     def cell_dir(self, cell_id: str) -> Path:
+        _check_cell_id(cell_id)
         path = self.dir / cell_id
         path.mkdir(parents=True, exist_ok=True)
         return path
@@ -66,7 +88,11 @@ class Run:
         return path
 
     def append_progress(self, record: dict[str, Any]) -> None:
-        """Appends one line, flushed, so a killed run leaves usable progress.
+        """Appends one line and fsyncs it, so a killed run leaves real progress.
+
+        One fsync per cell against a cell that takes tens of seconds is free,
+        and a WSL reboot has killed a run before: progress still sitting in a
+        buffer is progress the next run cannot resume from.
 
         The run's own stamps are written last so a record cannot shadow them.
         `platform` is the key resume filters on: a record carrying one of its
@@ -76,6 +102,8 @@ class Run:
         line = json.dumps({**record, "at": _now(), "platform": self.platform})
         with self.progress_path.open("ab") as handle:
             handle.write(redact(line.encode()) + b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
 
 
 def passed_cells(root: Path, platform: str) -> set[str]:
