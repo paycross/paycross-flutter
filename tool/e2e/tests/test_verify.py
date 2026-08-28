@@ -1,6 +1,6 @@
 import pytest
 
-from tool.e2e import verify
+from tool.e2e import cells, verify
 
 
 def session(status="completed", txns=None):
@@ -48,6 +48,12 @@ def test_match_label(template, actual, ok, captured):
 
 def test_match_label_on_a_missing_label():
     assert verify.match_label("result:cancelled", None) == (False, None)
+
+
+def test_every_merchant_key_a_cell_can_declare_is_checked_here():
+    # A key added to cells.py without a check here would pass vacuously --
+    # the cell would assert it and verify_merchant would ignore it in silence.
+    assert cells.MERCHANT_KEYS == verify.MERCHANT_CHECKS
 
 
 def test_verify_merchant_passes_a_clean_control_cell():
@@ -115,8 +121,15 @@ def test_failure_recovery_distinguishes_absent_from_a_value():
 
     assert verify.verify_merchant(android, {"failure_recovery": None}) == []
     assert verify.verify_merchant(ios, {"failure_recovery": "change_method"}) == []
-    assert verify.verify_merchant(ios, {"failure_recovery": None}) != []
-    assert verify.verify_merchant(android, {"failure_recovery": "change_method"}) != []
+    absent_but_present = verify.verify_merchant(ios, {"failure_recovery": None})
+    assert len(absent_but_present) == 1
+    assert absent_but_present[0].startswith("failure_recovery:")
+
+    present_but_absent = verify.verify_merchant(
+        android, {"failure_recovery": "change_method"}
+    )
+    assert len(present_but_absent) == 1
+    assert present_but_absent[0].startswith("failure_recovery:")
 
 
 def test_an_explicit_null_failure_object_does_not_crash():
@@ -126,7 +139,9 @@ def test_an_explicit_null_failure_object_does_not_crash():
     explicit_null = session(txns=[txn(failure=None)])
 
     assert verify.verify_merchant(explicit_null, {"failure_recovery": None}) == []
-    assert verify.verify_merchant(explicit_null, {"failure_recovery": "retry"}) != []
+    problems = verify.verify_merchant(explicit_null, {"failure_recovery": "retry"})
+    assert len(problems) == 1
+    assert problems[0].startswith("failure_recovery:")
 
 
 def test_threeds_is_a_subset_match_on_the_latest_transaction():
@@ -149,23 +164,31 @@ def test_threeds_is_a_subset_match_on_the_latest_transaction():
         completed,
         {"threeds": {"outcome": "authenticated", "flow": "challenge", "liability_shifted": True}},
     ) == []
-    assert verify.verify_merchant(completed, {"threeds": {"flow": "frictionless"}}) != []
+    assert verify.verify_merchant(completed, {"threeds": {"flow": "frictionless"}}) == [
+        "threeds.flow: expected 'frictionless', got 'challenge'"
+    ]
 
 
 def test_threeds_asserted_on_a_session_with_no_threeds_result():
-    assert verify.verify_merchant(
-        session(txns=[txn()]), {"threeds": {"flow": "frictionless"}}
-    ) != []
+    # One line, not one per asserted key: the ...153055 no-3DS case would
+    # otherwise report the same absence once for every field the cell names.
+    problems = verify.verify_merchant(
+        session(txns=[txn()]),
+        {"threeds": {"flow": "frictionless", "outcome": "authenticated"}},
+    )
+
+    assert problems == ["threeds: no threeds_result on the latest transaction"]
 
 
 def test_label_transaction_must_exist_server_side_when_it_is_not_empty():
     resource = session(txns=[txn()])
 
-    assert verify.verify_label_transaction("txn-1", resource) == []
-    assert verify.verify_label_transaction("", resource) == []
-    assert verify.verify_label_transaction(None, resource) == []
-    problems = verify.verify_label_transaction("txn-ghost", resource)
+    assert verify.verify_label_transaction(resource, "txn-1") == []
+    assert verify.verify_label_transaction(resource, "") == []
+    assert verify.verify_label_transaction(resource, None) == []
+    problems = verify.verify_label_transaction(resource, "txn-ghost")
     assert len(problems) == 1
+    assert problems[0].startswith("label_transaction:")
     assert "txn-ghost" in problems[0]
 
 
@@ -174,7 +197,7 @@ def test_a_transaction_without_an_id_does_not_break_the_mismatch_message():
     # an id-less transaction would turn a verification failure into a crash.
     resource = session(txns=[txn(), {"type": "payment", "status": "failed"}])
 
-    problems = verify.verify_label_transaction("txn-ghost", resource)
+    problems = verify.verify_label_transaction(resource, "txn-ghost")
 
     assert len(problems) == 1
     assert "txn-1" in problems[0]
@@ -192,3 +215,28 @@ def test_crash_lines_finds_only_real_faults():
 
     assert len(found) == 2
     assert verify.crash_lines("all quiet\n", "com.paycross.x") == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main",
+        "08-28 12:00:02.000 I am_finish_activity: Force finishing activity",
+        "Fatal error: Unexpectedly found nil while unwrapping an Optional",
+        "*** Terminating app due to uncaught exception 'NSInvalidArgument'",
+        "E/flutter ( 8123): [ERROR:flutter/runtime/dart_vm_initializer.cc(41)] "
+        "Unhandled Exception: Bad state: no element",
+    ],
+)
+def test_every_fault_marker_fires(line):
+    # The package is deliberately absent from each line: a marker is a fault
+    # on its own, and only the ANR branch is package-scoped.
+    assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == [line]
+
+
+def test_an_anr_in_another_package_is_not_this_apps_crash():
+    # Without the package filter this reads as our crash. The emulator ANRs on
+    # its own housekeeping often enough that the difference matters.
+    log = "08-28 12:00:03.000 E ActivityManager: ANR in com.other.app\n"
+
+    assert verify.crash_lines(log, "com.paycross.paycross_flutter_example") == []
