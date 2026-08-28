@@ -63,10 +63,17 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
     latest = _latest(resource)
 
     if "session_status" in expected:
-        actual = resource.get("status")
-        if actual != expected["session_status"]:
+        # `sandbox.read` raises on any non-2xx or non-JSON response, so a
+        # resource that gets this far without a `status` key is an unexpected
+        # shape rather than a session that reported no status. Saying so beats
+        # `got None`, which reads as a payment-state finding and sends whoever
+        # is debugging after the wrong bug.
+        if "status" not in resource:
+            problems.append("session_status: the session resource has no 'status' key")
+        elif resource["status"] != expected["session_status"]:
             problems.append(
-                f"session_status: expected {expected['session_status']!r}, got {actual!r}"
+                f"session_status: expected {expected['session_status']!r}, "
+                f"got {resource['status']!r}"
             )
 
     if "txn_count" in expected:
@@ -123,7 +130,10 @@ def verify_label_transaction(txn_id: str | None, resource: dict[str, Any]) -> li
     """
     if not txn_id:
         return []
-    known = {t.get("id") for t in _transactions(resource)}
+    # A None id is dropped rather than kept: it can never equal a non-empty
+    # txn_id, and sorting a set holding both None and a string raises -- which
+    # would turn this verification failure into a crash.
+    known = {t.get("id") for t in _transactions(resource) if t.get("id") is not None}
     if txn_id in known:
         return []
     return [f"label transaction {txn_id!r} is not among the session's {sorted(known)}"]

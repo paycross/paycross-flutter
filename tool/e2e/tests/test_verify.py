@@ -85,6 +85,17 @@ def test_verify_merchant_reports_every_mismatch_not_just_the_first():
     assert any("txn_status" in p for p in problems)
 
 
+def test_a_resource_with_no_status_key_is_named_as_a_shape_fault():
+    # sandbox.read raises on any non-2xx or non-JSON response, so a resource
+    # that reaches this check without a `status` key is an unexpected shape,
+    # not a session that reported a null status.
+    problems = verify.verify_merchant({"id": "01a0-sess"}, {"session_status": "open"})
+
+    assert len(problems) == 1
+    assert "status" in problems[0]
+    assert "None" not in problems[0]
+
+
 def test_no_succeeded_txn_is_the_assertion_every_cancel_and_decline_cell_needs():
     declined = session(status="open", txns=[txn(status="failed")])
     leaked = session(status="open", txns=[txn(status="failed"), txn(status="succeeded")])
@@ -156,6 +167,17 @@ def test_label_transaction_must_exist_server_side_when_it_is_not_empty():
     problems = verify.verify_label_transaction("txn-ghost", resource)
     assert len(problems) == 1
     assert "txn-ghost" in problems[0]
+
+
+def test_a_transaction_without_an_id_does_not_break_the_mismatch_message():
+    # sorted() over a set holding both None and a string raises TypeError, so
+    # an id-less transaction would turn a verification failure into a crash.
+    resource = session(txns=[txn(), {"type": "payment", "status": "failed"}])
+
+    problems = verify.verify_label_transaction("txn-ghost", resource)
+
+    assert len(problems) == 1
+    assert "txn-1" in problems[0]
 
 
 def test_crash_lines_finds_only_real_faults():
