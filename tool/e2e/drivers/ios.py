@@ -382,12 +382,13 @@ class IosDriver(Driver):
     def _check_console(self) -> None:
         """Asserts the console capture outlived the session request.
 
-        POST /session with a bundleId launches the app, and for XCUIApplication
-        launching means terminate-then-launch, which would take the capture
-        with it. `forceAppLaunch: false` asks WDA to activate the running
-        instance instead; this is what proves it did. Without the check a
-        silently dead capture leaves `logs_since` with nothing to scan, and
-        "nothing crashed" passes on an empty window.
+        A POST /session naming a bundleId makes WDA terminate-then-launch that
+        app, which takes the capture with it; `launch()` therefore names none.
+        This is what proves that held -- and it is not theoretical: the first
+        live iOS run, with a bundleId and `forceAppLaunch: false`, failed here
+        on every cell. Without the check a silently dead capture leaves
+        `logs_since` with nothing to scan, and "nothing crashed" passes on an
+        empty window.
         """
         if self._console_pid is None:
             return
@@ -447,13 +448,23 @@ class IosDriver(Driver):
             {
                 "capabilities": {
                     "alwaysMatch": {
-                        "bundleId": self._bundle,
+                        # No bundleId, deliberately. WDA treats one as "launch
+                        # this", and for XCUIApplication launching means
+                        # terminate-then-launch, which takes the --console-pty
+                        # capture of the instance started just above with it.
+                        # `forceAppLaunch: false` is a literal in the 16.2.2
+                        # binary but does not stop it -- measured on the rig
+                        # 2026-08-29, where it failed every cell in
+                        # _check_console. A session naming no bundle launches
+                        # nothing and attaches to whatever is foreground, and
+                        # everything asked of a session here is coordinate- or
+                        # device-level (tap, drag, keys, keyboard/dismiss,
+                        # window/size) while /source is unscoped, so nothing
+                        # needs the binding.
+                        #
                         # The Flutter engine never fully quiesces, so waiting
                         # for it times every session request out.
                         "shouldWaitForQuiescence": False,
-                        # And launching would terminate the instance whose
-                        # console is being captured. Activate it instead.
-                        "forceAppLaunch": False,
                     }
                 }
             },

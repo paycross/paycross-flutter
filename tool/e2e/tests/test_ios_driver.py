@@ -408,7 +408,7 @@ def test_a_hostile_udid_cannot_break_out_of_a_command():
     assert shlex.quote(hostile) in ssh.joined()
 
 
-def test_launch_terminates_then_opens_a_session_for_the_example_bundle():
+def test_launch_terminates_and_relaunches_the_example_bundle_then_opens_a_session():
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
 
@@ -545,17 +545,24 @@ def test_launch_truncates_the_console_log_so_it_cannot_grow_unbounded():
 
 def test_launch_does_not_let_the_session_relaunch_the_app_out_from_under_it():
     # POST /session with a bundleId launches -- which for XCUIApplication means
-    # terminate-then-launch -- and that would kill the console capture started
-    # one step earlier. forceAppLaunch activates the running instance instead.
+    # terminate-then-launch -- and that kills the console capture started one
+    # step earlier. `forceAppLaunch: false` was meant to activate the running
+    # instance instead; it is a literal in the 16.2.2 binary but it does not
+    # stop the relaunch, measured on the rig 2026-08-29 where it failed every
+    # cell in _check_console. So the session names no bundle at all: it then
+    # launches nothing and attaches to whatever is foreground. Everything asked
+    # of a session here is coordinate- or device-level (tap, drag, keys,
+    # keyboard/dismiss, window/size) and /source is unscoped, so nothing needs
+    # the binding.
     ssh = FakeSsh(*launch_outputs())
 
     ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
 
     capabilities = payloads_for(ssh, "/session")[0]["capabilities"]["alwaysMatch"]
-    assert capabilities["forceAppLaunch"] is False
+    assert "bundleId" not in capabilities
+    assert "forceAppLaunch" not in capabilities
     # The Flutter engine never quiesces, so waiting for it times the request out.
     assert capabilities["shouldWaitForQuiescence"] is False
-    assert capabilities["bundleId"] == "com.paycross.paycrossFlutterExample"
 
 
 def test_launch_checks_the_console_capture_after_the_session_not_before():
