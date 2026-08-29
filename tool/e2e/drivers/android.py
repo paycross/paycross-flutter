@@ -465,7 +465,7 @@ class AndroidDriver(Driver):
         self._tap_text(outcome)
 
     def cancel_challenge(self) -> None:
-        self._find(tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=120)
+        self.wait_acs()
         self._confirm_cancel()
 
     def cancel_form(self) -> None:
