@@ -146,7 +146,16 @@ def _urllib_transport(
 
 
 def _scrub(value: Any) -> Any:
-    """Drops every `session_token` from a decoded body, at any depth."""
+    """Drops every `session_token` from a decoded body, at any depth.
+
+    Deliberately narrower than `evidence.TOKEN_KEYS`, which this does not
+    share. This one guards an error message: the body is an API response, so
+    a token in it is whole and three-segmented, and the `_JWT` mask below
+    catches anything this key list misses. Evidence has neither guarantee --
+    it holds device dumps and console logs, where a token arrives truncated,
+    wrapped or decapitated -- so its list is longer and is paired with the
+    layering described in `evidence`'s module docstring.
+    """
     if isinstance(value, dict):
         return {k: _scrub(v) for k, v in value.items() if k != "session_token"}
     if isinstance(value, list):

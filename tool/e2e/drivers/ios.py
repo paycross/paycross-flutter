@@ -314,10 +314,21 @@ class IosDriver(Driver):
         Called before the capture exists, so the termination it provokes is
         spent on an app nobody is watching. WebDriverAgent reports the open
         session at the top level of /status, and null when there is none.
+
+        Whatever it reports is what gets deleted -- this does not check that
+        the session is one of ours, because WebDriverAgent has exactly one and
+        a foreign session would break this run just as thoroughly. That makes
+        one run per WebDriverAgent the standing rule, the same way one run per
+        emulator is on Android.
+
+        Either way no session is open when this returns, so the id held from
+        the previous cell is dropped rather than left to name something that
+        no longer exists.
         """
         open_session = self._wda("GET", "/status").get("sessionId")
         if open_session:
             self._wda("DELETE", f"/session/{open_session}")
+        self._session_id = None
 
     def install(self, app_path: str) -> None:
         """`app_path` is a path **on the Mac**: the .app is built there."""

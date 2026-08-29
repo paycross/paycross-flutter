@@ -592,6 +592,25 @@ def test_launch_closes_a_session_left_open_before_it_starts_the_capture():
     assert ssh.calls.index(deleted[0]) < started
 
 
+@pytest.mark.parametrize(
+    "status, answers",
+    [
+        (json.dumps({"sessionId": "stale-1"}), [json.dumps({"value": None})]),
+        (NO_OPEN_SESSION, []),
+    ],
+    ids=["one was open", "none was open"],
+)
+def test_closing_the_open_session_leaves_no_id_behind(status, answers):
+    # No session is open once this returns, whichever branch it took, so an id
+    # kept from the previous cell would name one that no longer exists.
+    ssh = FakeSsh(status, *answers)
+    d = driver(ssh, session_id="sess-old")
+
+    d._close_open_session()
+
+    assert d._session_id is None
+
+
 def test_launch_does_not_delete_a_session_when_none_is_open():
     ssh = FakeSsh(*launch_outputs())
 

@@ -151,16 +151,38 @@ def test_sheet_rearmed_on_ios_tolerates_the_regions_decimal_separator():
     assert tree.sheet_rearmed(nodes, "ios", "€12.50") is False
 
 
-def test_sheet_rearmed_on_ios_does_not_confuse_grouping_with_value():
-    # Separator-blind, not digit-blind: normalising must not turn €1,000.00
-    # into a match for €10.00.
-    nodes = [
-        replace(n, text="Pay €1,000.00") if n.identifier == "payButton" else n
-        for n in ios()
+def pay_button(label):
+    return [
+        replace(n, text=label) if n.identifier == "payButton" else n for n in ios()
     ]
 
-    assert tree.sheet_rearmed(nodes, "ios", "€10.00") is False
-    assert tree.sheet_rearmed(nodes, "ios", "€1,000.00") is True
+
+def test_sheet_rearmed_on_ios_does_not_confuse_grouping_with_value():
+    # Separator-blind, not digit-blind: neither the amount as written nor the
+    # separator-swapped variant may match the head of a longer number. A sheet
+    # re-armed at a thousand times the amount is exactly what the amount half
+    # of this predicate exists to catch.
+    #
+    # "Pay €1,000.00" alone does not prove it -- neither "€10.00" nor "€10,00"
+    # appears in it, so it passed before there was anything stopping them. The
+    # two that do reach the hole are below, one per separator convention.
+    assert tree.sheet_rearmed(pay_button("Pay €1,000.00"), "ios", "€10.00") is False
+    assert tree.sheet_rearmed(pay_button("Pay €1,000.00"), "ios", "€1,000.00") is True
+
+    # "€10,00", the swapped variant, is the head of "€10,000.00".
+    assert tree.sheet_rearmed(pay_button("Pay €10,000.00"), "ios", "€10.00") is False
+    # And "€10.00" as written is the head of "€10.000,00".
+    assert tree.sheet_rearmed(pay_button("Pay €10.000,00"), "ios", "€10.00") is False
+    # Each is still its own amount.
+    assert tree.sheet_rearmed(pay_button("Pay €10,000.00"), "ios", "€10,000.00") is True
+    assert tree.sheet_rearmed(pay_button("Pay €10.000,00"), "ios", "€10.000,00") is True
+
+
+def test_sheet_rearmed_on_ios_still_matches_an_amount_that_is_not_last():
+    # The guard looks at the character after the amount, so anything that is
+    # not part of a longer number has to keep matching.
+    assert tree.sheet_rearmed(pay_button("Pay €10.00 now"), "ios", "€10.00") is True
+    assert tree.sheet_rearmed(pay_button("Pay €10.00"), "ios", "€10.00") is True
 
 
 @pytest.mark.parametrize("platform", ["android", "ios"])

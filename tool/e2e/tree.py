@@ -151,6 +151,27 @@ def format_amount_en_us(minor_units: int, currency: str) -> str:
     return f"{symbol}{body}" if symbol else f"{currency} {body}"
 
 
+#: What may not follow a matched amount. The match is a substring, so without
+#: this "€10.00" is the head of "€10.000,00" and its swapped variant "€10,00"
+#: is the head of "€10,000.00" -- and a sheet re-armed at a thousand times the
+#: amount would satisfy the check that exists to catch exactly that. Only the
+#: tail needs guarding: `amount_text` opens with the currency symbol, so a
+#: longer number cannot run into it from the left.
+_AMOUNT_CONTINUES = frozenset(".,0123456789")
+
+
+def _carries_amount(text: str, amount_text: str) -> bool:
+    """`amount_text` is in `text` and is not the head of a longer number."""
+    for variant in _separator_variants(amount_text):
+        at = text.find(variant)
+        while at >= 0:
+            after = text[at + len(variant) : at + len(variant) + 1]
+            if after not in _AMOUNT_CONTINUES:
+                return True
+            at = text.find(variant, at + 1)
+    return False
+
+
 def _separator_variants(amount_text: str) -> tuple[str, ...]:
     """`amount_text` as written, and with `.` and `,` swapped.
 
@@ -184,7 +205,8 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
     satisfies the predicate.
 
     Only iOS takes the amount's punctuation as the device's business -- see
-    `_separator_variants`. The Android emulator is asserted to be `en-US` in
+    `_separator_variants`, and `_carries_amount` for why a substring match
+    alone is not enough once it does. The Android emulator is asserted `en-US` in
     `AndroidDriver.launch`, so there is nothing there for it to absorb, and an
     exact node-text match is what keeps `Pay €10.00` off the header's bare
     `€10.00` and off a Google Pay button.
@@ -202,13 +224,11 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
         # changing the banner's wording, which would break a text match
         # mid-campaign. Visibility is not required -- CardFormView puts the
         # banner last in the ScrollView, below the pinned footer.
-        variants = _separator_variants(amount_text)
         return bool(
             find_identifier(nodes, "errorBanner")
             and any(
-                variant in node.text
+                _carries_amount(node.text, amount_text)
                 for node in find_identifier(nodes, "payButton")
-                for variant in variants
             )
         )
     raise ValueError(f"unknown platform {platform!r}")

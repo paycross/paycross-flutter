@@ -912,6 +912,12 @@ def test_the_merchant_read_s_own_token_is_a_secret_for_the_rest_of_the_cell(
 
     logs = next(tmp_path.rglob("logs.txt")).read_text()
     assert reminted not in logs
+    # And not the headless tail either: that is the shape the leak really took
+    # on disk, not the whole token. `reminted[-24:]` rather than
+    # MINTED_LIKE_THE_REAL_ONE[-24:] -- the minted token's own last 24
+    # characters are the slice `reminted` replaced, so they never appear in
+    # this log at all and asserting their absence would prove nothing.
+    assert reminted[-24:] not in logs
     assert "REDACTED-SESSION-TOKEN" in logs
 
 

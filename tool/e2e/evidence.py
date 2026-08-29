@@ -4,6 +4,29 @@ The evidence root lives outside every git checkout (WSL reboots have killed
 runs before, and the campaign directory survives them). One directory per run,
 one subdirectory per cell, and a `progress.jsonl` written incrementally so an
 interrupted run can be resumed rather than restarted.
+
+Redaction is three rules, and the order of the first two is load-bearing:
+
+1. **Shape** -- `JWT_RE`, an `eyJ` head and one or more further base64url
+   segments of at least sixteen characters. Catches a token nobody named,
+   including one the device truncated before its signature.
+2. **Literal, and any long prefix, of a named secret** -- what the caller
+   knows it handed over. Never before the shape rule: it replaces a *head*,
+   and the shape rule is anchored on the `eyJ` that head begins with, so
+   running it first decapitates a token and hides the tail from rule 1.
+3. **Key** -- `scrub_resource` drops `TOKEN_KEYS` at any depth and the
+   `session=` parameter of any `*_url`, by name rather than by shape, and
+   hands back what it found.
+
+The runner stacks them per cell: it starts with the token it minted, and after
+the merchant read it adds whatever rule 3 returned -- a GET on an open session
+re-mints a token the runner never saw -- so everything filed after that read is
+covered by rule 2 as well.
+
+`sandbox._safe_to_echo` is a separate and narrower rule for error messages:
+it drops `session_token` and masks JWT-shaped text before truncating, so a
+refusal quoted into an exception carries no credential. It is not this
+pipeline and does not need to be, because nothing it produces is an artifact.
 """
 
 from __future__ import annotations
@@ -43,7 +66,7 @@ MIN_SECRET_CHARS = 8
 MIN_SECRET_PREFIX_CHARS = 48
 
 #: Keys whose value is a credential wherever they appear in a merchant
-#: resource. A GET on an *open* session re-mints a `session_token` and hands it
+#: resource. Wider than `sandbox._scrub`'s single key on purpose -- see there. A GET on an *open* session re-mints a `session_token` and hands it
 #: back, so the runner is given a live token it never minted and cannot name as
 #: a secret in advance -- which is how full tokens reached merchant.json in the
 #: first live iOS run. Dropped by key, so this holds however the value is
@@ -126,7 +149,11 @@ def scrub_resource(value: Any) -> tuple[Any, list[str]]:
     parameter -- never by shape. The value here is a live credential whatever
     it looks like, and the shape rule has already been shown to miss one.
 
-    The input is not mutated: `verify` reads the same resource afterwards.
+    The runner hands the scrubbed copy on to `verify` as well as to disk,
+    which is safe because `verify` reads none of the keys touched here -- it
+    wants `status`, `transactions` and the failure block. The caller's own
+    object is left alone regardless: this builds a new one rather than
+    deleting in place.
     """
     found: list[str] = []
 
