@@ -257,8 +257,10 @@ def _kind(error: BaseException) -> str:
     if isinstance(error, BudgetExceeded):
         return "budget"
     if isinstance(error, NotImplementedError):
-        # The driver saying the cell asked for a D2/D3 action. The cell file
-        # is wrong, not the rig.
+        # Either the driver saying the cell asked for an action it does not
+        # implement, or `_perform` saying the grammar accepts the verb but no
+        # branch executes it yet. Both mean the cell reached for a dimension
+        # that has not landed: the cell file is wrong, not the rig.
         return "authoring"
     return type(error).__name__
 
@@ -792,9 +794,10 @@ def run_cells(
                 )
             elif not result.passed and not result.authoring:
                 # Skepticism: prove the rig before believing the finding. Not
-                # for an authoring fault, though -- the driver refusing a D3
-                # verb says nothing about the rig, and a control cell costs a
-                # session and a minute.
+                # for an authoring fault, though -- a verb the driver does not
+                # implement, or whose `_perform` branch has not landed, says
+                # nothing about the rig, and a control cell costs a session
+                # and a minute.
                 checks += 1
                 check = run_cell(
                     control,
