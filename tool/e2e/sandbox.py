@@ -152,8 +152,48 @@ def _safe_to_echo(payload: Any) -> str:
     return _JWT.sub("<redacted>", json.dumps(_scrub(payload)))[:_ECHO_LIMIT]
 
 
-def _refresh_after(raw: dict[str, Any]) -> float:
-    """How long a freshly issued access token may be reused for."""
+def _jwt_exp(token: Any) -> float | None:
+    """The `exp` claim out of a JWT, or None if there is not one to read.
+
+    Deliberately does not verify the signature: this is scheduling, not
+    authentication. A forged `exp` costs an unnecessary refresh, and the API
+    is what decides whether a token is honoured.
+    """
+    if not isinstance(token, str):
+        return None
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    padded = parts[1] + "=" * (-len(parts[1]) % 4)
+    try:
+        # binascii.Error subclasses ValueError, so a payload that is not
+        # base64 at all lands here with the rest.
+        claims = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, TypeError):
+        return None
+    exp = claims.get("exp") if isinstance(claims, dict) else None
+    # bool is an int; `exp: true` is not a deadline.
+    if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+        return None
+    return float(exp)
+
+
+def _refresh_after(raw: dict[str, Any], now: float) -> float:
+    """How long a freshly issued access token may be reused for.
+
+    The JWT's own `exp` is preferred over `expires_in` because only one of
+    them describes *this* token. The M2M endpoint sits behind an API-Gateway
+    cache, and a cached hit arrives with a full `expires_in` restated as
+    though the token had just been minted -- so a client starting partway
+    through a token's life is told it has the whole thing. `exp` is inside the
+    signed payload and is not rewritten by the cache (cognito-m2m#1).
+
+    `expires_in` remains the fallback for a token that is not a JWT, or whose
+    payload carries no usable `exp`.
+    """
+    exp = _jwt_exp(raw.get("access_token"))
+    if exp is not None:
+        return max(exp - now - TOKEN_REFRESH_MARGIN_SECONDS, 0.0)
     try:
         lifetime = float(raw.get("expires_in", DEFAULT_TOKEN_LIFETIME_SECONDS))
     except (TypeError, ValueError):
@@ -206,11 +246,16 @@ class Sandbox:
         *,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        now: Callable[[], float] = time.time,
     ):
         self._env = dict(env)
         self._transport = transport or _urllib_transport
         self._sleep = sleep
         self._monotonic = monotonic
+        # Wall clock, because a JWT `exp` is an epoch stamp. The expiry itself
+        # is still tracked on the monotonic clock, which a clock adjustment
+        # mid-run cannot move.
+        self._now = now
         self._access_token: str | None = None
         self._token_expires_at = 0.0
 
@@ -356,7 +401,7 @@ class Sandbox:
         if not isinstance(raw, dict) or "access_token" not in raw:
             raise SandboxError("the token endpoint returned no access_token")
         self._access_token = raw["access_token"]
-        self._token_expires_at = self._monotonic() + _refresh_after(raw)
+        self._token_expires_at = self._monotonic() + _refresh_after(raw, self._now())
         return self._access_token
 
 

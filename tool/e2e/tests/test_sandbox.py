@@ -1,3 +1,4 @@
+import base64
 import http.client
 import json
 import urllib.error
@@ -46,7 +47,14 @@ def _canned(response):
 
 
 class FakeClock:
-    """A monotonic clock the test moves by hand; sleeping moves it."""
+    """A monotonic clock the test moves by hand; sleeping moves it.
+
+    `time` is the wall clock the JWT `exp` claim is measured against. It
+    advances with `now`, so a test moves both by assigning `now`.
+    """
+
+    #: Arbitrary, and far from zero so an `exp` is a plausible epoch stamp.
+    WALL_EPOCH = 1_700_000_000.0
 
     def __init__(self):
         self.now = 0.0
@@ -55,9 +63,22 @@ class FakeClock:
     def monotonic(self):
         return self.now
 
+    def time(self):
+        return self.WALL_EPOCH + self.now
+
     def sleep(self, seconds):
         self.slept.append(seconds)
         self.now += seconds
+
+
+def jwt_with(payload):
+    """A syntactically real JWT carrying `payload`; the signature is a stub."""
+    def segment(raw):
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    header = segment(json.dumps({"alg": "RS256"}).encode())
+    body = segment(json.dumps(payload).encode())
+    return header + "." + body + ".c2lnbmF0dXJl"
 
 
 def access_token_response(expires_in=None, token="bearer-789"):
@@ -72,7 +93,11 @@ def client_with(*responses, clock=None):
     transport = FakeTransport(*responses)
     return (
         sandbox.Sandbox(
-            ENV, transport=transport, sleep=clock.sleep, monotonic=clock.monotonic
+            ENV,
+            transport=transport,
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            now=clock.time,
         ),
         transport,
         clock,
@@ -448,6 +473,107 @@ def test_a_4xx_is_never_retried():
 
     assert len(transport.calls) == 2
     assert clock.slept == []
+
+
+def test_the_refresh_is_scheduled_from_the_jwt_exp_not_from_expires_in():
+    # The gateway replays a cached token with a full expires_in, so only the
+    # signed `exp` says when this token actually dies. Here they disagree by
+    # 50 minutes and `exp` must win.
+    clock = FakeClock()
+    short_lived = jwt_with({"exp": clock.time() + 600})
+    client, transport, _ = client_with(
+        access_token_response(expires_in=3600, token=short_lived),
+        MINTED,
+        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() + 4000})),
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+    # Past exp - 300, and far short of the 3300 s expires_in would have bought.
+    clock.now = 400
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert len(_token_fetches(transport)) == 2
+
+
+def test_a_token_whose_exp_has_not_come_near_is_still_reused():
+    clock = FakeClock()
+    client, transport, _ = client_with(
+        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})),
+        MINTED,
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+    clock.now = 3600 - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert len(_token_fetches(transport)) == 1
+
+
+def test_a_token_handed_over_already_expired_is_not_reused():
+    # Exactly the cached-token case: the gateway replays a token with minutes
+    # already spent but a full expires_in. `exp` is in the past, so the cache
+    # window collapses to zero and the next call refetches rather than
+    # spending the run on 401s. (The request that fetched it still goes out
+    # with it; the 401 retry is what rescues that one.)
+    clock = FakeClock()
+    client, transport, _ = client_with(
+        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() - 1})),
+        MINTED,
+        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})),
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert len(_token_fetches(transport)) == 2
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "bearer-789",
+        "not.a.jwt",
+        pytest.param("", id="empty"),
+        "eyJhbGciOiJSUzI1NiJ9.bm90LWpzb24.c2ln",
+    ],
+)
+def test_a_token_with_no_readable_exp_falls_back_to_expires_in(token):
+    clock = FakeClock()
+    client, transport, _ = client_with(
+        access_token_response(expires_in=3600, token=token),
+        MINTED,
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+    clock.now = 3600 - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert len(_token_fetches(transport)) == 1
+
+
+@pytest.mark.parametrize("exp", ["soon", None, True, [1]])
+def test_an_exp_that_is_not_a_number_falls_back_to_expires_in(exp):
+    clock = FakeClock()
+    client, transport, _ = client_with(
+        access_token_response(expires_in=3600, token=jwt_with({"exp": exp})),
+        MINTED,
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+    clock.now = 3600 - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert len(_token_fetches(transport)) == 1
 
 
 UNAUTHORIZED = (
