@@ -453,7 +453,10 @@ def run_cell(
                 # Not ignore_errors: a live credential still on disk is not
                 # this cell's verdict, but it is nobody's if it is swallowed.
                 run_problems.append(
-                    _redacted(f"token file left behind at {token_dir}: {error}")
+                    _redacted(
+                        f"token: {cell.id}'s token file was left behind at "
+                        f"{token_dir}: {error}"
+                    )
                 )
 
     matched, transaction_id = verify.match_label(expected.label, label)
@@ -556,21 +559,21 @@ def run_cell(
     return result
 
 
-def run_cells(
-    platform: str,
-    cell_dir: Path,
-    evidence_root: Path,
-    driver,
-    sandbox,
-    run_all: bool = False,
-    only: list[str] | None = None,
-    app_path: str | None = None,
-) -> Report:
+def check_cells(cell_dir: Path, platform: str) -> list[Cell]:
+    """Loads a cell directory and refuses everything wrong with it up front.
+
+    Everything here is knowable before a credential is read or a device is
+    touched, and `main` calls it ahead of the env file for exactly that
+    reason: an authoring mistake reported after the credentials have been
+    opened has already cost more than it should.
+    """
     everything = load_cells(Path(cell_dir), platform)
     if not everything:
         # Running nothing and exiting 0 reads as "everything passed".
         raise CellError(f"{cell_dir}: no cell in it runs on {platform}")
     for cell in everything:
+        # The evidence tree's own guard: a cell id becomes a directory name
+        # and a token filename, and neither may climb out of where it belongs.
         try:
             evidence.check_cell_id(cell.id)
         except ValueError as error:
@@ -583,6 +586,22 @@ def run_cells(
             f"{cell_dir}: no {CONTROL_CELL_ID!r} cell runs on {platform}, so "
             "no failure here could be checked against a known-good payment"
         )
+    return everything
+
+
+def run_cells(
+    platform: str,
+    cell_dir: Path,
+    evidence_root: Path,
+    driver,
+    sandbox,
+    run_all: bool = False,
+    only: list[str] | None = None,
+    app_path: str | None = None,
+) -> Report:
+    # Checked again rather than taken on trust: run_cells is callable on its
+    # own, and this is the last point before a session is minted.
+    everything = check_cells(cell_dir, platform)
     chosen = everything
     if only:
         unknown = sorted(set(only) - {c.id for c in everything})
@@ -689,7 +708,8 @@ def _summary(report: Report) -> str:
     checks = sum(1 for r in report.results if r.is_control_check)
     return (
         f"{_plural(len(cells), 'cell')}, {passed} passed, "
-        f"{len(cells) - passed} failed, {_plural(checks, 'control check')}, "
+        f"{len(cells) - passed} failed, {len(report.skipped)} skipped, "
+        f"{_plural(checks, 'control check')}, "
         f"aborted: {'yes' if report.aborted else 'no'}"
     )
 
@@ -747,10 +767,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        # Loaded here as well as inside run_cells, and before the credentials
-        # are read or a device is touched: a typo in a cell file deserves one
-        # line rather than a traceback halfway through a matrix.
-        load_cells(args.cells, args.platform)
+        # Before the credentials are read or a device is touched: a cell
+        # directory that cannot be run deserves one line, not a traceback
+        # halfway through a matrix -- or after the env file has been opened.
+        check_cells(args.cells, args.platform)
         sandbox = Sandbox.from_env_file(args.env_file)
         report = run_cells(
             platform=args.platform,

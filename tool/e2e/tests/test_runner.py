@@ -1266,6 +1266,9 @@ def test_a_token_file_that_will_not_go_is_a_run_problem(
 
     assert report.results[0].passed
     assert any("token" in p for p in report.problems)
+    # Which cell's, because a matrix run leaves one temp directory per cell
+    # and "a token file" names none of them.
+    assert any("control" in p for p in report.problems)
     assert report.exit_code != 0
 
 
@@ -1430,7 +1433,9 @@ def test_the_summary_line_counts_the_cells_and_the_control_checks(
     )
 
     summary = capsys.readouterr().out.splitlines()[-1]
-    assert summary == "2 cells, 1 passed, 1 failed, 1 control check, aborted: no"
+    assert summary == (
+        "2 cells, 1 passed, 1 failed, 0 skipped, 1 control check, aborted: no"
+    )
 
 
 def test_perform_names_the_argument_it_cannot_perform():
@@ -1446,3 +1451,89 @@ def test_perform_names_the_argument_it_cannot_perform():
         )
 
     assert "settled" in str(error.value)
+
+
+# -- what main checks before it opens the credentials -------------------------
+
+
+def cli(cells_dir, tmp_path, *extra):
+    """main's argv, with an env file that does not exist.
+
+    Reading it would raise before any authoring mistake could be reported, so
+    the checks that come first are exactly what these tests are about.
+    """
+    return [
+        "--platform",
+        "android",
+        "--cells",
+        str(cells_dir),
+        "--evidence-root",
+        str(tmp_path / "evidence"),
+        "--env-file",
+        str(tmp_path / "absent.env"),
+        *extra,
+    ]
+
+
+def test_main_refuses_a_control_less_directory_before_the_env_file(tmp_path, capsys):
+    directory = tmp_path / "d0"
+    directory.mkdir()
+    (directory / "frictionless.yaml").write_text(
+        textwrap.dedent(CELL.format(id="frictionless")), encoding="utf-8"
+    )
+
+    code = runner.main(cli(directory, tmp_path))
+
+    error = capsys.readouterr().err
+    assert code == runner.EXIT_SETUP
+    assert "control" in error
+    assert "absent.env" not in error
+
+
+def test_main_refuses_an_unsafe_cell_id_before_the_env_file(tmp_path, capsys):
+    directory = tmp_path / "d0"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")), encoding="utf-8"
+    )
+    (directory / "...yaml").write_text(
+        textwrap.dedent(CELL.format(id="..")), encoding="utf-8"
+    )
+
+    code = runner.main(cli(directory, tmp_path))
+
+    error = capsys.readouterr().err
+    assert code == runner.EXIT_SETUP
+    assert "unsafe" in error.lower()
+    assert "absent.env" not in error
+
+
+def test_the_summary_counts_what_a_resume_skipped(
+    cell_dir, tmp_path, capsys, monkeypatch
+):
+    class StubSandbox:
+        @staticmethod
+        def from_env_file(path):
+            return FakeSandbox()
+
+    monkeypatch.setattr(runner, "Sandbox", StubSandbox)
+    monkeypatch.setattr(runner, "_build_driver", lambda platform: FakeDriver())
+    argv = [
+        "--platform",
+        "android",
+        "--cells",
+        str(cell_dir),
+        "--evidence-root",
+        str(tmp_path / "evidence"),
+        "--env-file",
+        str(tmp_path / "never-opened.env"),
+    ]
+    runner.main(argv + ["--all"])
+    capsys.readouterr()
+
+    runner.main(argv)
+
+    summary = capsys.readouterr().out.splitlines()[-1]
+    assert summary == (
+        "0 cells, 0 passed, 0 failed, 2 skipped, 0 control checks, aborted: no"
+    )
