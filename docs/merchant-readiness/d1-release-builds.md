@@ -67,9 +67,12 @@ com.paycross.sdk.PayCrossEnvironment       -> n5.b:
 com.paycross.flutter.PayCrossPlugin        -> l5.b:
 ```
 
-`com.paycross.sdk.PayCrossContract` maps to `R8$$REMOVED$$CLASS$$419` — R8
-inlined a single-use class into its one call site in `deliver()`. The classes the
-consumer rules name are the ones that must survive, and they did.
+`com.paycross.sdk.PayCrossContract` maps to `R8$$REMOVED$$CLASS$$419`. That is
+R8 inlining both of its methods into their call sites in `PayCrossPlugin` —
+`createIntent` at the launch (`:163`) and `parseResult` in `deliver` (`:200`) —
+which it can do because the class holds no state and is instantiated fresh at
+each use. The classes the consumer rules name are the ones that must survive an
+`Intent`, and they did.
 
 ### The live run
 
