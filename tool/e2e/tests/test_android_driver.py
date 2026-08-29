@@ -39,7 +39,11 @@ class FakeShell:
 
 
 def driver(shell):
-    return android.AndroidDriver(shell=shell)
+    # A no-op sleep. Only the driver's *pacing* waits go through it -- the
+    # per-digit gap and the dump backoff -- so the suite does not pay for
+    # retries it is deliberately provoking. The UI-settling waits are real
+    # `time.sleep` and still cost what they cost.
+    return android.AndroidDriver(shell=shell, sleep=lambda _: None)
 
 
 def test_install_stages_the_apk_where_the_windows_adb_can_read_it(tmp_path):
@@ -97,6 +101,21 @@ def test_type_pan_sends_one_keycode_per_digit():
         "shell input keyevent 8",
         "shell input keyevent 8",
     ]
+
+
+def test_type_digits_paces_itself_so_the_formatter_can_keep_up():
+    # fill-card-raw.sh slept 0.4 s after every keyevent, and that is the timing
+    # the 0.3.2 caret fix was proven under. Typing flat out would let a
+    # formatter that merely cannot keep up read as a returning caret bug --
+    # a false finding against the SDK, which is the expensive direction.
+    naps = []
+    d = android.AndroidDriver(shell=FakeShell(), sleep=naps.append)
+
+    d._type_digits("4111")
+
+    assert android.DIGIT_PACING_SECONDS == 0.4
+    # One after each digit, last one included: that is what the seed did.
+    assert naps == [0.4] * 4
 
 
 def test_input_text_escapes_the_space_that_would_otherwise_split_the_argument():
@@ -210,6 +229,33 @@ def test_wait_label_returns_the_contract_label():
     )
 
     assert label.startswith("Paid 1000 EUR")
+
+
+def test_a_wait_rides_out_a_device_that_will_not_dump():
+    # uiautomator refuses while the UI animates, which is exactly what it is
+    # doing during the waits that matter -- the 120 s ACS wait, the 60 s sheet
+    # wait. Three refusals in a row must not end a cell that still has 10 s of
+    # its own deadline left; the poll's next round gets a clean tree.
+    refused = ["", ""] * 3  # one whole dump_tree's worth of attempts
+    tree_xml = (FIXTURES / "android-result.uix").read_text()
+    shell = FakeShell(*refused, "", tree_xml)
+
+    label = driver(shell).wait_label(
+        timeout=10, interval=0, prefixes=("Paid ", "result:")
+    )
+
+    assert label.startswith("Paid 1000 EUR")
+
+
+def test_a_wait_past_its_deadline_blames_the_dump_not_the_missing_node():
+    # Once the deadline is gone the tolerance goes with it, so the error names
+    # the device rather than reporting a node that was never looked for.
+    shell = FakeShell(*(["", ""] * 3))
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).wait_label(timeout=0, interval=0)
+
+    assert "dump" in str(excinfo.value)
 
 
 def test_wait_label_timing_out_raises_rather_than_returning_none():

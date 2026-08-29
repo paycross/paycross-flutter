@@ -44,6 +44,13 @@ _LAUNCHER = "android.intent.category.LAUNCHER"
 #: `input text` splits its argument on spaces; %s is its escape.
 _SPACE = "%s"
 
+#: The gap fill-card-raw.sh left after every keyevent, and therefore the
+#: timing the 0.3.2 caret fix was proven under on this emulator. Typing flat
+#: out would let a formatter that merely cannot keep up present as the caret
+#: bug returning -- a false finding against the SDK, which is the expensive
+#: direction to be wrong in.
+DIGIT_PACING_SECONDS = 0.4
+
 #: KEYCODE_0. Digit n is _KEYCODE_ZERO + n.
 _KEYCODE_ZERO = 7
 _KEYCODE_DEL = 67
@@ -79,10 +86,16 @@ class AndroidDriver(Driver):
         shell=_run,
         staging_dir: str | Path = STAGING_DIR,
         windows_staging: str = WINDOWS_STAGING,
+        sleep=time.sleep,
     ):
         self._shell = shell
         self._staging_dir = Path(staging_dir)
         self._windows_staging = windows_staging
+        # Only the *pacing* waits go through this -- the per-digit gap and the
+        # dump backoff -- so a unit test can stop paying for retries it is
+        # deliberately provoking. The UI-settling waits stay on `time.sleep`:
+        # they are the rig's real timing and Task 10 reads them as such.
+        self._sleep = sleep
 
     # -- primitives ----------------------------------------------------------
 
@@ -107,19 +120,39 @@ class AndroidDriver(Driver):
         """
         for digit in digits:
             self._key(_KEYCODE_ZERO + int(digit))
+            # After each digit, last one included, as the seed script did.
+            self._sleep(DIGIT_PACING_SECONDS)
 
-    def _nodes(self):
-        return tree.parse_uiautomator(self.dump_tree())
+    def _nodes(self, tolerate: bool = False):
+        """The current tree, or `[]` if `tolerate` and the device would not dump.
+
+        `uiautomator` refuses while the UI animates, which is precisely what it
+        is doing through the waits that matter -- the 120 s ACS wait, the 60 s
+        wait for the sheet. A polling caller has its own deadline and should
+        spend it, so it tolerates a refusal and looks again. A one-shot read
+        has no second chance and must not silently see an empty screen: the
+        PAN check would call it a formatter bug and the token check a truncated
+        paste, when the truth is that nothing was read at all.
+        """
+        try:
+            return tree.parse_uiautomator(self.dump_tree())
+        except DriverError:
+            if not tolerate:
+                raise
+            return []
 
     def _find(
         self, finder, needle: str, what: str, timeout: float = 30, interval: float = 2
     ):
         deadline = time.monotonic() + timeout
         while True:
-            hits = finder(self._nodes(), needle)
+            # Tolerate a refused dump only while there is deadline left to
+            # spend; on the last look the dump's own error is the honest one.
+            live = time.monotonic() < deadline
+            hits = finder(self._nodes(tolerate=live), needle)
             if hits:
                 return hits[0]
-            if time.monotonic() >= deadline:
+            if not live:
                 raise DriverError(f"{what} {needle!r} never appeared within {timeout}s")
             time.sleep(interval)
 
@@ -252,10 +285,11 @@ class AndroidDriver(Driver):
     ) -> str:
         deadline = time.monotonic() + timeout
         while True:
-            label = tree.label_from_tree(self._nodes(), prefixes)
+            live = time.monotonic() < deadline
+            label = tree.label_from_tree(self._nodes(tolerate=live), prefixes)
             if label is not None:
                 return label
-            if time.monotonic() >= deadline:
+            if not live:
                 raise DriverError(f"no contract label within {timeout}s")
             time.sleep(interval)
 
@@ -280,9 +314,13 @@ class AndroidDriver(Driver):
     def wait_rearmed(self, amount_text: str, timeout: float, interval: float = 2) -> bool:
         deadline = time.monotonic() + timeout
         while True:
-            if tree.sheet_rearmed(self._nodes(), "android", amount_text):
+            live = time.monotonic() < deadline
+            # A device that will not dump raises out of here rather than
+            # returning False: "the sheet did not re-arm" is a cell verdict and
+            # this is not one.
+            if tree.sheet_rearmed(self._nodes(tolerate=live), "android", amount_text):
                 return True
-            if time.monotonic() >= deadline:
+            if not live:
                 return False
             time.sleep(interval)
 
@@ -304,7 +342,8 @@ class AndroidDriver(Driver):
         `DriverError` and so escapes every polling loop -- one transient read
         would abort the cell.
         """
-        problem = "the device wrote no dump"
+        if attempts < 1:
+            raise ValueError(f"attempts must be at least 1, got {attempts}")
         for attempt in range(attempts):
             # One round trip, so this stays two adb invocations: a dump that
             # never ran cannot leave the previous one behind to be read.
@@ -315,14 +354,14 @@ class AndroidDriver(Driver):
             try:
                 ET.fromstring(raw)
             except ET.ParseError as exc:
-                problem = str(exc)
+                problem = exc
             else:
                 return raw
             if attempt + 1 < attempts:
-                time.sleep(interval)
+                self._sleep(interval)
         raise DriverError(
             f"no parsable uiautomator dump in {attempts} attempts: {problem}"
-        )
+        ) from problem
 
     def screenshot(self) -> bytes:
         """Black for the whole sheet: PaymentActivity sets FLAG_SECURE.
