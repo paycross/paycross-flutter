@@ -13,7 +13,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 #: A session token is a JWT: three base64url segments. Anchored on the `eyJ`
 #: that every `{"` header base64-encodes to, and with a length floor so an
@@ -22,19 +22,33 @@ JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{
 
 REDACTED = b"[REDACTED-SESSION-TOKEN]"
 
+#: A `secrets` entry shorter than this is ignored rather than replaced.
+#: Nothing that short is a credential worth protecting, and blanket-replacing
+#: a three-character string would corrupt every artifact it appears in.
+MIN_SECRET_CHARS = 8
 
-def redact(data: bytes) -> bytes:
-    """Removes JWT-shaped strings from an artifact.
+
+def redact(data: bytes, secrets: Iterable[str | None] = ()) -> bytes:
+    """Removes JWT-shaped strings, and any literal secret named, from an artifact.
 
     Runs over **every** artifact before it touches disk, accessibility dumps
     included: the example app's token field still holds the session token on
     the result screen, and that is exactly where full 1011-character tokens
     leaked into `.uix` files in the 2026-08-26 run.
 
+    `secrets` is what the caller *knows* is sensitive -- the runner passes the
+    session token it just minted. The shape rule alone is not enough: it wants
+    sixteen characters a segment, so a shorter token slips through it, and a
+    log line can wrap a token in a way no regex was written for. A caller who
+    holds the exact string should say so.
+
     Byte-level and encoding-agnostic, so a PNG passes through untouched. That
     is deliberate rather than lucky: a screenshot cannot be redacted, so the
     runner never captures one of a screen showing the token.
     """
+    for secret in secrets:
+        if secret and len(secret) >= MIN_SECRET_CHARS:
+            data = data.replace(secret.encode("utf-8"), REDACTED)
     return JWT_RE.sub(REDACTED, data)
 
 
@@ -81,13 +95,22 @@ class Run:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def write(self, cell_id: str, name: str, data: bytes) -> Path:
+    def write(
+        self,
+        cell_id: str,
+        name: str,
+        data: bytes,
+        *,
+        secrets: Iterable[str | None] = (),
+    ) -> Path:
         """Writes one artifact, redacted. Returns where it landed."""
         path = self.cell_dir(cell_id) / name
-        path.write_bytes(redact(data))
+        path.write_bytes(redact(data, secrets))
         return path
 
-    def append_progress(self, record: dict[str, Any]) -> None:
+    def append_progress(
+        self, record: dict[str, Any], *, secrets: Iterable[str | None] = ()
+    ) -> None:
         """Appends one line and fsyncs it, so a killed run leaves real progress.
 
         One fsync per cell against a cell that takes tens of seconds is free,
@@ -101,7 +124,7 @@ class Run:
         """
         line = json.dumps({**record, "at": _now(), "platform": self.platform})
         with self.progress_path.open("ab") as handle:
-            handle.write(redact(line.encode()) + b"\n")
+            handle.write(redact(line.encode(), secrets) + b"\n")
             handle.flush()
             os.fsync(handle.fileno())
 

@@ -51,6 +51,57 @@ def test_redacts_every_occurrence_and_leaves_short_lookalikes_alone():
     assert b"eyJshort.a.b" in out
 
 
+#: A token the shape rule cannot see: its middle segment is ten characters
+#: and JWT_RE wants sixteen. Not every environment mints a 1011-character JWT,
+#: and the runner knows the exact string it handed to the device.
+SHORT_TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJhIjoxfQ.sig"
+
+
+def test_redacts_a_literal_secret_the_shape_rule_misses():
+    dump = f'<node text="{SHORT_TOKEN}"/>'.encode()
+    assert evidence.redact(dump) == dump
+
+    out = evidence.redact(dump, secrets=[SHORT_TOKEN])
+
+    assert SHORT_TOKEN.encode() not in out
+    assert b"[REDACTED-SESSION-TOKEN]" in out
+
+
+def test_a_secret_too_short_to_be_a_token_is_left_alone():
+    # Blanket-replacing a three-character string would corrupt every artifact
+    # it appears in, and nothing that short is a credential worth protecting.
+    text = b"a status of open, an id of sess-0"
+
+    assert evidence.redact(text, secrets=["open"]) == text
+
+
+def test_an_empty_or_missing_secret_is_ignored():
+    text = b"<hierarchy/>"
+
+    assert evidence.redact(text, secrets=["", None]) == text
+
+
+def test_write_scrubs_the_literal_secret_it_is_given(tmp_path):
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+
+    path = run.write(
+        "control", "logs.txt", f"token={SHORT_TOKEN}".encode(), secrets=[SHORT_TOKEN]
+    )
+
+    assert SHORT_TOKEN.encode() not in path.read_bytes()
+
+
+def test_append_progress_scrubs_the_literal_secret_too(tmp_path):
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+
+    run.append_progress(
+        {"cell": "control", "problems": [f"driver: the field reads {SHORT_TOKEN}"]},
+        secrets=[SHORT_TOKEN],
+    )
+
+    assert SHORT_TOKEN.encode() not in (tmp_path / "r1" / "progress.jsonl").read_bytes()
+
+
 def test_screenshot_bytes_pass_through_untouched():
     png = png_bytes()
 
