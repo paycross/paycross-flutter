@@ -1,10 +1,12 @@
 """The action vocabulary a cell file can use, as one interface.
 
-Every method a Phase-0 cell needs is implemented on both drivers. The four
-lifecycle actions at the bottom -- background, rotate, airplane, kill_activity
--- are declared here and raise NotImplementedError: they belong to D3, they are
-in the vocabulary so cell files can be written against a stable interface, and
-a stub that raises is honest where a stub that silently does nothing is not.
+Every method a Phase-0 cell needs is implemented on both drivers. The actions
+and expectations at the bottom are declared here and raise
+NotImplementedError: they belong to a later dimension, they are in the
+vocabulary so cell files can be written against a stable interface, and a stub
+that raises is honest where a stub that silently does nothing is not. It is
+also what keeps a premature cell an authoring fault rather than an
+AttributeError the runner would mistake for a broken device.
 
 `_nodes` and `_poll` live here too. They were written twice, once per driver,
 and were identical but for which parser turned a dump into nodes; the runner is
@@ -280,7 +282,19 @@ class Driver(ABC):
         stand in for the failure it was already reporting.
         """
 
-    # -- D3, declared now so the vocabulary is stable -------------------------
+    # -- later dimensions, declared now so the vocabulary is stable -----------
+    #
+    # Every one of these is in the action grammar from Phase 0 so cell files
+    # can be written against a stable interface, and raises until the
+    # dimension that owns it arrives. NotImplementedError rather than a
+    # missing attribute is the whole point: `run_cell` reads it as a
+    # cell-authoring fault and spends no interleaved control check on it,
+    # where an AttributeError reads as a device problem -- and two of those in
+    # a row abort a forty-minute matrix as a rig fault.
+    #
+    # `airplane` is D2's and AndroidDriver implements it; the declaration
+    # stands because IosDriver overrides it with R6's reason instead, and a
+    # third platform would want the same honest refusal.
 
     def background(self, seconds: float) -> None:
         raise NotImplementedError("background is a D3 action; Phase 0 does not use it")
@@ -289,9 +303,43 @@ class Driver(ABC):
         raise NotImplementedError("rotate is a D3 action; Phase 0 does not use it")
 
     def airplane(self, on: bool) -> None:
-        raise NotImplementedError("airplane is a D3 action; Phase 0 does not use it")
+        raise NotImplementedError("airplane is a D2 action; this driver has none")
 
     def kill_activity(self) -> None:
         raise NotImplementedError(
             "kill_activity is a D3 action; Phase 0 does not use it"
         )
+
+    def dont_keep_activities(self, on: bool) -> None:
+        raise NotImplementedError("dont_keep_activities is a D3 action, Android only")
+
+    def type_cvv(self, cvv: str) -> None:
+        raise NotImplementedError("type_cvv is a D5 action; saved cards are D5's")
+
+    def tap_google_pay(self) -> None:
+        raise NotImplementedError("Google Pay is a D4 action, Android only")
+
+    def select_saved_card(self) -> None:
+        raise NotImplementedError("saved cards are a D5 action")
+
+    def save_card(self) -> None:
+        raise NotImplementedError("saved cards are a D5 action")
+
+    # -- expectations, same contract ------------------------------------------
+    #
+    # `EXPECTATIONS` opens all of these to cell authors from Phase 0 while the
+    # methods behind three of them are not written until D4 and D5. Without a
+    # declaration a cell using one early raises AttributeError, which is
+    # exactly the miscategorised error the block above is about.
+
+    def wait_acs(self, timeout: float) -> bool:
+        raise NotImplementedError("wait_acs is a D2 predicate; this driver has none")
+
+    def wait_google_pay(self, timeout: float) -> bool:
+        raise NotImplementedError("Google Pay is a D4 expectation, Android only")
+
+    def wait_no_google_pay(self, timeout: float) -> bool:
+        raise NotImplementedError("Google Pay is a D4 expectation, Android only")
+
+    def wait_saved_card(self, timeout: float) -> bool:
+        raise NotImplementedError("saved cards are a D5 expectation")

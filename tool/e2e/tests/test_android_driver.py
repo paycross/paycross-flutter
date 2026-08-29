@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from tool.e2e import cells
 from tool.e2e.cells import Card
 from tool.e2e.drivers import android, base
 from tool.e2e.drivers.base import DriverError
@@ -1076,3 +1077,47 @@ def test_wait_acs_says_which_page_never_came():
         driver(shell).wait_acs(timeout=0)
 
     assert "sandbox ACS page" in str(excinfo.value)
+
+
+# -- the vocabulary that later dimensions fill in ------------------------------
+
+
+#: Everything `cells.py` accepts today whose driver method belongs to a later
+#: dimension, with the arguments `runner._perform` calls it with. Declared on
+#: `Driver` and raising, rather than simply absent: `run_cell` reads
+#: NotImplementedError as a cell-authoring fault and spends no control check on
+#: it, where an AttributeError reads as a device problem -- and two of those in
+#: a row abort a forty-minute matrix as a rig fault.
+NOT_LANDED_YET = [
+    ("background", (5,)),
+    ("rotate", ()),
+    ("kill_activity", ()),
+    ("dont_keep_activities", (True,)),
+    ("type_cvv", ("123",)),
+    ("tap_google_pay", ()),
+    ("select_saved_card", ()),
+    ("save_card", ()),
+    ("wait_google_pay", (30,)),
+    ("wait_no_google_pay", (20,)),
+    ("wait_saved_card", (30,)),
+]
+
+
+@pytest.mark.parametrize("name, args", NOT_LANDED_YET)
+def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
+    d = driver(FakeShell())
+
+    with pytest.raises(NotImplementedError):
+        getattr(d, name)(*args)
+
+
+def test_every_expectation_reaches_a_driver_attribute():
+    # `EXPECTATIONS` is what a cell author may write and this is what the
+    # runner will call, so the two cannot be allowed to drift: an expectation
+    # with no method behind it raises AttributeError, which the runner reads
+    # as a broken device rather than as the authoring mistake it is.
+    for expectation in cells.EXPECTATIONS:
+        method = (
+            "wait_no_label" if expectation == "no_result" else f"wait_{expectation}"
+        )
+        assert hasattr(driver(FakeShell()), method), expectation
