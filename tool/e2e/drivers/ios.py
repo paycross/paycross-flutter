@@ -846,17 +846,14 @@ class IosDriver(Driver):
 
     # -- actions -------------------------------------------------------------
 
-    def paste_token(self, token_path: Path) -> None:
-        """Copies the token in through the pasteboard, never a command line.
+    def _enter_token_text(self, text: str) -> None:
+        """Everything `paste_token` does up to and including the read-back.
 
         The token reaches `simctl pbcopy` on ssh's stdin, so it is never an
         argument on either machine and never lands on the Mac's disk at all.
         The pasteboard is overwritten in a `finally`: left alone it outlives
         the cell and anything on the simulator can read it.
         """
-        token_path = Path(token_path)
-        text = read_token(token_path, verb="paste")
-
         field = self._find(
             TOKEN_FIELD, timeout=SCREEN_TIMEOUT_SECONDS, match=_is_token_field
         )
@@ -897,8 +894,59 @@ class IosDriver(Driver):
                 "pasteboard or the Paste item did not take"
             )
 
-        self.tap_identifier(EXAMPLE_PAY, identifier_only=True)
+    def paste_token(self, token_path: Path) -> None:
+        self._enter_token_text(read_token(Path(token_path), verb="paste"))
+        self.tap_example_pay()
         self._find(PAY_BUTTON, timeout=SCREEN_TIMEOUT_SECONDS)
+
+    def present_token(self, token_path: Path) -> None:
+        """The token and the example's Pay, with no wait for a sheet.
+
+        `paste_token` ends by waiting 60 s for the sheet. For a token the SDK
+        is expected to refuse there is never going to be one -- the refusal
+        happens before `present` is called at all (PaymentSheet.swift:42-51
+        against line 65) -- so that wait spends a minute and then reports
+        "payButton never appeared" instead of the label the app has been
+        showing the whole time.
+        """
+        self._enter_token_text(read_token(Path(token_path), verb="paste"))
+        self.tap_example_pay()
+
+    def tap_example_pay(self) -> None:
+        # Identifier-only, like every other tap in here that could reach two
+        # screens: the example's Pay is untagged, so `name` is WDA's fallback
+        # to the label, and the sheet's own payButton is a different element.
+        self.tap_identifier(EXAMPLE_PAY, identifier_only=True)
+
+    def enter_token(self, literal: str) -> None:
+        """Types a short literal into the example's token field.
+
+        Deliberately not through `read_token`: what the SDK does with
+        something that is *not* a credential is the whole point of the cells
+        that use this. `cells.py` caps the literal at 200 printable,
+        space-free, colon-free characters, so nothing a live token could be
+        fits through here.
+        """
+        self._tap_node(
+            self._find(
+                TOKEN_FIELD, timeout=SCREEN_TIMEOUT_SECONDS, match=_is_token_field
+            )
+        )
+        self._sleep(SETTLE_SECONDS)
+        self._keys(literal)
+        self._sleep(SETTLE_SECONDS)
+
+    def airplane(self, on: bool) -> None:
+        # R6. The simulator shares the host's network, and every route to
+        # cutting it -- Network Link Conditioner, pfctl -- needs sudo or the
+        # GUI, neither of which this rig has. Raising rather than pretending:
+        # the runner reads NotImplementedError as a cell-authoring fault and
+        # spends no control check on it, and every network-cut cell is
+        # `platforms: [android]` for exactly this reason.
+        raise NotImplementedError(
+            "airplane mode does not exist on the iOS simulator: it shares the "
+            "host's network, and cutting that needs sudo or the GUI"
+        )
 
     def type_card(self, card: Card) -> None:
         for name, value in (
@@ -938,6 +986,19 @@ class IosDriver(Driver):
         if label is None:
             raise self.no_label_error(timeout)
         return label
+
+    def wait_acs(self, timeout: float = 120) -> bool:
+        """Waits for the sandbox ACS page without answering it.
+
+        Matched on `threeDSCancel` rather than on the page's own title:
+        `ThreeDSWebViewController` gives the challenge nav bar the title
+        "Payment", which says nothing, and sets `accessibilityViewIsModal`, so
+        the rest of the tree is gone anyway (R12). The cancel bar exists for a
+        challenge and only for a challenge, and it is inside the modal either
+        way.
+        """
+        self._find(THREE_DS_CANCEL, timeout=timeout, identifier_only=True)
+        return True
 
     def acs(
         self,
