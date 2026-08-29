@@ -23,7 +23,11 @@ TERMINAL_VERBS = ("wait_result", "expect")
 #: A cell that turns one of these on must turn it off again. Neither is undone
 #: by a failure, and both poison every cell that follows -- which the drivers'
 #: launch guards then report as a rig fault, correctly but expensively.
-TEARDOWN = {("airplane", "off"), ("dont_keep_activities", "off")}
+#:
+#: Defined in `cells` rather than here: `run_cell` replays these when a cell
+#: dies before reaching its own teardown, and the runner cannot import from
+#: the test tree. Two copies would be two rules.
+TEARDOWN = cells.TEARDOWN
 
 
 def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:

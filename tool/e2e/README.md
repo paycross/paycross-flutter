@@ -358,18 +358,39 @@ that is expired while its session is still open is to wait out the difference.
 ### Rig guards, and putting a cell's toys away
 
 `airplane on` and `dont_keep_activities on` change the **device**, not the app,
-and nothing undoes them: not the end of the cell, not a failure, not an
-exception. Left on, they fail every cell that follows — including the
-interleaved control, so the run aborts as a rig fault after two of them.
+and the device undoes neither: not at the end of the cell, not on a failure,
+not when the process exits. Left on, they fail every cell that follows —
+including the interleaved control, so the run aborts as a rig fault after two
+of them.
 
-Two things guard against that. `cell_rules` refuses a cell that turns either on
-without turning it off, and allows only that teardown to follow the action that
-reads the outcome. And `AndroidDriver.launch` refuses to start on a device that
-is already in airplane mode, quoting the command to clear it:
+Three things guard against that.
+
+`cell_rules` refuses a cell that turns either on without turning it off, and
+allows only that teardown to follow the action that reads the outcome.
+
+**The runner replays a teardown the cell did not live to reach.** Declaring the
+`off` is not the same as running it: `wait_label` raises on a timeout, so a cell
+whose wait runs out unwinds its action loop with the `airplane off` still ahead
+of it. When the loop exits through an exception, `run_cell` looks at how far the
+cell got, and for every pair in `cells.TEARDOWN` whose `on` ran and whose `off`
+is in the un-run tail, it performs the `off` itself — after the failure dump and
+frame, so the evidence is of the failure rather than of the cleanup. It is best
+effort and it says what it did: the cell gains a `teardown:` problem naming what
+was replayed, or a second one if the replay itself failed, and `result.json`
+carries `teardown_replayed`. The original failure is never displaced by it, and
+a cell that put the device back is still a cell that failed.
+
+And `AndroidDriver.launch` still refuses to start on a device that is already in
+airplane mode, quoting the command to clear it:
 
 ```bash
 $ADB shell cmd connectivity airplane-mode disable
 ```
+
+That last one is the backstop rather than the plan: a replay can fail too, and
+`launch` is what catches a device left dirty by anything the replay could not
+fix. It does **not** clear airplane mode itself — a run that silently repaired
+the rig would be a run that had stopped telling you the rig was broken.
 
 `airplane` reads the setting back after toggling it, and raises if it disagrees.
 That is not defensive: the older `settings put global airplane_mode_on` plus a
@@ -553,8 +574,9 @@ accepts the swap and then end-anchors, so `Pay €10,000.00` no longer satisfies
   <cell>/NN-<action>-failed.uix     the tree at the moment a step failed
   <cell>/merchant.json              the session resource, scrubbed
   <cell>/logs.txt                   device log for the cell's window
-  <cell>/result.json                label, ids, timings, problems, budget, and
-                                    the frames the screenshot guard refused
+  <cell>/result.json                label, ids, timings, problems, budget, the
+                                    frames the screenshot guard refused, and any
+                                    teardown the runner replayed for the cell
 ```
 
 `report.json` is what a reader downstream — the nightly, the campaign report —

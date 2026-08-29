@@ -139,6 +139,21 @@ ARG_ACTIONS = MappingProxyType(
 )
 
 
+#: Rig settings a cell may change, each paired with the action that puts it
+#: back. Neither is undone by the end of a cell, by a failure or by an
+#: exception: they change the DEVICE rather than the app, and left on they
+#: fail every cell that follows -- including the interleaved control, so the
+#: run aborts as a rig fault two cells later.
+#:
+#: Read by two places that have to agree. `tests/cell_rules` refuses a cell
+#: that turns one on without declaring the off, and lets only these follow the
+#: action that reads the outcome; `runner` replays the off when a cell dies
+#: before reaching it. Here rather than beside the authoring rules because the
+#: runner cannot import from the test tree, and because which settings outlive
+#: a cell is a fact about the grammar rather than about how cells are written.
+TEARDOWN = frozenset({("airplane", "off"), ("dont_keep_activities", "off")})
+
+
 def _is_non_empty_str(value: Any) -> bool:
     return isinstance(value, str) and bool(value)
 

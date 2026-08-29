@@ -2548,3 +2548,140 @@ def test_the_new_verbs_carry_their_own_budget(verb, seconds):
     # Rather than being left on DEFAULT_VERB_SECONDS, which is a hang backstop
     # for a verb nobody has measured.
     assert runner.VERB_BUDGET_SECONDS[verb] == seconds
+
+
+# --- review: a cell that dies mid-cut puts the device back ----------------
+
+
+#: The action list `CELL` carries, so a test can swap in its own.
+DEFAULT_ACTIONS = "  - paste_token\n  - type_card\n  - tap_pay\n  - wait_result 60\n"
+
+
+def cell_dir_with(tmp_path, actions, cell_id="control"):
+    """A cell whose action list is exactly `actions`, everything else CELL's."""
+    body = textwrap.dedent(CELL.format(id=cell_id))
+    assert DEFAULT_ACTIONS in body, "CELL's action block moved; fix DEFAULT_ACTIONS"
+    directory = tmp_path / "cells"
+    directory.mkdir()
+    (directory / f"{cell_id}.yaml").write_text(
+        body.replace(DEFAULT_ACTIONS, "".join(f"  - {a}\n" for a in actions)),
+        encoding="utf-8",
+    )
+    return directory
+
+
+def dying_at_the_label(driver, error=None):
+    """Makes `wait_result` raise, which is how a cell dies after a rig toggle.
+
+    `wait_label` really does raise on a timeout (`no_label_error`) rather than
+    answering falsy, so this is the shape of the failure the replay exists for
+    and not a contrivance.
+    """
+
+    def raise_it(timeout):
+        raise error or DriverError("the label never appeared")
+
+    driver.wait_label = raise_it
+    return driver
+
+
+def result_json(tmp_path, cell_id="control"):
+    return json.loads(
+        next((tmp_path / "evidence").glob(f"*/{cell_id}/result.json")).read_text()
+    )
+
+
+def test_a_cell_that_dies_after_cutting_the_network_puts_it_back(tmp_path):
+    # Airplane mode outlives the cell, the run and the process. Left on, it
+    # fails every cell after this one and then the interleaved control, and the
+    # run aborts as a rig fault -- forty minutes to be told that the tail of
+    # the matrix never ran. The cell's own `airplane off` is exactly the action
+    # that does not happen, because the loop it sits in has already unwound.
+    driver = dying_at_the_label(FakeDriver())
+    directory = cell_dir_with(
+        tmp_path,
+        ["paste_token", "airplane on", "tap_pay", "wait_result 60", "airplane off"],
+    )
+
+    report = run(directory, tmp_path, driver)
+
+    assert [a for a in driver.actions if a[0] == "airplane"] == [
+        ("airplane", True),
+        ("airplane", False),
+    ]
+    problems = report.results[0].problems
+    # Recorded, and beside the failure that caused it rather than instead of
+    # it: a cell that put the device back is still a cell that failed.
+    assert any("the label never appeared" in p for p in problems), problems
+    assert any("airplane off" in p for p in problems), problems
+    assert not report.results[0].passed
+    assert result_json(tmp_path)["teardown_replayed"] == ["airplane off"]
+
+
+def test_a_teardown_replay_that_fails_says_so_and_keeps_the_first_failure(tmp_path):
+    # Best effort, and audibly so. A device that will not come out of airplane
+    # mode is the next cell's problem whatever this one does, and the reader
+    # needs both halves: what the cell was doing when it died, and that the
+    # rig was left dirty.
+    class Stubborn(FakeDriver):
+        def airplane(self, on):
+            self.actions.append(("airplane", on))
+            if not on:
+                raise DriverError("the radios stayed down")
+
+    driver = dying_at_the_label(Stubborn())
+    directory = cell_dir_with(
+        tmp_path,
+        ["paste_token", "airplane on", "tap_pay", "wait_result 60", "airplane off"],
+    )
+
+    report = run(directory, tmp_path, driver)
+
+    problems = report.results[0].problems
+    assert any("the label never appeared" in p for p in problems), problems
+    assert any("the radios stayed down" in p for p in problems), problems
+    # Attempted, so it is not silently absent; it did not take, so it is not
+    # claimed as done.
+    assert result_json(tmp_path)["teardown_replayed"] == []
+
+
+def test_a_cell_that_declared_no_teardown_replays_nothing(cell_dir, tmp_path):
+    # The replay reads the cell's own action list. A cell that never touched
+    # the device's settings has nothing to put back, and inventing an
+    # `airplane off` for it would be the runner changing a device no cell
+    # asked it to change.
+    driver = dying_at_the_label(FakeDriver())
+
+    report = run(cell_dir, tmp_path, driver, only=["control"])
+
+    assert not [a for a in driver.actions if a[0] == "airplane"]
+    assert not any("teardown" in p for p in report.results[0].problems)
+    assert result_json(tmp_path)["teardown_replayed"] == []
+
+
+def test_the_replay_covers_every_declared_teardown_pair(tmp_path):
+    # Driven by the table, not by a special case for airplane mode:
+    # `dont_keep_activities` is the other half of `cells.TEARDOWN` and D3 will
+    # be its first user.
+    driver = dying_at_the_label(FakeDriver())
+    driver.dont_keep_activities = lambda on: driver.actions.append(
+        ("dont_keep_activities", on)
+    )
+    directory = cell_dir_with(
+        tmp_path,
+        [
+            "paste_token",
+            "dont_keep_activities on",
+            "tap_pay",
+            "wait_result 60",
+            "dont_keep_activities off",
+        ],
+    )
+
+    run(directory, tmp_path, driver)
+
+    assert [a for a in driver.actions if a[0] == "dont_keep_activities"] == [
+        ("dont_keep_activities", True),
+        ("dont_keep_activities", False),
+    ]
+    assert result_json(tmp_path)["teardown_replayed"] == ["dont_keep_activities off"]

@@ -51,7 +51,16 @@ from pathlib import Path
 from typing import Any
 
 from . import evidence, tree, verify
-from .cells import ARG_ACTIONS, BARE_ACTIONS, Action, Card, Cell, CellError, load_cells
+from .cells import (
+    ARG_ACTIONS,
+    BARE_ACTIONS,
+    TEARDOWN,
+    Action,
+    Card,
+    Cell,
+    CellError,
+    load_cells,
+)
 from .drivers.android import DIGIT_PACING_SECONDS
 from .drivers.base import DriverError
 from .sandbox import Sandbox, SandboxError
@@ -494,6 +503,33 @@ def _observe(step: Step, what: str) -> tuple[bool, str | None]:
     raise DriverError(f"the runner cannot observe {what!r}: no predicate")
 
 
+def _teardown_left_undone(actions: Sequence[Action], reached: int) -> list[Action]:
+    """The rig settings this cell turned on and did not live to turn off.
+
+    `reached` is the 1-based index of the action that raised, so
+    `actions[:reached]` is everything that ran -- the failing action included,
+    deliberately: `AndroidDriver.airplane` reads the setting back and raises
+    if it disagrees, which leaves the flip ambiguous rather than undone, and
+    an `off` replayed over a setting that never went on costs nothing.
+    `actions[reached:]` is the tail that now never runs.
+
+    Both halves are required. The `on` must have run, or there is nothing to
+    put back and the runner would be changing a device no cell asked it to
+    change; the `off` must be in the un-run tail, or the cell already did it.
+
+    Ordered by `TEARDOWN` rather than by the cell, because a cell holding two
+    of these has no meaningful order between them -- they are independent
+    device settings, not a stack.
+    """
+    ran = {(a.verb, a.arg) for a in actions[:reached]}
+    un_run = {(a.verb, a.arg) for a in actions[reached:]}
+    return [
+        Action(verb, off)
+        for verb, off in sorted(TEARDOWN)
+        if (verb, "on") in ran and (verb, off) in un_run
+    ]
+
+
 def _on_or_off(verb: str, arg: str | None) -> bool:
     """`on` or `off`, with nothing else quietly read as `off`.
 
@@ -624,6 +660,11 @@ def run_cell(
     #: it is otherwise indistinguishable from a screenshot path that is
     #: quietly broken -- which is a live question for the campaign report.
     screenshots_skipped: list[str] = []
+    #: Rig settings the cell turned on, never reached the `off` for, and that
+    #: the runner put back on its behalf. Filed by name: "the device was left
+    #: dirty and I cleaned it" is a different story from "it was never dirty",
+    #: and the next cell's launch guard cannot tell them apart afterwards.
+    teardown_replayed: list[str] = []
     reached_the_end = False
     authoring = False
 
@@ -655,6 +696,11 @@ def run_cell(
         # finally even when the driver dies mid-cell.
         token_dir = Path(tempfile.mkdtemp(prefix="paycross-e2e-"))
         stem, verb = "00-launch", "launch"
+        #: How far into the action list the cell got. Read by the teardown
+        #: replay below, which runs whether or not the loop was ever entered:
+        #: a launch that raises has run no action, and zero is the honest
+        #: answer rather than an undefined name in the handler.
+        index = 0
         try:
             os.chmod(token_dir, 0o700)
             # The same guard the evidence tree puts on a directory name: this
@@ -767,6 +813,32 @@ def run_cell(
                         )
                 elif verb in SHOT_VERBS:
                     screenshots_skipped.append(f"{stem}-failed")
+            # After the dump and the frame above, never before them: the tree
+            # at the moment of failure is most of the diagnosis, and putting
+            # the radios back changes the screen it is a picture of.
+            #
+            # This spends time a cell that tripped its budget has already run
+            # out of, and that is the right trade. Airplane mode outlives the
+            # process; left on it fails every remaining cell and the two
+            # controls between them, so the run aborts and the tail of the
+            # matrix goes unrun. `AndroidDriver.launch` still refuses a device
+            # in airplane mode -- this makes that backstop rare rather than
+            # replacing it, because a replay can fail too.
+            for undone in _teardown_left_undone(cell.actions, index):
+                spelled = f"{undone.verb} {undone.arg}"
+                try:
+                    _perform(step, undone)
+                except Exception as secondary:  # noqa: BLE001
+                    problems.append(
+                        f"teardown: could not replay {spelled!r} ({secondary}); "
+                        "the device is left for the next cell to refuse"
+                    )
+                else:
+                    teardown_replayed.append(spelled)
+                    problems.append(
+                        f"teardown: the cell died before {spelled!r}, so the "
+                        "runner replayed it"
+                    )
         finally:
             try:
                 shutil.rmtree(token_dir)
@@ -863,6 +935,7 @@ def run_cell(
                 "expected_label": expected.label,
                 "problems": problems,
                 "screenshots_skipped": screenshots_skipped,
+                "teardown_replayed": teardown_replayed,
                 "budget_seconds": budget,
                 "seconds": (datetime.now(timezone.utc) - started).total_seconds(),
             },
