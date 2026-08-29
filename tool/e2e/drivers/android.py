@@ -1,0 +1,499 @@
+"""Drives the example app on the emulator, from WSL, through the Windows adb.
+
+Ported from the campaign's smoke-cell.sh / fill-card-raw.sh /
+flutter-paste-token.sh. Three properties of this setup shape everything here:
+
+* `adb.exe` is a Windows binary and cannot read WSL paths, so an APK has to be
+  staged under /mnt/c and handed over in its Windows spelling.
+* `adb shell` output arrives with CRLF line endings; `adb exec-out` does not.
+* A Flutter widget surfaces as `content-desc` with an empty `text`, while the
+  SDK's own Compose text surfaces as `text`. Matching the wrong one cost the
+  2026-08-26 run a false 270-second timeout.
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+import subprocess
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from xml.etree import ElementTree as ET
+
+from .. import tree
+from ..cells import Card
+from .base import Driver, DriverError
+
+ADB = "/mnt/c/Users/Syllo/AppData/Local/Android/Sdk/platform-tools/adb.exe"
+PACKAGE = "com.paycross.paycross_flutter_example"
+
+#: Every adb call is bounded. A wedged emulator would otherwise hold the whole
+#: matrix on one round trip.
+RUN_TIMEOUT_SECONDS = 300
+
+#: Staged here because the Windows adb cannot open a WSL path.
+STAGING_DIR = "/mnt/c/dev/tmp"
+WINDOWS_STAGING = r"C:\dev\tmp"
+STAGED_APK = "paycross-e2e.apk"
+
+#: Where `uiautomator dump` is told to write, and how many times a dump is
+#: attempted before the driver calls the device unusable.
+_DUMP_PATH = "/sdcard/ui.xml"
+_DUMP_ATTEMPTS = 3
+
+#: The category `monkey` needs in order to start the launcher activity.
+_LAUNCHER = "android.intent.category.LAUNCHER"
+
+#: `input text` splits its argument on spaces; %s is its escape.
+_SPACE = "%s"
+
+#: The gap fill-card-raw.sh left after every keyevent, and therefore the
+#: timing the 0.3.2 caret fix was proven under on this emulator. Typing flat
+#: out would let a formatter that merely cannot keep up present as the caret
+#: bug returning -- a false finding against the SDK, which is the expensive
+#: direction to be wrong in.
+DIGIT_PACING_SECONDS = 0.4
+
+#: What the seed scripts waited after a tap, an entry or a cold start. Kept
+#: as named values because the unit tests assert them rather than spend them:
+#: the rig's timing stays pinned without the suite sleeping through it.
+SETTLE_SECONDS = 1
+LAUNCH_SETTLE_SECONDS = 6
+
+#: How long the token read-back is given to agree with the file. The field is
+#: filled by ~13 `input text` calls and the last of them is still landing when
+#: the first read happens.
+TOKEN_READBACK_SECONDS = 10
+
+#: `input text` does not reliably deliver much more than this at once.
+TOKEN_CHUNK_CHARS = 80
+
+#: KEYCODE_0. Digit n is _KEYCODE_ZERO + n.
+_KEYCODE_ZERO = 7
+_KEYCODE_DEL = 67
+_KEYCODE_BACK = 4
+_KEYCODE_MOVE_END = 123
+
+CARD_NUMBER = "Card number input"
+EXPIRY = "Expiry date input"
+CVV = "CVV input"
+CARDHOLDER = "Cardholder name input"
+ACS_TITLE = "Sandbox 3DS Challenge"
+CANCEL_TITLE = "Cancel Payment?"
+CANCEL_CONFIRM = "Yes, Cancel"
+
+#: What `logcat -t` will accept. Validated rather than trusted, because an
+#: unusable cutoff yields an empty log, which reads as "nothing crashed".
+_LOGCAT_CUTOFF = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$")
+
+#: base64url segments joined by dots. Checked before the value is sent to a
+#: device shell, which re-splits whatever it is given: a token that is not
+#: this shape is a command, not a credential. It also guarantees the value
+#: needs no quoting, which is what makes the stdin form below safe.
+_JWT = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
+
+
+def _text(raw: bytes) -> str:
+    return raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
+    """Invokes adb once, normalising CRLF and never discarding a failure.
+
+    A non-zero exit has its stderr appended to the text result rather than
+    raised: `uninstall` is expected to fail on a first install, and `install`
+    reads this text to report what actually went wrong. Binary results cannot
+    carry an explanation -- appending to a PNG would corrupt it -- so those
+    raise instead.
+
+    An emulator that has wedged raises TimeoutExpired rather than exiting
+    non-zero, and adb.exe lives on a Windows mount that is not always there,
+    which raises FileNotFoundError. Neither is a DriverError, so both escape
+    every polling loop above and end the whole matrix where they should have
+    failed one cell. The iOS driver's `_ssh` closes the same gap.
+    """
+    what = argv[0] if argv else "adb"
+    try:
+        done = subprocess.run(
+            [ADB, *argv],
+            capture_output=True,
+            timeout=RUN_TIMEOUT_SECONDS,
+            input=stdin.encode("utf-8") if stdin is not None else None,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DriverError(
+            f"adb {what!r} did not answer within {RUN_TIMEOUT_SECONDS}s"
+        ) from exc
+    except OSError as exc:
+        raise DriverError(f"could not run adb for {what!r}: {exc}") from exc
+    if binary:
+        if done.returncode != 0:
+            raise DriverError(
+                f"adb {argv[0]} exited {done.returncode}: {_text(done.stderr).strip()}"
+            )
+        return done.stdout
+    out = _text(done.stdout)
+    if done.returncode != 0:
+        out += _text(done.stderr)
+    return out
+
+
+class AndroidDriver(Driver):
+    package = PACKAGE
+
+    #: `uiautomator dump` on this side of the fence; base._nodes calls it.
+    _parse_dump = staticmethod(tree.parse_uiautomator)
+
+    def __init__(
+        self,
+        shell=_run,
+        staging_dir: str | Path = STAGING_DIR,
+        windows_staging: str = WINDOWS_STAGING,
+        sleep=time.sleep,
+    ):
+        self._shell = shell
+        self._staging_dir = Path(staging_dir)
+        self._windows_staging = windows_staging
+        # Every wait goes through this. The durations are the rig's real ones
+        # and stay pinned by the tests asserting on what was recorded here,
+        # which is cheaper than the suite sleeping through them.
+        self._sleep = sleep
+
+    # -- primitives ----------------------------------------------------------
+
+    def getprop(self, name: str) -> str:
+        """One property, or a DriverError quoting what adb said instead.
+
+        `getprop` answers with a bare value or with nothing at all, while
+        every way the connection can fail puts a sentence on the wire --
+        `no devices/emulators found`, `error: device offline`, `error:
+        closed` -- which `_run` now appends rather than discards. Whitespace
+        is the tell, and the text is quoted back rather than matched against
+        a catalogue of adb's wording. Without this the boot check reads a
+        dead connection as "still booting" and the locale check reports
+        adb's sentence as though it were a locale. An empty answer is left
+        alone: that is a real device with the property not set yet.
+        """
+        answer = self._shell(["shell", "getprop", name]).strip()
+        if any(character.isspace() for character in answer):
+            raise DriverError(f"adb could not read {name}: {answer!r}")
+        return answer
+
+    def _tap(self, point: tuple[int, int]) -> None:
+        self._shell(["shell", "input", "tap", str(point[0]), str(point[1])])
+
+    def _key(self, code: int) -> None:
+        self._shell(["shell", "input", "keyevent", str(code)])
+
+    def _input_text(self, text: str) -> None:
+        self._shell(["shell", "input", "text", text.replace(" ", _SPACE)])
+
+    def _type_digits(self, digits: str) -> None:
+        """One real key event per digit, at the seed script's pace.
+
+        Bulk `input text` bypasses the formatter, which is precisely the code
+        path a card form has to survive -- typing raw is what caught the 0.3.1
+        caret bug and what proves 0.3.3 fixed it.
+        """
+        for digit in digits:
+            self._key(_KEYCODE_ZERO + int(digit))
+            # After each digit, last one included, as the seed script did.
+            self._sleep(DIGIT_PACING_SECONDS)
+
+    def _find(
+        self, finder, needle: str, what: str, *, timeout: float = 30, interval: float = 2
+    ):
+        found = self._poll(
+            lambda nodes: next(iter(finder(nodes, needle)), None), timeout, interval
+        )
+        if found is None:
+            # The token field is looked up by class, with no needle to name.
+            named = f"{what} {needle!r}" if needle else what
+            raise DriverError(f"{named} never appeared within {timeout}s")
+        return found
+
+    def _tap_text(self, text: str, **kw) -> None:
+        # An empty needle matches every node whose text is empty, which is
+        # most of the tree: the tap would land on an arbitrary one instead
+        # of failing. Nothing in Phase 0 passes one, so this is about the
+        # caller a later phase adds.
+        if not text:
+            raise DriverError("refusing to tap on an empty text match")
+        self._tap(self._find(tree.find_text_exact, text, "node with text", **kw).centre)
+
+    def _tap_desc(self, desc: str, **kw) -> None:
+        if not desc:
+            raise DriverError("refusing to tap on an empty content-desc match")
+        self._tap(
+            self._find(
+                tree.find_content_desc, desc, "node with content-desc", **kw
+            ).centre
+        )
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def install(self, app_path: str) -> None:
+        staged = self._staging_dir / STAGED_APK
+        try:
+            self._staging_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(app_path, staged)
+        except OSError as exc:
+            raise DriverError(f"could not stage {app_path} at {staged}: {exc}") from exc
+        self._shell(["uninstall", PACKAGE])  # first install has nothing to remove
+        out = self._shell(["install", f"{self._windows_staging}\\{STAGED_APK}"])
+        if "Success" not in out:
+            raise DriverError(f"adb install did not report Success: {out.strip()[:400]}")
+
+    def launch(self) -> None:
+        if self.getprop("sys.boot_completed") != "1":
+            raise DriverError("the emulator has not finished booting")
+        locale = self.getprop("ro.product.locale")
+        if locale != "en-US":
+            # The Pay button's text is the only handle the SDK gives, and it
+            # is NumberFormat output under the device locale.
+            raise DriverError(
+                f"device locale is {locale!r}, expected 'en-US': the sheet's Pay "
+                "button text would not match"
+            )
+        self._shell(["shell", "am", "force-stop", PACKAGE])
+        self._shell(["shell", "monkey", "-p", PACKAGE, "-c", _LAUNCHER, "1"])
+        self._sleep(LAUNCH_SETTLE_SECONDS)
+
+    # -- actions -------------------------------------------------------------
+
+    def _read_token(self, token_path: Path) -> str:
+        """The token, checked before anything is allowed to type it.
+
+        Neither failure prints the value. An empty file would otherwise be
+        entered as nothing and present as an instant 401; a value that is not
+        base64url-and-dots would be handed to a device shell that re-splits
+        it, where it is a command rather than a credential.
+        """
+        text = token_path.read_text(encoding="utf-8").strip()
+        if not text:
+            raise DriverError(f"{token_path} is empty: there is no token to enter")
+        if not _JWT.fullmatch(text):
+            raise DriverError(
+                f"{token_path} does not hold a JWT: {len(text)} characters in "
+                f"{text.count('.') + 1} dot-separated segments, and not all of "
+                "them are base64url. Refusing to type it."
+            )
+        return text
+
+    def _type_token(self, text: str) -> None:
+        """Enters the token without it ever entering this process's argv.
+
+        A command line is world-readable for as long as the process lives, so
+        the chunks go to `adb shell` on stdin instead. The device's own shell
+        still sees them -- `input text` is the only channel there is -- but
+        that exposure lasts as long as the keystrokes do.
+        """
+        script = "".join(
+            f"input text {text[at:at + TOKEN_CHUNK_CHARS]}\n"
+            for at in range(0, len(text), TOKEN_CHUNK_CHARS)
+        )
+        self._shell(["shell"], stdin=script)
+
+    def paste_token(self, token_path: Path) -> None:
+        token_path = Path(token_path)
+        text = self._read_token(token_path)
+        expected = len(text)
+
+        field = self._find(
+            lambda nodes, _: [n for n in nodes if n.type.endswith("EditText")],
+            "",
+            "the token field",
+        )
+        self._tap(field.centre)
+        self._sleep(SETTLE_SECONDS)
+
+        self._type_token(text)
+
+        self._key(_KEYCODE_BACK)  # drop the IME
+        self._sleep(SETTLE_SECONDS)
+
+        seen = 0
+
+        def agreed(nodes):
+            nonlocal seen
+            seen = max(
+                (len(n.text) for n in nodes if n.type.endswith("EditText")), default=0
+            )
+            return True if seen == expected else None
+
+        # Polled rather than read once: the last chunks are still arriving.
+        if self._poll(agreed, TOKEN_READBACK_SECONDS, SETTLE_SECONDS) is None:
+            # A truncated paste shows up as an instant 401, which would read as
+            # an SDK bug. Fail here instead, without echoing the token.
+            raise DriverError(
+                f"token entry never agreed with the file: {seen} characters on "
+                f"screen, {expected} in {token_path}"
+            )
+
+        self._tap_desc("Pay")
+        self._find(tree.find_content_desc, CARD_NUMBER, "the card form", timeout=60)
+
+    def type_card(self, card: Card, *, verify_pan: bool = True) -> None:
+        for field in (CARD_NUMBER, CARDHOLDER):
+            self._tap_desc(field)
+            self._sleep(SETTLE_SECONDS)
+            self._key(_KEYCODE_MOVE_END)
+            for _ in range(24):
+                self._key(_KEYCODE_DEL)
+
+        self._tap_desc(CARD_NUMBER)
+        self._sleep(SETTLE_SECONDS)
+        self._type_digits(card.pan)
+        self._sleep(SETTLE_SECONDS)
+
+        if verify_pan:
+            nodes = self._nodes()
+            if not any(n.text.replace(" ", "") == card.pan for n in nodes):
+                # What was seen, not what it is blamed on: a caret bug and a
+                # mistyped tap look identical from here.
+                field = tree.find_content_desc(nodes, CARD_NUMBER)
+                reads = field[0].text if field else None
+                raise DriverError(
+                    f"after typing {card.pan} the card number field reads {reads!r}"
+                )
+
+        for field, value in (
+            (EXPIRY, card.expiry_digits),
+            (CVV, card.cvv),
+            (CARDHOLDER, card.holder),
+        ):
+            self._tap_desc(field)
+            self._sleep(SETTLE_SECONDS)
+            self._input_text(value)
+            self._sleep(SETTLE_SECONDS)
+
+        self._key(_KEYCODE_BACK)  # drop the IME so the Pay button is reachable
+        self._sleep(SETTLE_SECONDS)
+
+    def tap_pay(self, amount_text: str) -> None:
+        self._tap_text(f"Pay {amount_text}")
+
+    def wait_label(
+        self,
+        timeout: float,
+        *,
+        interval: float = 2,
+        prefixes: tuple[str, ...] = tree.LABEL_PREFIXES,
+    ) -> str:
+        label = self._poll(
+            lambda nodes: tree.label_from_tree(nodes, prefixes), timeout, interval
+        )
+        if label is None:
+            raise DriverError(f"no contract label within {timeout}s")
+        return label
+
+    def acs(self, outcome: str) -> None:
+        self._find(tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=120)
+        # The outcome is chosen by which button is tapped, not by the PAN.
+        self._tap_text(outcome)
+
+    def cancel_challenge(self) -> None:
+        self._find(tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=120)
+        self._confirm_cancel()
+
+    def cancel_form(self) -> None:
+        self._confirm_cancel()
+
+    def _confirm_cancel(self) -> None:
+        # BackHandler is unconditional on both screens (PaymentActivity.kt).
+        self._key(_KEYCODE_BACK)
+        self._find(tree.find_text_exact, CANCEL_TITLE, "the cancel dialog", timeout=30)
+        self._tap_text(CANCEL_CONFIRM)
+
+    def wait_rearmed(
+        self, amount_text: str, timeout: float, *, interval: float = 2
+    ) -> bool:
+        # A device that will not dump raises out of _poll rather than answering
+        # False: "the sheet did not re-arm" is a cell verdict and this is not.
+        found = self._poll(
+            lambda nodes: tree.sheet_rearmed(nodes, "android", amount_text) or None,
+            timeout,
+            interval,
+        )
+        return found is not None
+
+    # -- evidence ------------------------------------------------------------
+
+    def dump_tree(self, *, attempts: int = _DUMP_ATTEMPTS, interval: float = 1) -> bytes:
+        """One accessibility dump, retaken until it parses.
+
+        Two failures hide behind a plain dump-then-cat. `uiautomator dump`
+        refuses while the UI is animating -- it prints `ERROR: could not get
+        idle state.` and writes nothing -- so the previous dump is still on
+        the device and `cat` hands back a *stale* tree that parses perfectly.
+        A polling caller then matches a screen that is already gone and taps
+        its coordinates. Removing the file in the same round trip turns that
+        into an empty read, which is detectable.
+
+        A partly-flushed `cat` is the other failure and presents the same
+        way. Untreated it raises `ParseError` out of `_nodes`, which is not a
+        `DriverError` and so escapes every polling loop -- one transient read
+        would abort the cell.
+        """
+        if attempts < 1:
+            raise ValueError(f"attempts must be at least 1, got {attempts}")
+        for attempt in range(attempts):
+            # One round trip, so this stays two adb invocations: a dump that
+            # never ran cannot leave the previous one behind to be read.
+            said = self._shell(
+                ["shell", f"rm -f {_DUMP_PATH}; uiautomator dump {_DUMP_PATH}"]
+            )
+            raw = self._shell(["shell", "cat", _DUMP_PATH]).encode("utf-8")
+            try:
+                ET.fromstring(raw)
+            except ET.ParseError as exc:
+                problem = exc
+            else:
+                return raw
+            if attempt + 1 < attempts:
+                self._sleep(interval)
+        raise DriverError(
+            f"no parsable uiautomator dump in {attempts} attempts: {problem}; "
+            f"the dump said {said.strip()[:200]!r} and the file read back as "
+            f"{raw[:200]!r}"
+        ) from problem
+
+    def screenshot(self) -> bytes:
+        """Black for the whole sheet: PaymentActivity sets FLAG_SECURE.
+
+        Kept anyway -- the black frame is itself evidence that the flag is on,
+        and the .uix dump is what actually proves what was on screen.
+        """
+        return self._shell(["exec-out", "screencap", "-p"], binary=True)
+
+    def logs_since(self, since: datetime) -> str:
+        """Logcat from `since` to now, with the cutoff asked of the device.
+
+        `logcat -v time` stamps -- and therefore the `-t` cutoff -- are in the
+        **device's** zone, while `run_cell` hands us UTC. The emulator runs
+        `Europe/Kiev`, so formatting the UTC value here asks for a window three
+        hours too wide: measured at 110,082 lines against 2,187 for the correct
+        cutoff. That is not just evidence bloat -- `crash_lines` would then scan
+        hours of an emulator that has been up for days, and one unrelated
+        `FATAL EXCEPTION` fails the cell, fails the interleaved control for the
+        same reason, and aborts the run as a rig fault. A device whose zone is
+        *behind* UTC is worse still: the cutoff lands in the future, the log
+        comes back empty, and criterion 3 passes on nothing.
+
+        So the device computes it, for the same reason the iOS driver uses
+        `--last <n>s`: there is no timezone left to get wrong.
+        """
+        seconds = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
+        # Quoted as ONE argument. The device shell re-splits on spaces, and
+        # toybox `date` then answers "Max 1 argument (see date --help)".
+        cutoff = self._shell(
+            ["shell", f"date -d @$(( $(date +%s) - {seconds} )) '+%m-%d %H:%M:%S.000'"]
+        ).strip()
+        if not _LOGCAT_CUTOFF.match(cutoff):
+            raise DriverError(
+                f"the device returned no usable logcat cutoff, got {cutoff!r}; "
+                "refusing to fetch, because an empty window would let criterion 3 "
+                "pass on an empty log"
+            )
+        return self._shell(["logcat", "-d", "-v", "time", "-t", cutoff])

@@ -48,7 +48,7 @@ jobs:
       # immediately after generating, so "generated" and "formatted" are one
       # state rather than two competing ones.
       - name: Format
-        run: dart format --output=none --set-exit-if-changed lib test pigeons example/lib
+        run: dart format --output=none --set-exit-if-changed lib test pigeons example/lib example/test
 
       - name: Analyze
         run: flutter analyze --fatal-infos
@@ -78,6 +78,13 @@ jobs:
 
       - name: Test
         run: flutter test
+
+      # A separate step because `flutter test` at the root does not descend
+      # into example/. Without this the E2E label contract is only analyzed,
+      # never executed, so a wrong-but-compiling label would ship green.
+      - name: Test example
+        run: flutter test
+        working-directory: example
 
       # Compiles the generated Kotlin against the hand-written plugin and the
       # real SDK. This is the Android half of the contract check, and the only
@@ -127,6 +134,34 @@ jobs:
             exit 1
           fi
           echo "ok"
+
+  # The E2E matrix runner's own tests. Deliberately device-free: every driver
+  # call is faked, so what this proves is the parsing, the redaction, the label
+  # matching and the merchant verification -- the parts where a silent mistake
+  # would be read as an SDK finding rather than as a bug in the tool. The
+  # shipped cell files are validated here too, so a YAML typo fails in seconds
+  # instead of twenty minutes into an emulator run.
+  #
+  # The example app's own tests are not repeated here; the linux job above
+  # already runs them, and the label contract only needs proving once.
+  e2e-unit:
+    name: E2E runner unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The runner targets the WSL rig's interpreter, which is 3.10. Pinned
+      # rather than floating so a syntax feature that only lands later cannot
+      # pass CI and then fail on the machine that drives the devices.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install runner dependencies
+        run: pip install -r tool/e2e/requirements.txt pytest
+
+      - name: Test the runner
+        run: python -m pytest tool/e2e/tests -q
 
   # macOS only proves the thing Linux cannot: that the generated Swift and the
   # hand-written iOS implementation actually agree. PR-only, because that
