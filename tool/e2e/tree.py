@@ -151,6 +151,23 @@ def format_amount_en_us(minor_units: int, currency: str) -> str:
     return f"{symbol}{body}" if symbol else f"{currency} {body}"
 
 
+def _separator_variants(amount_text: str) -> tuple[str, ...]:
+    """`amount_text` as written, and with `.` and `,` swapped.
+
+    The value is what the check is about; a region is free to punctuate it
+    however it likes. The rig's simulator is `en_US@rg=lvzzzz` -- US English,
+    Latvian region -- so the SDK renders "Pay €10,00" where the runner computes
+    "€10.00", and the re-arm cell failed as "the sheet never re-armed" on a
+    sheet that plainly had (measured 2026-08-29).
+
+    A swap rather than stripping the separators out: with them gone "€10.00"
+    is a substring of "€1,000.00", and a sheet re-armed at a hundred times the
+    amount would satisfy the predicate that exists to catch exactly that.
+    """
+    swapped = amount_text.translate(str.maketrans(".,", ",."))
+    return (amount_text,) if swapped == amount_text else (amount_text, swapped)
+
+
 def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
     """The sheet took a failure and offered the form again.
 
@@ -165,6 +182,12 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
     nothing about which payment it belongs to -- without that half, a sheet
     re-armed at a different amount, or a form that was never this cell's,
     satisfies the predicate.
+
+    Only iOS takes the amount's punctuation as the device's business -- see
+    `_separator_variants`. The Android emulator is asserted to be `en-US` in
+    `AndroidDriver.launch`, so there is nothing there for it to absorb, and an
+    exact node-text match is what keeps `Pay €10.00` off the header's bare
+    `€10.00` and off a Google Pay button.
     """
     if not amount_text:
         # An empty string is in every label, so this would match any sheet.
@@ -179,11 +202,13 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
         # changing the banner's wording, which would break a text match
         # mid-campaign. Visibility is not required -- CardFormView puts the
         # banner last in the ScrollView, below the pinned footer.
+        variants = _separator_variants(amount_text)
         return bool(
             find_identifier(nodes, "errorBanner")
             and any(
-                amount_text in node.text
+                variant in node.text
                 for node in find_identifier(nodes, "payButton")
+                for variant in variants
             )
         )
     raise ValueError(f"unknown platform {platform!r}")

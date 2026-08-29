@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -129,6 +130,37 @@ def test_sheet_rearmed_on_ios_needs_the_pay_button_to_carry_this_amount():
 
     assert tree.sheet_rearmed(nodes, "ios", "€10.00") is True
     assert tree.sheet_rearmed(nodes, "ios", "€12.50") is False
+
+
+def test_sheet_rearmed_on_ios_tolerates_the_regions_decimal_separator():
+    # Measured on the rig 2026-08-29: the simulator is en_US@rg=lvzzzz -- US
+    # English, Latvian region -- so the SDK renders "Pay €10,00" while the
+    # runner computes "€10.00" and the re-arm cell failed as "the sheet never
+    # re-armed" on a sheet that plainly had. The value is what the check is
+    # about, and a region is free to punctuate it however it likes.
+    nodes = [
+        replace(n, text=n.text.replace(".", ","))
+        if n.identifier == "payButton"
+        else n
+        for n in ios()
+    ]
+    assert any("€10,00" in n.text for n in nodes if n.identifier == "payButton")
+
+    assert tree.sheet_rearmed(nodes, "ios", "€10.00") is True
+    # Still this cell's amount, and still not another one's.
+    assert tree.sheet_rearmed(nodes, "ios", "€12.50") is False
+
+
+def test_sheet_rearmed_on_ios_does_not_confuse_grouping_with_value():
+    # Separator-blind, not digit-blind: normalising must not turn €1,000.00
+    # into a match for €10.00.
+    nodes = [
+        replace(n, text="Pay €1,000.00") if n.identifier == "payButton" else n
+        for n in ios()
+    ]
+
+    assert tree.sheet_rearmed(nodes, "ios", "€10.00") is False
+    assert tree.sheet_rearmed(nodes, "ios", "€1,000.00") is True
 
 
 @pytest.mark.parametrize("platform", ["android", "ios"])
