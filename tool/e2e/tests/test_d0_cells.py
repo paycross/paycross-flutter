@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from tool.e2e import cells
-
 # A sibling module, imported the way pytest resolves one: its default import
 # mode prepends this directory to sys.path, and `tests` is not a package.
 # `conftest.py` is what puts the repo root there for `tool.e2e`.
 from cell_rules import check_cell_dir
+
+from tool.e2e import cells
 
 D0 = Path(__file__).resolve().parents[1] / "cells" / "d0"
 

@@ -194,7 +194,9 @@ def expect_rejected(tmp_path, body, name="control.yaml"):
     ],
 )
 def test_accepts_valid_action_arguments(tmp_path, action):
-    cell = cells.load_cell(write(tmp_path, "control.yaml", with_action(CONTROL, action)))
+    cell = cells.load_cell(
+        write(tmp_path, "control.yaml", with_action(CONTROL, action))
+    )
 
     verb, _, _ = action.partition(":") if ":" in action else action.partition(" ")
     assert verb in [a.verb for a in cell.actions]
@@ -331,9 +333,11 @@ def test_accepts_a_full_merchant_block(tmp_path):
         "    threeds:\n"
         "      flow: challenge\n",
     )
-    merchant = cells.load_cell(
-        write(tmp_path, "control.yaml", body)
-    ).expected_for("android").merchant
+    merchant = (
+        cells.load_cell(write(tmp_path, "control.yaml", body))
+        .expected_for("android")
+        .merchant
+    )
 
     assert merchant["txn_count"] == 0
     assert merchant["failure_recovery"] is None
@@ -431,7 +435,9 @@ def test_an_argument_holding_a_colon_is_reported_against_the_verb_that_takes_it(
 
 
 def test_the_space_form_and_the_colon_form_parse_the_same():
-    assert cells.parse_action("acs approve", "w") == cells.parse_action("acs:approve", "w")
+    assert cells.parse_action("acs approve", "w") == cells.parse_action(
+        "acs:approve", "w"
+    )
 
 
 # --- Plan B: the new verbs ------------------------------------------------
@@ -579,9 +585,7 @@ def test_a_misspelled_threeds_key_is_refused_at_load(tmp_path):
     # field is simply never compared, so the assertion passes vacuously.
     body = with_merchant(
         CONTROL,
-        "    session_status: completed\n"
-        "    threeds:\n"
-        "      outcom: authenticated\n",
+        "    session_status: completed\n    threeds:\n      outcom: authenticated\n",
     )
 
     message = expect_rejected(tmp_path, body)

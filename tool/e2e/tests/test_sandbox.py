@@ -73,6 +73,7 @@ class FakeClock:
 
 def jwt_with(payload):
     """A syntactically real JWT carrying `payload`; the signature is a stub."""
+
     def segment(raw):
         return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
@@ -227,7 +228,9 @@ def test_two_mints_in_the_same_second_get_different_references():
     client.mint(amount=1000, currency="EUR", options={})
     client.mint(amount=1000, currency="EUR", options={})
 
-    references = [json.loads(call[3])["merchant_reference"] for call in transport.calls[1:]]
+    references = [
+        json.loads(call[3])["merchant_reference"] for call in transport.calls[1:]
+    ]
     assert references[0] != references[1]
     assert all(reference.startswith("ORDER-") for reference in references)
 
@@ -271,7 +274,11 @@ def test_a_token_response_without_expires_in_still_caches():
     )
 
     client.mint(amount=1000, currency="EUR", options={})
-    clock.now = sandbox.DEFAULT_TOKEN_LIFETIME_SECONDS - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
+    clock.now = (
+        sandbox.DEFAULT_TOKEN_LIFETIME_SECONDS
+        - sandbox.TOKEN_REFRESH_MARGIN_SECONDS
+        - 1
+    )
     client.mint(amount=1000, currency="EUR", options={})
 
     assert [c[1] for c in transport.calls].count(ENV["TOKEN_URL"]) == 1
@@ -284,7 +291,11 @@ def test_an_unusable_expires_in_falls_back_to_the_default_lifetime():
     )
 
     client.mint(amount=1000, currency="EUR", options={})
-    clock.now = sandbox.DEFAULT_TOKEN_LIFETIME_SECONDS - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
+    clock.now = (
+        sandbox.DEFAULT_TOKEN_LIFETIME_SECONDS
+        - sandbox.TOKEN_REFRESH_MARGIN_SECONDS
+        - 1
+    )
     client.mint(amount=1000, currency="EUR", options={})
 
     assert [c[1] for c in transport.calls].count(ENV["TOKEN_URL"]) == 1
@@ -354,9 +365,7 @@ def test_a_refusal_is_reported_with_its_status_and_reason():
 def test_an_error_body_never_echoes_a_session_token():
     # A GET on a session returns the whole resource, session_token included,
     # and a non-2xx body is exactly the thing that gets logged.
-    leaky = json.dumps(
-        {"id": "s", "session_token": TOKEN, "message": "gone"}
-    ).encode()
+    leaky = json.dumps({"id": "s", "session_token": TOKEN, "message": "gone"}).encode()
     client, _, _ = client_with(access_token_response(), (410, leaky))
 
     with pytest.raises(sandbox.SandboxError) as excinfo:
@@ -484,7 +493,9 @@ def test_the_refresh_is_scheduled_from_the_jwt_exp_not_from_expires_in():
     client, transport, _ = client_with(
         access_token_response(expires_in=3600, token=short_lived),
         MINTED,
-        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() + 4000})),
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() + 4000})
+        ),
         MINTED,
         clock=clock,
     )
@@ -533,7 +544,9 @@ def test_a_refresh_scheduled_from_exp_lands_after_the_cache_has_let_go():
 def test_a_token_whose_exp_has_not_come_near_is_still_reused():
     clock = FakeClock()
     client, transport, _ = client_with(
-        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})),
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})
+        ),
         MINTED,
         MINTED,
         clock=clock,
@@ -554,9 +567,13 @@ def test_a_token_handed_over_already_expired_is_not_reused():
     # with it; the 401 retry is what rescues that one.)
     clock = FakeClock()
     client, transport, _ = client_with(
-        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() - 1})),
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() - 1})
+        ),
         MINTED,
-        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})),
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})
+        ),
         MINTED,
         clock=clock,
     )
@@ -612,7 +629,12 @@ def test_an_exp_that_is_not_a_number_falls_back_to_expires_in(exp):
 UNAUTHORIZED = (
     401,
     json.dumps(
-        {"error": {"type": "authentication_error", "message": "Invalid or expired access token"}}
+        {
+            "error": {
+                "type": "authentication_error",
+                "message": "Invalid or expired access token",
+            }
+        }
     ).encode(),
 )
 

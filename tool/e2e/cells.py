@@ -316,9 +316,7 @@ def parse_action(raw: Any, where: str) -> Action:
             raise CellError(f"{where}: action {verb!r} needs an argument")
         accepts, description = ARG_ACTIONS[verb]
         if not accepts(arg):
-            raise CellError(
-                f"{where}: action {text!r} argument must be {description}"
-            )
+            raise CellError(f"{where}: action {text!r} argument must be {description}")
         return Action(verb, arg)
     raise CellError(f"{where}: unknown action {text!r}")
 

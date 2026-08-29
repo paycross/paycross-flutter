@@ -32,8 +32,8 @@ import re
 import shlex
 import subprocess
 import time
-from datetime import datetime, timezone
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -863,9 +863,7 @@ class IosDriver(Driver):
             self._sleep(PASTE_SETTLE_SECONDS)
             # Re-resolved: the tap raised the keyboard, which on a short screen
             # scrolls the field out from under the coordinates it had before.
-            x, y = self._find(
-                TOKEN_FIELD, timeout=15, match=_is_token_field
-            ).centre
+            x, y = self._find(TOKEN_FIELD, timeout=15, match=_is_token_field).centre
             self._wda(
                 "POST",
                 self._session("/wda/touchAndHold"),
@@ -1129,6 +1127,6 @@ class IosDriver(Driver):
         return (
             f"--- app console (simctl launch --console-pty), since this launch ---\n"
             f"{console}\n"
-            f"--- log show --last {seconds}s, predicate process == \"Runner\" ---\n"
+            f'--- log show --last {seconds}s, predicate process == "Runner" ---\n'
             f"{unified}"
         )

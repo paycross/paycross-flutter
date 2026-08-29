@@ -73,10 +73,13 @@ def test_verify_merchant_passes_a_clean_control_cell():
 
 def test_verify_merchant_only_checks_the_keys_that_are_asserted():
     # No txn_status key, so a failed transaction is not a mismatch here.
-    assert verify.verify_merchant(
-        session(status="open", txns=[txn(status="failed")]),
-        {"session_status": "open"},
-    ) == []
+    assert (
+        verify.verify_merchant(
+            session(status="open", txns=[txn(status="failed")]),
+            {"session_status": "open"},
+        )
+        == []
+    )
 
 
 def test_verify_merchant_reports_every_mismatch_not_just_the_first():
@@ -104,7 +107,9 @@ def test_a_resource_with_no_status_key_is_named_as_a_shape_fault():
 
 def test_no_succeeded_txn_is_the_assertion_every_cancel_and_decline_cell_needs():
     declined = session(status="open", txns=[txn(status="failed")])
-    leaked = session(status="open", txns=[txn(status="failed"), txn(status="succeeded")])
+    leaked = session(
+        status="open", txns=[txn(status="failed"), txn(status="succeeded")]
+    )
 
     assert verify.verify_merchant(declined, {"no_succeeded_txn": True}) == []
     problems = verify.verify_merchant(leaked, {"no_succeeded_txn": True})
@@ -160,10 +165,19 @@ def test_threeds_is_a_subset_match_on_the_latest_transaction():
     )
 
     # Asserting three of five fields must not fail on the two not named.
-    assert verify.verify_merchant(
-        completed,
-        {"threeds": {"outcome": "authenticated", "flow": "challenge", "liability_shifted": True}},
-    ) == []
+    assert (
+        verify.verify_merchant(
+            completed,
+            {
+                "threeds": {
+                    "outcome": "authenticated",
+                    "flow": "challenge",
+                    "liability_shifted": True,
+                }
+            },
+        )
+        == []
+    )
     assert verify.verify_merchant(completed, {"threeds": {"flow": "frictionless"}}) == [
         "threeds.flow: expected 'frictionless', got 'challenge'"
     ]
@@ -208,7 +222,8 @@ def test_crash_lines_finds_only_real_faults():
         "08-28 12:00:00.000 I ActivityManager: Start proc\n"
         "08-28 12:00:01.000 W AndroidRuntime: uiautomator noise\n"
         "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
-        "08-28 12:00:03.000 E ActivityManager: ANR in com.paycross.paycross_flutter_example\n"
+        "08-28 12:00:03.000 E ActivityManager: ANR in "
+        "com.paycross.paycross_flutter_example\n"
     )
 
     found = verify.crash_lines(logcat, "com.paycross.paycross_flutter_example")

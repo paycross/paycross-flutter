@@ -119,9 +119,7 @@ class Driver(ABC):
         The legacy string itself is not quoted: driver messages reach stdout
         and `problems`, and the rule here is that they never carry device text.
         """
-        if tree.label_from_tree(
-            self._nodes(tolerate=True), tree.LEGACY_LABEL_PREFIXES
-        ):
+        if tree.label_from_tree(self._nodes(tolerate=True), tree.LEGACY_LABEL_PREFIXES):
             return DriverError(
                 f"no contract label within {timeout}s, but the app is showing "
                 "its human-readable outcome: this build is missing "
@@ -268,7 +266,7 @@ class Driver(ABC):
     def logs_since(self, since: datetime) -> str:
         """Device log from `since` to now."""
 
-    def close(self) -> None:
+    def close(self) -> None:  # noqa: B027 - a default of "nothing to release"
         """Releases whatever this driver is holding on the host. Idempotent.
 
         Concrete rather than abstract because only iOS holds anything: its
@@ -294,4 +292,6 @@ class Driver(ABC):
         raise NotImplementedError("airplane is a D3 action; Phase 0 does not use it")
 
     def kill_activity(self) -> None:
-        raise NotImplementedError("kill_activity is a D3 action; Phase 0 does not use it")
+        raise NotImplementedError(
+            "kill_activity is a D3 action; Phase 0 does not use it"
+        )

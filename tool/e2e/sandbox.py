@@ -143,7 +143,9 @@ def _urllib_transport(
 ) -> tuple[int, bytes]:
     request = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(
+            request, timeout=REQUEST_TIMEOUT_SECONDS
+        ) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         # urlopen raises on any 4xx/5xx and the API's explanation is in the
@@ -476,7 +478,10 @@ class Sandbox:
             self._sleep(RETRY_BACKOFF_SECONDS)
 
     def _bearer(self) -> str:
-        if self._access_token is not None and self._monotonic() < self._token_expires_at:
+        if (
+            self._access_token is not None
+            and self._monotonic() < self._token_expires_at
+        ):
             return self._access_token
 
         basic = base64.b64encode(
@@ -512,5 +517,6 @@ def _decode(method: str, url: str, status: int, payload: bytes) -> Any:
         return json.loads(payload)
     except ValueError as error:
         raise SandboxError(
-            f"{method} {url} -> HTTP {status}, body is not JSON: {_safe_to_echo(payload)}"
+            f"{method} {url} -> HTTP {status}, body is not JSON: "
+            f"{_safe_to_echo(payload)}"
         ) from error

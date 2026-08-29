@@ -139,9 +139,7 @@ def test_sheet_rearmed_on_ios_tolerates_the_regions_decimal_separator():
     # re-armed" on a sheet that plainly had. The value is what the check is
     # about, and a region is free to punctuate it however it likes.
     nodes = [
-        replace(n, text=n.text.replace(".", ","))
-        if n.identifier == "payButton"
-        else n
+        replace(n, text=n.text.replace(".", ",")) if n.identifier == "payButton" else n
         for n in ios()
     ]
     assert any("€10,00" in n.text for n in nodes if n.identifier == "payButton")
@@ -152,9 +150,7 @@ def test_sheet_rearmed_on_ios_tolerates_the_regions_decimal_separator():
 
 
 def pay_button(label):
-    return [
-        replace(n, text=label) if n.identifier == "payButton" else n for n in ios()
-    ]
+    return [replace(n, text=label) if n.identifier == "payButton" else n for n in ios()]
 
 
 def test_sheet_rearmed_on_ios_does_not_confuse_grouping_with_value():

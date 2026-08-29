@@ -435,7 +435,9 @@ def test_paste_token_sends_the_token_on_stdin_never_in_an_argv(tmp_path):
 
     # A command line is world-readable for as long as the process lives.
     assert not any(TOKEN in " ".join(argv) for argv in shell.calls)
-    carried = [(argv, s) for argv, s in zip(shell.calls, shell.stdins) if s]
+    carried = [
+        (argv, s) for argv, s in zip(shell.calls, shell.stdins, strict=False) if s
+    ]
     assert len(carried) == 1
     assert carried[0] == (["shell"], f"input text {TOKEN}\n")
 
@@ -464,9 +466,7 @@ def test_paste_token_waits_for_the_field_to_agree_with_the_file(tmp_path):
     path = tmp_path / "token"
     path.write_text(TOKEN)
     # The find, then a read that catches the field mid-entry, then agreement.
-    shell = FakeShell(
-        trees=[screen(TOKEN[:10]), screen(TOKEN[:10]), screen(TOKEN)]
-    )
+    shell = FakeShell(trees=[screen(TOKEN[:10]), screen(TOKEN[:10]), screen(TOKEN)])
 
     driver(shell).paste_token(path)  # a single early read would have raised
 
@@ -671,7 +671,12 @@ def test_close_is_a_no_op_for_a_driver_with_nothing_to_release():
 def test_the_d3_actions_are_declared_and_refuse_rather_than_no_op():
     d = driver(FakeShell())
 
-    for call in (lambda: d.background(5), d.rotate, lambda: d.airplane(True), d.kill_activity):
+    for call in (
+        lambda: d.background(5),
+        d.rotate,
+        lambda: d.airplane(True),
+        d.kill_activity,
+    ):
         with pytest.raises(NotImplementedError):
             call()
 
@@ -738,7 +743,8 @@ def test_a_driver_that_skips_super_init_has_no_package_at_all():
         wait_rearmed = dump_tree = screenshot = logs_since = lambda *a, **k: None
 
     with pytest.raises(AttributeError, match="package"):
-        Forgetful().package
+        # The access is the assertion: nothing set the attribute.
+        assert Forgetful().package
 
 
 def test_the_android_driver_exposes_what_it_was_constructed_with():
@@ -800,11 +806,15 @@ def test_relaunch_on_android_is_exactly_launch():
 
 def sheet(*rows: tuple[str, str, str]) -> str:
     """A tree of `(text, content-desc, bounds)` nodes and nothing else."""
-    return "<hierarchy>" + "".join(
-        f'<node class="android.view.View" text="{text}" content-desc="{desc}"'
-        f' bounds="{bounds}"/>'
-        for text, desc, bounds in rows
-    ) + "</hierarchy>"
+    return (
+        "<hierarchy>"
+        + "".join(
+            f'<node class="android.view.View" text="{text}" content-desc="{desc}"'
+            f' bounds="{bounds}"/>'
+            for text, desc, bounds in rows
+        )
+        + "</hierarchy>"
+    )
 
 
 def taps(shell):

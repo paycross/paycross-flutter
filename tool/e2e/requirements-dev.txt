@@ -1,0 +1,4 @@
+# Pinned exactly: this is what CI runs, and a floating linter turns a clean
+# tree red on the day it gains a rule.
+pytest==8.3.4
+ruff==0.9.6

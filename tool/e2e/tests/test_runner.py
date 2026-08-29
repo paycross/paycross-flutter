@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from tool.e2e import cells, evidence, runner
-from tool.e2e.drivers import android
 from tool.e2e.cells import CellError
+from tool.e2e.drivers import android
 from tool.e2e.drivers.base import DriverError
 from tool.e2e.sandbox import SandboxError
 
@@ -223,9 +223,7 @@ def test_the_token_file_is_destroyed_after_every_cell(cell_dir, tmp_path):
     assert not any(p.parent.exists() for p in driver.token_paths)
 
 
-def test_the_token_file_is_destroyed_even_when_the_cell_blows_up(
-    cell_dir, tmp_path
-):
+def test_the_token_file_is_destroyed_even_when_the_cell_blows_up(cell_dir, tmp_path):
     driver = FakeDriver()
     driver.type_card = raises(DriverError("the form never appeared"))
 
@@ -274,7 +272,13 @@ def test_a_wrong_label_fails_the_cell_and_says_what_it_wanted(cell_dir, tmp_path
 
 def test_a_merchant_mismatch_fails_the_cell(cell_dir, tmp_path):
     sandbox = FakeSandbox(
-        {"sess-0": {"id": "sess-0", "status": "open", "transactions": [{"id": "txn-1"}]}}
+        {
+            "sess-0": {
+                "id": "sess-0",
+                "status": "open",
+                "transactions": [{"id": "txn-1"}],
+            }
+        }
     )
 
     report = run(cell_dir, tmp_path, FakeDriver(), sandbox)
@@ -388,9 +392,7 @@ def test_a_cell_expecting_a_rearm_it_never_asks_for_says_so():
 # -- skepticism -------------------------------------------------------------
 
 
-def test_a_failure_interleaves_a_control_cell_before_it_is_recorded(
-    cell_dir, tmp_path
-):
+def test_a_failure_interleaves_a_control_cell_before_it_is_recorded(cell_dir, tmp_path):
     # control passes, frictionless fails, control is re-run to check the rig.
     driver = FakeDriver(
         labels=["result:success:txn-1", "result:cancelled", "result:success:txn-1"]
@@ -423,9 +425,7 @@ def test_a_control_check_keeps_its_evidence_out_of_the_control_cell_s(
     assert report.results[-1].artifact_id == "control-check-01"
 
 
-def test_the_control_check_runs_even_when_only_names_one_other_cell(
-    cell_dir, tmp_path
-):
+def test_the_control_check_runs_even_when_only_names_one_other_cell(cell_dir, tmp_path):
     # --only is about what to run, not about whether to believe the result.
     driver = FakeDriver(labels=["result:cancelled", "result:success:txn-1"])
 
@@ -511,16 +511,16 @@ def test_all_reruns_everything(cell_dir, tmp_path):
 # -- evidence ---------------------------------------------------------------
 
 
-def test_evidence_holds_a_tree_per_action_and_the_merchant_response(
-    cell_dir, tmp_path
-):
+def test_evidence_holds_a_tree_per_action_and_the_merchant_response(cell_dir, tmp_path):
     run(cell_dir, tmp_path, FakeDriver(), only=["control"])
 
     cell_files = names(tmp_path)
     assert "merchant.json" in cell_files
     assert "result.json" in cell_files
     assert "logs.txt" in cell_files
-    assert any(n.startswith("01-paste_token") and n.endswith(".uix") for n in cell_files)
+    assert any(
+        n.startswith("01-paste_token") and n.endswith(".uix") for n in cell_files
+    )
     # The sheet is still up in this dump, so the sheet-foreground step is shot.
     assert "03-tap_pay.png" in cell_files
 
@@ -578,9 +578,7 @@ def test_the_progress_record_is_scrubbed_with_the_token_too(cell_dir, tmp_path):
     assert TOKEN.encode() not in progress.read_bytes()
 
 
-def test_the_result_file_records_the_verdict_and_what_was_expected(
-    cell_dir, tmp_path
-):
+def test_the_result_file_records_the_verdict_and_what_was_expected(cell_dir, tmp_path):
     run(cell_dir, tmp_path, FakeDriver(), only=["control"])
 
     result = json.loads(
@@ -598,9 +596,7 @@ def test_the_result_file_records_the_verdict_and_what_was_expected(
 # -- a device that misbehaves ------------------------------------------------
 
 
-def test_a_hung_device_fails_the_cell_instead_of_killing_the_matrix(
-    cell_dir, tmp_path
-):
+def test_a_hung_device_fails_the_cell_instead_of_killing_the_matrix(cell_dir, tmp_path):
     # adb times out at 300 s and ssh at 900 s; a dead WebDriverAgent gives a
     # JSONDecodeError. None of those is a DriverError, and a 40-minute matrix
     # must not die on one of them.
@@ -700,9 +696,7 @@ def test_a_failure_during_expect_does_not_also_claim_no_rearm(tmp_path):
     assert not any(p.startswith("rearm:") for p in problems)
 
 
-def test_a_screenshot_failure_is_recorded_and_the_cell_carries_on(
-    cell_dir, tmp_path
-):
+def test_a_screenshot_failure_is_recorded_and_the_cell_carries_on(cell_dir, tmp_path):
     driver = FakeDriver()
     driver.screenshot = raises(DriverError("adb exec-out exited 1"))
 
@@ -801,15 +795,11 @@ def test_a_mint_failure_never_touches_the_device(cell_dir, tmp_path):
     assert "launch" not in verbs(driver)
 
 
-def test_a_merchant_read_failure_is_reported_as_the_cell_s_problem(
-    cell_dir, tmp_path
-):
+def test_a_merchant_read_failure_is_reported_as_the_cell_s_problem(cell_dir, tmp_path):
     sandbox = FakeSandbox()
     sandbox.read = raises(SandboxError("GET /sessions/sess-0 -> HTTP 500"))
 
-    report = run(
-        cell_dir, tmp_path, FakeDriver(), sandbox=sandbox, only=["control"]
-    )
+    report = run(cell_dir, tmp_path, FakeDriver(), sandbox=sandbox, only=["control"])
 
     assert not report.results[0].passed
     assert any("merchant: " in p for p in report.results[0].problems)
@@ -834,9 +824,7 @@ def test_a_driver_error_quoting_a_jwt_is_redacted_before_it_is_reported(
     assert any("REDACTED-SESSION-TOKEN" in p for p in report.results[0].problems)
 
 
-def test_a_driver_error_quoting_the_session_token_is_redacted_too(
-    cell_dir, tmp_path
-):
+def test_a_driver_error_quoting_the_session_token_is_redacted_too(cell_dir, tmp_path):
     driver = FakeDriver()
     driver.tap_pay = raises(DriverError(f"the field reads {TOKEN}"))
 
@@ -1782,18 +1770,24 @@ def test_a_warning_is_printed_but_does_not_change_the_exit_code(
     sandbox = FakeSandbox()
     sandbox.warnings.append("the access token's exp is 5400s in the past")
     monkeypatch.setattr(runner, "_build_driver", lambda platform: FakeDriver())
-    monkeypatch.setattr(runner.Sandbox, "from_env_file", classmethod(
-        lambda cls, path, transport=None: sandbox
-    ))
+    monkeypatch.setattr(
+        runner.Sandbox,
+        "from_env_file",
+        classmethod(lambda cls, path, transport=None: sandbox),
+    )
     env = tmp_path / ".env"
     env.write_text("x=1\n", encoding="utf-8")
 
     code = runner.main(
         [
-            "--platform", "android",
-            "--cells", str(cell_dir),
-            "--evidence-root", str(tmp_path / "evidence"),
-            "--env-file", str(env),
+            "--platform",
+            "android",
+            "--cells",
+            str(cell_dir),
+            "--evidence-root",
+            str(tmp_path / "evidence"),
+            "--env-file",
+            str(env),
             "--all",
         ]
     )

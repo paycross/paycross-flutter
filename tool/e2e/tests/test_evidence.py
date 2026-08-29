@@ -21,6 +21,7 @@ def png_bytes():
     header = b"\x89PNG\r\n\x1a\n"
     ihdr = b"\x00\x00\x00\x01" * 2 + b"\x08\x02\x00\x00\x00"
     idat = zlib.compress(b"\x00\xff\xff\xff")
+
     def chunk(kind, payload):
         return (
             len(payload).to_bytes(4, "big")
@@ -28,6 +29,7 @@ def png_bytes():
             + payload
             + zlib.crc32(kind + payload).to_bytes(4, "big")
         )
+
     return header + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
 
 
@@ -124,7 +126,9 @@ def test_redact_takes_the_shape_rule_before_the_prefix_rule():
     # a 394-character tail was left behind -- and JWT_RE is anchored on `eyJ`,
     # so it could not see a token whose head had just been eaten. The shape
     # rule has to go first, while the token still looks like one.
-    minted = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjoiMDFhMCJ9.AAA" + "a" * 40
+    minted = (
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjoiMDFhMCJ9.AAA" + "a" * 40
+    )
     reminted = minted[:-20] + "b" * 20
     assert reminted != minted and reminted.startswith(minted[:60])
 
@@ -162,7 +166,9 @@ def test_scrub_resource_drops_the_token_out_of_a_checkout_url():
     safe, found = evidence.scrub_resource(resource)
 
     assert JWT not in json.dumps(safe)
-    assert safe["checkout_url"].startswith("https://checkout.test-pay-cross.com/?session=")
+    assert safe["checkout_url"].startswith(
+        "https://checkout.test-pay-cross.com/?session="
+    )
     assert found == [JWT]
 
 

@@ -291,7 +291,9 @@ def test_ssh_surfaces_the_stderr_of_a_failed_remote_command(monkeypatch):
     # Discarding it is how "no route to host" reads as an empty log, and an
     # empty log is how criterion 3 passes on nothing.
     _stub_subprocess(
-        monkeypatch, stdout=b"", stderr=b"ssh: connect to host mac port 22\r\n",
+        monkeypatch,
+        stdout=b"",
+        stderr=b"ssh: connect to host mac port 22\r\n",
         returncode=255,
     )
 
@@ -1201,7 +1203,11 @@ def test_paste_token_never_puts_the_token_on_a_command_line(tmp_path):
     # either machine, and this one never lands on the Mac's disk at all.
     assert TOKEN not in ssh.joined()
     assert "eyJhbGciOiJSUzI1NiJ9" not in ssh.joined()
-    carried = [(c, sent) for c, sent in zip(ssh.calls, ssh.stdins) if sent is not None]
+    carried = [
+        (c, sent)
+        for c, sent in zip(ssh.calls, ssh.stdins, strict=False)
+        if sent is not None
+    ]
     assert len(carried) == 2
     assert "pbcopy" in carried[0][0]
     assert carried[0][1] == TOKEN.encode()
@@ -1446,7 +1452,7 @@ def test_screenshot_comes_back_base64_and_is_decoded():
 def test_screenshot_accepts_the_line_wrapping_base64_adds():
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 300
     encoded = base64.b64encode(png).decode()
-    wrapped = "\n".join(encoded[at:at + 76] for at in range(0, len(encoded), 76))
+    wrapped = "\n".join(encoded[at : at + 76] for at in range(0, len(encoded), 76))
     ssh = FakeSsh(shot_response(wrapped))
 
     assert driver(ssh).screenshot() == png
@@ -1778,8 +1784,7 @@ def test_an_unreadable_locale_is_not_a_reason_to_refuse_a_rig():
     # a cosmetic check.
     ssh = FakeSsh(
         *launch_outputs(
-            locale="2026-08-29 defaults[1:2] \nThe domain/default pair does "
-            "not exist\n"
+            locale="2026-08-29 defaults[1:2] \nThe domain/default pair does not exist\n"
         )
     )
 

@@ -129,8 +129,9 @@ def _replace_prefixes(data: bytes, secret: bytes) -> bytes:
     at = 0
     while (found := data.find(head, at)) >= 0:
         end = len(head)
-        while end < len(secret) and data[found + end : found + end + 1] == (
-            secret[end : end + 1]
+        while (
+            end < len(secret)
+            and data[found + end : found + end + 1] == (secret[end : end + 1])
         ):
             end += 1
         out += data[at:found] + REDACTED
@@ -166,6 +167,7 @@ def scrub_resource(value: Any) -> tuple[Any, list[str]]:
                     found.append(item)
                     out[key] = REDACTED.decode()
                 elif key.endswith("_url") and isinstance(item, str):
+
                     def take(match: "re.Match[str]") -> str:
                         found.append(match.group(0))
                         return REDACTED.decode()

@@ -281,9 +281,7 @@ def _may_screenshot(verb: str, dump: bytes, platform: str, token: str | None) ->
     return verb in SHOT_VERBS and not _shows_the_example_screen(dump, platform, token)
 
 
-def _perform(
-    driver, action: Action, *, card: Card, token_path: Path, amount_text: str
-):
+def _perform(driver, action: Action, *, card: Card, token_path: Path, amount_text: str):
     """Executes one action and returns whatever it answers with.
 
     `wait_result` answers with a label and `expect rearmed` with a bool.
@@ -523,9 +521,7 @@ def run_cell(
                 # short never reached the state it describes, so a mismatch
                 # here is the first failure's consequence, not a finding.
                 problems += verify.verify_merchant(resource, expected.merchant)
-                problems += verify.verify_label_transaction(
-                    resource, transaction_id
-                )
+                problems += verify.verify_label_transaction(resource, transaction_id)
 
         try:
             # Before the next cell's launch(), which is where the iOS console

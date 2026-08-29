@@ -127,7 +127,8 @@ def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
     if binary:
         if done.returncode != 0:
             raise DriverError(
-                f"adb {argv[0]} exited {done.returncode}: {device_text(done.stderr).strip()}"
+                f"adb {argv[0]} exited {done.returncode}: "
+                f"{device_text(done.stderr).strip()}"
             )
         return done.stdout
     out = device_text(done.stdout)
@@ -194,7 +195,13 @@ class AndroidDriver(Driver):
             self._sleep(DIGIT_PACING_SECONDS)
 
     def _find(
-        self, finder, needle: str, what: str, *, timeout: float = 30, interval: float = 2
+        self,
+        finder,
+        needle: str,
+        what: str,
+        *,
+        timeout: float = 30,
+        interval: float = 2,
     ):
         found = self._poll(
             lambda nodes: next(iter(finder(nodes, needle)), None), timeout, interval
@@ -235,7 +242,9 @@ class AndroidDriver(Driver):
         self._shell(["uninstall", PACKAGE])  # first install has nothing to remove
         out = self._shell(["install", f"{self._windows_staging}\\{STAGED_APK}"])
         if "Success" not in out:
-            raise DriverError(f"adb install did not report Success: {out.strip()[:400]}")
+            raise DriverError(
+                f"adb install did not report Success: {out.strip()[:400]}"
+            )
 
     def launch(self) -> None:
         if self.getprop("sys.boot_completed") != "1":
@@ -263,7 +272,7 @@ class AndroidDriver(Driver):
         that exposure lasts as long as the keystrokes do.
         """
         script = "".join(
-            f"input text {text[at:at + TOKEN_CHUNK_CHARS]}\n"
+            f"input text {text[at : at + TOKEN_CHUNK_CHARS]}\n"
             for at in range(0, len(text), TOKEN_CHUNK_CHARS)
         )
         self._shell(["shell"], stdin=script)
@@ -393,7 +402,9 @@ class AndroidDriver(Driver):
 
     # -- evidence ------------------------------------------------------------
 
-    def dump_tree(self, *, attempts: int = _DUMP_ATTEMPTS, interval: float = 1) -> bytes:
+    def dump_tree(
+        self, *, attempts: int = _DUMP_ATTEMPTS, interval: float = 1
+    ) -> bytes:
         """One accessibility dump, retaken until it parses.
 
         Two failures hide behind a plain dump-then-cat. `uiautomator dump`

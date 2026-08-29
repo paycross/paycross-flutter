@@ -192,9 +192,7 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
             )
 
     if "no_succeeded_txn" in expected:
-        moved = [
-            t for t in _transactions(resource) if t.get("status") in MONEY_MOVED
-        ]
+        moved = [t for t in _transactions(resource) if t.get("status") in MONEY_MOVED]
         if expected["no_succeeded_txn"] and moved:
             problems.append(
                 "no_succeeded_txn: the session holds "
@@ -217,9 +215,7 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
         if key in expected:
             actual = _failure(latest).get(field)
             if actual != expected[key]:
-                problems.append(
-                    f"{key}: expected {expected[key]!r}, got {actual!r}"
-                )
+                problems.append(f"{key}: expected {expected[key]!r}, got {actual!r}")
 
     for key, field in (
         ("saved_card_saved", "saved_token"),
