@@ -481,6 +481,12 @@ def load_cell(path: Path) -> Cell:
     bad = [p for p in platforms if p not in PLATFORMS]
     if bad or not platforms:
         raise CellError(f"{where}: unknown platform(s) {bad or '<empty>'}")
+    repeated = sorted({p for p in platforms if platforms.count(p) > 1})
+    if repeated:
+        # The cell still runs once, but every per-platform loop counts it
+        # twice -- including the cross-field rules, which would then name the
+        # same platform twice in one message.
+        raise CellError(f"{where}: duplicate platform(s) {repeated}")
 
     raw_card = _require(raw, "card", where)
     card = Card(
@@ -516,10 +522,20 @@ def load_cell(path: Path) -> Cell:
     overrides = {}
     for platform in PLATFORMS:
         override = raw.get(f"expected.{platform}")
-        if override is not None:
-            overrides[platform] = _check_expectation(
-                override, where, f"expected.{platform}"
+        if override is None:
+            continue
+        if platform not in platforms:
+            # Silently dead otherwise: `expected_for` is only ever asked about
+            # a platform the cell declares, so this block would never be read
+            # and the cell would run asserting the base it was written to
+            # override.
+            raise CellError(
+                f"{where}: expected.{platform} but the cell does not run on "
+                f"{platform!r}; platforms are {list(platforms)}"
             )
+        overrides[platform] = _check_expectation(
+            override, where, f"expected.{platform}"
+        )
 
     cell = Cell(
         id=cell_id,

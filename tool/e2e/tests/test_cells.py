@@ -666,3 +666,48 @@ def test_the_transaction_placeholder_is_one_constant_in_both_modules():
     from tool.e2e import verify
 
     assert verify.TXN_PLACEHOLDER is cells.TXN_PLACEHOLDER
+
+
+# --- review: an override for a platform the cell does not run on ----------
+
+
+def test_an_override_for_a_platform_the_cell_does_not_run_on_is_refused(tmp_path):
+    # Silently dead: `expected_for` is only ever called with a platform the
+    # cell declares, so this override would never be read -- and the cell
+    # would run on Android asserting the base it was written to override.
+    body = CONTROL.replace("platforms: [android, ios]", "platforms: [android]") + (
+        textwrap.dedent(
+            """\
+            expected.ios:
+              merchant:
+                failure_recovery: retry
+            """
+        )
+    )
+
+    message = expect_rejected(tmp_path, body)
+    assert "expected.ios" in message
+    assert "does not run on" in message
+
+
+def test_an_override_for_a_declared_platform_is_still_fine(tmp_path):
+    body = CONTROL.replace("platforms: [android, ios]", "platforms: [ios]") + (
+        textwrap.dedent(
+            """\
+            expected.ios:
+              merchant:
+                failure_recovery: retry
+            """
+        )
+    )
+    cell = cells.load_cell(write(tmp_path, "control.yaml", body))
+
+    assert cell.expected_for("ios").merchant["failure_recovery"] == "retry"
+
+
+def test_a_duplicate_platform_is_refused(tmp_path):
+    # `platforms: [android, android]` runs the cell once but reads as twice,
+    # and every per-platform loop then double-counts it.
+    body = CONTROL.replace("platforms: [android, ios]", "platforms: [android, android]")
+
+    assert "duplicate platform" in expect_rejected(tmp_path, body)
