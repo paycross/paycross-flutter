@@ -748,3 +748,44 @@ def test_the_android_driver_exposes_what_it_was_constructed_with():
     assert made.package == android.PACKAGE
     made._sleep(1.5)
     assert slept == [1.5]
+
+
+# --- Plan B: watching for a label that must not arrive --------------------
+
+
+def test_wait_no_label_hands_back_the_label_that_appeared():
+    # Naming it means the failure says what showed up, not only that
+    # something did.
+    resolved = (
+        "<hierarchy>"
+        '<node class="android.view.View" text=""'
+        ' content-desc="result:success:txn-1" bounds="[0,0][100,50]"/>'
+        "</hierarchy>"
+    )
+    shell = FakeShell(tree=resolved)
+
+    assert driver(shell).wait_no_label(0) == "result:success:txn-1"
+
+
+def test_wait_no_label_answers_none_when_the_app_said_nothing():
+    # The Android process-kill cell's pass: the pending Dart call dies with
+    # the isolate and no result is delivered, by design.
+    shell = FakeShell(tree=screen())
+
+    assert driver(shell).wait_no_label(0) is None
+
+
+def test_relaunch_on_android_is_exactly_launch():
+    # Nothing on this side is truncated by a launch, so there is nothing for a
+    # relaunch to preserve. The base implementation is the whole answer.
+    # Two launches' worth: FakeShell pops one output per call, and a launch
+    # spends four -- boot, locale, force-stop, monkey.
+    shell = FakeShell("1\n", "en-US\n", "", "", "1\n", "en-US\n", "", "")
+    made = driver(shell)
+
+    made.launch()
+    launched = list(shell.calls)
+    shell.calls.clear()
+    made.relaunch()
+
+    assert shell.calls == launched

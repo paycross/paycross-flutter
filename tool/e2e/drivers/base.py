@@ -228,6 +228,27 @@ class Driver(ABC):
     def wait_rearmed(self, amount_text: str, timeout: float) -> bool:
         """Blocks until the sheet re-arms after a retryable decline."""
 
+    def wait_no_label(self, timeout: float, *, interval: float = 2) -> str | None:
+        """Watches for `timeout` seconds and hands back a label if one came.
+
+        The inverse of `wait_label`, and the only way to assert a designed
+        non-result: after an Android process kill the pending Dart call dies
+        with the isolate and nothing is ever delivered. Returning the
+        offending label rather than a bool means the failure names what
+        appeared instead of only saying that something did.
+        """
+        return self._poll(tree.label_from_tree, timeout, interval)
+
+    def relaunch(self) -> None:
+        """Cold-starts the app again mid-cell, without losing the log window.
+
+        The default is `launch()`. iOS overrides it, because `launch()` also
+        truncates the console capture -- and a cell that relaunches halfway
+        through would throw away the first half of its own criterion-3
+        evidence.
+        """
+        self.launch()
+
     # -- evidence ------------------------------------------------------------
 
     @abstractmethod

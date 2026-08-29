@@ -394,15 +394,29 @@ def test_wda_raises_when_the_answer_is_empty():
 NO_OPEN_SESSION = json.dumps({"value": {"ready": True}, "sessionId": None})
 
 
-def launch_outputs(session=None, alive="alive\n", status=NO_OPEN_SESSION):
+def launch_outputs(
+    session=None,
+    alive="alive\n",
+    status=NO_OPEN_SESSION,
+    *,
+    stopping=False,
+    mark=CONSOLE_MARK,
+):
+    """One launch's worth of remote answers, in the order launch() asks.
+
+    `stopping` is for a second launch on the same driver: the first one left a
+    capture behind, so `_stop_console` has a round trip of its own. `mark` is
+    what `wc -c` reports -- a relaunch measures a log that has grown.
+    """
     stale = json.loads(status).get("sessionId")
     return (
         DEVICE_LINE,
+        *(["gone\n"] if stopping else []),
         status,
         # Only asked for when /status named one.
         *([json.dumps({"value": None})] if stale else []),
         "",
-        CONSOLE_STARTED,
+        f"    {mark}\n12345\n",
         session or json.dumps({"value": {"sessionId": "sess-9"}}),
         alive,
     )
@@ -1677,3 +1691,49 @@ def test_the_ios_driver_waits_through_the_sleep_it_was_given():
     ios.IosDriver(ssh=FakeSsh(), sleep=slept.append)._sleep(0.25)
 
     assert slept == [0.25]
+
+
+# --- Plan B: relaunching without losing the log window --------------------
+
+
+def test_relaunch_does_not_truncate_the_console_log():
+    # A cell that relaunches halfway through would otherwise throw away the
+    # first half of its own criterion-3 evidence.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.calls.clear()
+    ssh.outputs.extend(launch_outputs(stopping=True))
+
+    d.relaunch()
+
+    started = next(c for c in ssh.calls if "--console-pty" in c)
+    assert f": > {ios.CONSOLE_LOG}" not in started
+
+
+def test_relaunch_leaves_the_console_mark_where_the_launch_put_it():
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    was = d._console_from
+    # A second, larger mark: the log has grown since the launch, and honouring
+    # it would start this cell's window halfway through itself.
+    ssh.outputs.extend(launch_outputs(stopping=True, mark=CONSOLE_MARK + 4096))
+
+    d.relaunch()
+
+    assert d._console_from == was
+
+
+def test_relaunch_still_replaces_the_capture_and_the_session():
+    # The old --console-pty is bound to the app instance being replaced.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.calls.clear()
+    ssh.outputs.extend(launch_outputs(stopping=True))
+
+    d.relaunch()
+
+    assert any("--console-pty" in c for c in ssh.calls)
+    assert any("terminate" in c for c in ssh.calls)

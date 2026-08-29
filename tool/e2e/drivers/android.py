@@ -94,6 +94,7 @@ CANCEL_CONFIRM = "Yes, Cancel"
 #: unusable cutoff yields an empty log, which reads as "nothing crashed".
 _LOGCAT_CUTOFF = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$")
 
+
 def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
     """Invokes adb once, normalising CRLF and never discarding a failure.
 

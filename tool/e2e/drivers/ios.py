@@ -143,6 +143,7 @@ _EXCERPT = 200
 #: `xcrun simctl list devices` puts the state last: `iPhone 17 (UDID) (Booted)`.
 _DEVICE_STATE = re.compile(r"\(([^()]+)\)\s*$")
 
+
 def _is_token_field(node: tree.Node) -> bool:
     """The example's token field, in both shapes its accessible name takes.
 
@@ -384,7 +385,7 @@ class IosDriver(Driver):
                 "of them would interleave into one log"
             )
 
-    def _start_console(self) -> int:
+    def _start_console(self, *, truncate: bool = True) -> int | None:
         """Launches the app with its console captured, and returns the log mark.
 
         The SDK emits no os_log, so `log show` never sees the markers criterion
@@ -402,10 +403,15 @@ class IosDriver(Driver):
         byte length is still read afterwards and used as the offset, so a
         truncation that did not take is a smaller window rather than a previous
         cell's output.
+
+        `truncate=False` is a relaunch mid-cell: the log keeps what this cell
+        has already written and the existing mark stands, because honouring
+        the new one would start the cell's window halfway through itself.
         """
         said = self._remote(
-            f"mkdir -p {REMOTE_DIR} && : > {CONSOLE_LOG} && "
-            f"wc -c < {CONSOLE_LOG} && "
+            f"mkdir -p {REMOTE_DIR} && "
+            + (f": > {CONSOLE_LOG} && " if truncate else "")
+            + f"wc -c < {CONSOLE_LOG} && "
             f"( nohup xcrun simctl launch --console-pty {self._quoted_udid} "
             f"{self._bundle} "
             f">> {CONSOLE_LOG} 2>&1 < /dev/null & echo $! )"
@@ -416,7 +422,7 @@ class IosDriver(Driver):
                 f"could not start the console capture: {said.strip()[:400]!r}"
             )
         mark, self._console_pid = int(fields[0]), int(fields[1])
-        return mark
+        return mark if truncate else self._console_from
 
     def _check_console(self) -> None:
         """Asserts the console capture outlived the session request.
@@ -463,7 +469,7 @@ class IosDriver(Driver):
             if session_id:
                 self._wda("DELETE", f"/session/{session_id}")
 
-    def launch(self) -> None:
+    def launch(self, *, truncate_console: bool = True) -> None:
         """Cold-starts the example app with its console captured.
 
         **Contract with the runner: a cell's logs are collected before the next
@@ -472,13 +478,20 @@ class IosDriver(Driver):
         cell's console stops being readable. `logs_since` is therefore called
         once per cell, before the next `launch()`, and `close()` at the end of
         the run.
+
+        `truncate_console=False` is `relaunch()`, which is a cold start *in
+        the middle of* a cell: the window it has already written is its own
+        evidence and is kept.
         """
         # Before anything that can fail. The log is truncated by
         # _start_console and by nothing else, so a launch that gives up ahead
         # of it would leave the previous cell's window in place and readable,
         # and logs_since would hand that back as this cell's -- failing this
         # cell for the last one's crash, and the interleaved control after it.
-        self._console_from = None
+        # A relaunch keeps the mark for exactly the mirrored reason: that
+        # window belongs to the cell now running.
+        if truncate_console:
+            self._console_from = None
         state = self._device_state()
         if state != "Booted":
             raise DriverError(f"simulator {self._udid} is {state!r}, not booted")
@@ -491,7 +504,7 @@ class IosDriver(Driver):
             f"xcrun simctl terminate {self._quoted_udid} {self._bundle} "
             "2>/dev/null || true"
         )
-        self._console_from = self._start_console()
+        self._console_from = self._start_console(truncate=truncate_console)
         self._sleep(LAUNCH_SETTLE_SECONDS)
 
         raw = self._wda(
@@ -533,6 +546,9 @@ class IosDriver(Driver):
         # A new session can mean a new window; the cached size is not carried.
         self._window = None
         self._check_console()
+
+    def relaunch(self) -> None:
+        self.launch(truncate_console=False)
 
     # -- finding and tapping -------------------------------------------------
 
