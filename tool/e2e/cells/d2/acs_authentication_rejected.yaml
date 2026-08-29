@@ -9,6 +9,16 @@
 # threeds.outcome is left unasserted on purpose: a rejection is not the same
 # as D0's not_authenticated and nothing has measured which token the sandbox
 # records. flow is asserted because a challenge is a challenge.
+#
+# failure_code and network_decline_code are left out too, for two different
+# reasons. network_decline_code because an authentication outcome never
+# reaches an issuer, so canonical.go attaches no network codes to it at all --
+# `null` is therefore the honest assertion and it is left for Phase 3 to pin
+# beside the label, on a measurement rather than on a reading of the source.
+# failure_code because the same first run settles it: FailureCodeMap.php maps
+# authentication_rejected to ['authentication', 'do_not_retry'], but what core
+# records for an ACS-driven rejection has not been seen. failure_recovery IS
+# asserted, because do_not_retry is the half a merchant has to act on.
 id: acs_authentication_rejected
 platforms: [android, ios]
 card:

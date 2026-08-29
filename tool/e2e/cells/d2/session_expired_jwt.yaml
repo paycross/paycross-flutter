@@ -21,6 +21,15 @@
 # Distinguished from its sibling `session_expired_server` by <txn>: this
 # session holds no transaction, so the label's transaction field is empty.
 # Only one of the two can name a transaction.
+#
+# The timing is tight at the other end, and on purpose. `wait 960` plus
+# `wait_result 90` is 1050 s of the session's own 1200 s, so the launch, the
+# present and the runner's merchant read all have to fit in the ~150 s that is
+# left -- nearer 145 once the seconds between the mint and the launch are
+# counted. If that read lands after expires_at the session reads `expired` and
+# this cell has quietly measured session_expired_server instead: the same
+# label for the wrong reason. So if it ever reports session_status `expired`,
+# check the clock before checking the SDK.
 id: session_expired_jwt
 platforms: [android, ios]
 card:

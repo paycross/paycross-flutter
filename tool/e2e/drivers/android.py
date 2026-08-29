@@ -283,6 +283,14 @@ class AndroidDriver(Driver):
             # looking like an SDK finding. Refusing here makes the interleaved
             # control fail too, which is exactly right: this is a rig fault,
             # and exit 3 says so.
+            #
+            # `run_cell` now replays a teardown the cell did not live to
+            # reach, so arriving here means that replay was REACHED AND
+            # FAILED -- or never ran, because the runner itself died. Either
+            # way the device is dirty and nothing in this process knows how to
+            # clean it. Which is why this still refuses rather than clearing
+            # the setting: a run that silently repaired the rig would be a run
+            # that had stopped reporting that it broke it.
             raise DriverError(
                 "the device is in airplane mode: a previous cell left it on. "
                 "Run: adb shell cmd connectivity airplane-mode disable"
