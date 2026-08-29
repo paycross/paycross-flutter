@@ -112,6 +112,74 @@ def test_a_short_head_shared_with_a_secret_is_not_a_leak():
     assert evidence.redact(text, secrets=[JWT]) == text
 
 
+def test_redact_takes_the_shape_rule_before_the_prefix_rule():
+    # The merchant API re-mints a session token on every read of an open
+    # session, and the new one shares a 617-character prefix with the old --
+    # same header, same session, merchant, customer, amount and urls; only
+    # iat, exp and jti differ, and they sit late in the payload. Measured
+    # 2026-08-29. With the prefix rule first, that shared head was replaced and
+    # a 394-character tail was left behind -- and JWT_RE is anchored on `eyJ`,
+    # so it could not see a token whose head had just been eaten. The shape
+    # rule has to go first, while the token still looks like one.
+    minted = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjoiMDFhMCJ9.AAA" + "a" * 40
+    reminted = minted[:-20] + "b" * 20
+    assert reminted != minted and reminted.startswith(minted[:60])
+
+    out = evidence.redact(f"<v>{reminted}</v>".encode(), secrets=[minted])
+
+    # The tail is the half the prefix rule cannot reach, and in the real case
+    # it is signature bytes.
+    assert reminted[-20:].encode() not in out
+    assert b"eyJ" not in out
+    assert b"[REDACTED-SESSION-TOKEN]" in out
+
+
+def test_scrub_resource_drops_a_token_by_key_at_any_depth():
+    resource = {
+        "id": "sess-1",
+        "session_token": JWT,
+        "transactions": [{"id": "txn-1", "saved_token": JWT}],
+        "nested": {"deeper": {"used_token": JWT}},
+        "status": "open",
+    }
+
+    safe, found = evidence.scrub_resource(resource)
+
+    assert JWT not in json.dumps(safe)
+    assert safe["status"] == "open" and safe["id"] == "sess-1"
+    assert safe["transactions"][0]["id"] == "txn-1"
+    assert found == [JWT, JWT, JWT]
+
+
+def test_scrub_resource_drops_the_token_out_of_a_checkout_url():
+    # The token is a query parameter as well as a field, so dropping the field
+    # alone leaves the whole credential on disk one key over.
+    resource = {"checkout_url": f"https://checkout.test-pay-cross.com/?session={JWT}"}
+
+    safe, found = evidence.scrub_resource(resource)
+
+    assert JWT not in json.dumps(safe)
+    assert safe["checkout_url"].startswith("https://checkout.test-pay-cross.com/?session=")
+    assert found == [JWT]
+
+
+def test_scrub_resource_leaves_a_url_without_a_session_alone():
+    resource = {"return_url": "https://merchant.example.com/payment/return"}
+
+    safe, found = evidence.scrub_resource(resource)
+
+    assert safe == resource
+    assert found == []
+
+
+def test_scrub_resource_does_not_mutate_what_it_was_given():
+    resource = {"session_token": JWT}
+
+    evidence.scrub_resource(resource)
+
+    assert resource["session_token"] == JWT
+
+
 def test_a_secret_too_short_to_be_a_token_is_left_alone():
     # Blanket-replacing a three-character string would corrupt every artifact
     # it appears in, and nothing that short is a credential worth protecting.

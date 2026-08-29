@@ -206,14 +206,18 @@ def budget_for(cell: Cell) -> float:
     return total
 
 
-def _redacted(text: str, token: str | None = None) -> str:
+def _redacted(text: str, *secrets: str | None) -> str:
     """What the runner is allowed to print or file.
 
     Driver and sandbox messages quote what they saw on a device, and nothing
     below runs them through `redact()` -- these strings reach stdout as well
     as the evidence tree, so they are scrubbed where they are made.
+
+    Several secrets rather than one: a cell holds the token it minted, and
+    after the merchant read it also holds the one the API re-minted and handed
+    back.
     """
-    return evidence.redact(text.encode("utf-8"), (token,)).decode(
+    return evidence.redact(text.encode("utf-8"), secrets).decode(
         "utf-8", errors="replace"
     )
 
@@ -355,12 +359,17 @@ def run_cell(
         problems.append(f"sandbox: {error}")
 
     token = session.get("token")
+    #: Every credential this cell is known to hold. It grows: the merchant read
+    #: hands back a token the runner never minted, and everything filed after
+    #: that read is scrubbed of it by literal rather than left to the shape
+    #: rule.
+    secrets: list[str | None] = [token]
 
     def write(name: str, data: bytes) -> None:
-        # The literal token as well as the shape rule: a token whose segments
+        # The literal tokens as well as the shape rule: a token whose segments
         # are shorter than JWT_RE wants is not matched by shape, and a log can
         # wrap one in a way no regex was written for.
-        run.write(artifact_id, name, data, secrets=(token,))
+        run.write(artifact_id, name, data, secrets=tuple(secrets))
 
     if session:
         # 0700 directory, 0600 file, outside the evidence root, gone in the
@@ -477,6 +486,13 @@ def run_cell(
                 f"merchant: could not read session {session['id']}: {error}"
             )
         else:
+            # A GET on an open session re-mints a session_token and hands
+            # it back, and puts a second copy in checkout_url -- a live
+            # credential the runner never minted and cannot have named as a
+            # secret. Dropped by key here, and added to `secrets` so the
+            # artifacts filed after this one are scrubbed of it too.
+            resource, minted_by_the_read = evidence.scrub_resource(resource)
+            secrets.extend(minted_by_the_read)
             # Filed either way: the merchant's view of a cell that died
             # mid-flight is how you tell a driver that lost the device from a
             # payment that never happened.
@@ -507,7 +523,7 @@ def run_cell(
                 for line in verify.crash_lines(log, driver.package)
             ]
 
-    problems = [_redacted(problem, token) for problem in problems]
+    problems = [_redacted(problem, *secrets) for problem in problems]
     result = CellResult(
         cell_id=cell.id,
         passed=not problems,

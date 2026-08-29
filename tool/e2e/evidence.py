@@ -42,6 +42,19 @@ MIN_SECRET_CHARS = 8
 #: carries nothing -- is not on its own a match.
 MIN_SECRET_PREFIX_CHARS = 48
 
+#: Keys whose value is a credential wherever they appear in a merchant
+#: resource. A GET on an *open* session re-mints a `session_token` and hands it
+#: back, so the runner is given a live token it never minted and cannot name as
+#: a secret in advance -- which is how full tokens reached merchant.json in the
+#: first live iOS run. Dropped by key, so this holds however the value is
+#: shaped and whatever the shape rule can or cannot see.
+TOKEN_KEYS = frozenset({"session_token", "saved_token", "used_token"})
+
+#: The same credential again, as a query parameter: the checkout URL carries
+#: `?session=<token>`, so dropping the field alone leaves the whole thing on
+#: disk one key over.
+_URL_TOKEN_RE = re.compile(r"(?<=[?&]session=)[^&#\s]+")
+
 
 def redact(data: bytes, secrets: Iterable[str | None] = ()) -> bytes:
     """Removes JWT-shaped strings, and any literal secret named, from an artifact.
@@ -62,10 +75,18 @@ def redact(data: bytes, secrets: Iterable[str | None] = ()) -> bytes:
     is deliberate rather than lucky: a screenshot cannot be redacted, so the
     runner never captures one of a screen showing the token.
     """
+    # The shape rule goes first, while a token still looks like one. The
+    # prefix rule below replaces a *head*, and JWT_RE is anchored on the `eyJ`
+    # that head begins with -- so running it second means a token that shares a
+    # long prefix with a known secret is decapitated and its tail is then
+    # invisible to the regex. That is not hypothetical: the merchant API
+    # re-mints a session token on every read of an open session, and the new
+    # one shares a 617-character head with the old.
+    data = JWT_RE.sub(REDACTED, data)
     for secret in secrets:
         if secret and len(secret) >= MIN_SECRET_CHARS:
             data = _replace_prefixes(data, secret.encode("utf-8"))
-    return JWT_RE.sub(REDACTED, data)
+    return data
 
 
 def _replace_prefixes(data: bytes, secret: bytes) -> bytes:
@@ -92,6 +113,44 @@ def _replace_prefixes(data: bytes, secret: bytes) -> bytes:
         at = found + end
     out += data[at:]
     return bytes(out)
+
+
+def scrub_resource(value: Any) -> tuple[Any, list[str]]:
+    """A merchant resource with its tokens removed, and the tokens it held.
+
+    Two jobs, because they are the same walk. What comes back first is safe to
+    file; what comes back second is what the caller now knows is sensitive and
+    should hand to `redact()` as `secrets=` for everything it files afterwards.
+
+    Removal is by key (`TOKEN_KEYS`) and by the checkout URL's `session=`
+    parameter -- never by shape. The value here is a live credential whatever
+    it looks like, and the shape rule has already been shown to miss one.
+
+    The input is not mutated: `verify` reads the same resource afterwards.
+    """
+    found: list[str] = []
+
+    def walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            out = {}
+            for key, item in node.items():
+                if key in TOKEN_KEYS and isinstance(item, str) and item:
+                    found.append(item)
+                    out[key] = REDACTED.decode()
+                elif key.endswith("_url") and isinstance(item, str):
+                    def take(match: "re.Match[str]") -> str:
+                        found.append(match.group(0))
+                        return REDACTED.decode()
+
+                    out[key] = _URL_TOKEN_RE.sub(take, item)
+                else:
+                    out[key] = walk(item)
+            return out
+        if isinstance(node, list):
+            return [walk(item) for item in node]
+        return node
+
+    return walk(value), found
 
 
 def _now() -> str:

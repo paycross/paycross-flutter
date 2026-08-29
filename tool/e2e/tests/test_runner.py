@@ -57,15 +57,25 @@ def cell_dir(tmp_path):
     return directory
 
 
+#: Long enough to reach the prefix rule's 48-character floor, which the short
+#: TOKEN above deliberately does not.
+MINTED_LIKE_THE_REAL_ONE = (
+    "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"
+    ".eyJzZXNzaW9uIjoiMDFhMDQ3OWQtMDMwYS03MDhhIiwibWVyY2hhbnQiOiIwMTlkNzc3YyJ9"
+    ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5cAAAAAAAAAAAA"
+)
+
+
 class FakeSandbox:
-    def __init__(self, sessions=None):
+    def __init__(self, sessions=None, token=TOKEN):
         self.minted = []
         self.sessions = sessions or {}
+        self.token = token
 
     def mint(self, amount, currency, options):
         session_id = f"sess-{len(self.minted)}"
         self.minted.append(session_id)
-        return {"id": session_id, "token": TOKEN}
+        return {"id": session_id, "token": self.token}
 
     def read(self, session_id):
         return self.sessions.get(
@@ -836,6 +846,73 @@ def test_a_driver_error_quoting_the_session_token_is_redacted_too(
     report = run(cell_dir, tmp_path, driver, only=["control"])
 
     assert not any(TOKEN in p for p in report.results[0].problems)
+
+
+def test_the_merchant_read_s_own_token_never_reaches_disk(cell_dir, tmp_path):
+    # The API re-mints a session token on every read of an OPEN session and
+    # hands it back in the resource, plus a second copy in checkout_url's
+    # `session=` parameter. The runner cannot pass it to `secrets=`: it has
+    # never seen it, and it is not the token it minted. It reached
+    # merchant.json in the first live iOS run.
+    # It shares a long head with the minted one, as the real pair does: same
+    # header and same session, merchant, customer and amount claims, differing
+    # only in iat, exp, jti and the signature. That is what made the shape rule
+    # useless -- the prefix scrub ate the `eyJ` the regex anchors on and left
+    # the tail behind.
+    minted = MINTED_LIKE_THE_REAL_ONE
+    reminted = minted[:-24] + "B" * 24
+    sandbox = FakeSandbox(
+        sessions={
+            "sess-0": {
+                "id": "sess-0",
+                "status": "open",
+                "session_token": reminted,
+                "checkout_url": (
+                    f"https://checkout.test-pay-cross.com/?session={reminted}"
+                ),
+                "transactions": [{"id": "txn-1", "status": "succeeded"}],
+            }
+        },
+        token=minted,
+    )
+
+    run(cell_dir, tmp_path, FakeDriver(), only=["control"], sandbox=sandbox)
+
+    written = [p for p in tmp_path.rglob("*") if p.is_file()]
+    assert written, "the run filed nothing to check"
+    for path in written:
+        text = path.read_text(errors="replace")
+        assert reminted not in text, path
+        # And no headless remnant of it either.
+        assert reminted[-24:] not in text, path
+
+
+def test_the_merchant_read_s_own_token_is_a_secret_for_the_rest_of_the_cell(
+    cell_dir, tmp_path
+):
+    # Once the resource has been read the runner knows the string, so anything
+    # filed after it -- the logs among them -- can be scrubbed of it by
+    # literal rather than left to the shape rule.
+    reminted = MINTED_LIKE_THE_REAL_ONE[:-24] + "B" * 24
+    sandbox = FakeSandbox(
+        sessions={
+            "sess-0": {
+                "id": "sess-0",
+                "status": "open",
+                "session_token": reminted,
+                "transactions": [{"id": "txn-1", "status": "succeeded"}],
+            }
+        },
+        token=MINTED_LIKE_THE_REAL_ONE,
+    )
+    driver = FakeDriver()
+    driver.logs_since = lambda since: f"a log line quoting {reminted} verbatim"
+
+    run(cell_dir, tmp_path, driver, only=["control"], sandbox=sandbox)
+
+    logs = next(tmp_path.rglob("logs.txt")).read_text()
+    assert reminted not in logs
+    assert "REDACTED-SESSION-TOKEN" in logs
 
 
 # -- budgets ------------------------------------------------------------------
