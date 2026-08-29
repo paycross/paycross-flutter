@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import textwrap
 from pathlib import Path
@@ -2299,6 +2300,7 @@ def test_wait_expired_leaves_the_freshest_token_on_the_cells_file(tmp_path):
     sandbox = ExpiringSandbox()
     token_path = tmp_path / "cell.token"
     token_path.write_text(TOKEN, encoding="utf-8")
+    os.chmod(token_path, 0o600)
     step = step_for(
         FakeDriver(), sandbox=sandbox, token_path=token_path, secrets=[TOKEN]
     )
@@ -2306,6 +2308,11 @@ def test_wait_expired_leaves_the_freshest_token_on_the_cells_file(tmp_path):
     runner._wait_expired(step, 3600, sleep=lambda seconds: None)
 
     assert token_path.read_text(encoding="utf-8") == f"{JWT}-2"
+    # Still only ours. `write_text` truncates in place and leaves the mode
+    # alone; an unlink-and-rewrite would silently hand the next credential
+    # back at the process umask, and `run_cell`'s own chmod happens once,
+    # before the cell starts.
+    assert oct(token_path.stat().st_mode)[-3:] == "600"
 
 
 def test_wait_expired_adds_every_re_minted_token_to_the_cells_secrets(tmp_path):
