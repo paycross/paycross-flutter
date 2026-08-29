@@ -29,14 +29,49 @@ PLATFORMS = ("android", "ios")
 BARE_ACTIONS = frozenset(
     {
         "paste_token",
+        # Enters the minted token and taps the example's Pay WITHOUT waiting
+        # for a sheet. For the cells where no sheet is the expected answer:
+        # on iOS a malformed or expired token is refused at
+        # PaymentSheet.swift:42-51, before `present` on line 65, so waiting
+        # for one costs a 60 s timeout and reports the wrong failure.
+        "present_token",
+        "tap_example_pay",
+        "relaunch",
         "type_card",
+        "type_cvv",
         "tap_pay",
+        "tap_google_pay",
+        "select_saved_card",
+        "save_card",
         "cancel_challenge",
         "cancel_form",
         "rotate",
         "kill_activity",
     }
 )
+
+#: What `expect` can be asked to observe. Every one of these is a
+#: *non-result*: something true of the screen or of the merchant state that
+#: Dart is never told about.
+EXPECTATIONS = frozenset(
+    {"rearmed", "no_result", "google_pay", "no_google_pay", "saved_card"}
+)
+
+#: A literal a cell may type into the token field. Two constraints, each for
+#: its own reason.
+#:
+#: The 200-character cap is far below the ~1011 of a real session token, so
+#: a live credential cannot be committed in a cell file even by accident.
+#:
+#: The character class is base64url plus a dot -- the alphabet a token would
+#: have been made of anyway -- because `AndroidDriver._input_text` hands this
+#: string to `input text` on a device shell that re-splits and expands
+#: whatever it is given. A `$`, a backtick, a quote or a pipe would be
+#: mangled rather than typed, and the cell would then be measuring a string
+#: it never sent. Narrowing the grammar beats quoting at the call site: the
+#: grammar is what a cell author reads, and a rejected literal is a better
+#: answer than a silently rewritten one.
+_LITERAL_TOKEN = re.compile(r"[A-Za-z0-9._~-]{1,200}")
 
 
 def _is_acs_outcome(arg: str) -> bool:
@@ -57,8 +92,12 @@ def _is_on_off(arg: str) -> bool:
     return arg in ("on", "off")
 
 
-def _is_rearmed(arg: str) -> bool:
-    return arg == "rearmed"
+def _is_expectation(arg: str) -> bool:
+    return arg in EXPECTATIONS
+
+
+def _is_literal_token(arg: str) -> bool:
+    return bool(_LITERAL_TOKEN.fullmatch(arg))
 
 
 #: Verbs that require one argument, written `verb:arg` or `verb arg`, each
@@ -70,7 +109,13 @@ ARG_ACTIONS = MappingProxyType(
         "acs": (_is_acs_outcome, "a lower-case ACS outcome token"),
         "airplane": (_is_on_off, "'on' or 'off'"),
         "background": (_is_positive_seconds, "a positive number of seconds"),
-        "expect": (_is_rearmed, "'rearmed'"),
+        "dont_keep_activities": (_is_on_off, "'on' or 'off'"),
+        "enter_token": (
+            _is_literal_token,
+            "at most 200 characters of A-Z a-z 0-9 . _ ~ -",
+        ),
+        "expect": (_is_expectation, f"one of {sorted(EXPECTATIONS)}"),
+        "wait_expired": (_is_positive_seconds, "a positive number of seconds"),
         "wait_result": (_is_positive_seconds, "a positive number of seconds"),
     }
 )

@@ -225,7 +225,10 @@ def test_arg_actions_still_reads_as_a_set_of_verbs():
         "acs",
         "airplane",
         "background",
+        "dont_keep_activities",
+        "enter_token",
         "expect",
+        "wait_expired",
         "wait_result",
     }
 
@@ -422,3 +425,64 @@ def test_an_argument_holding_a_colon_is_reported_against_the_verb_that_takes_it(
 
 def test_the_space_form_and_the_colon_form_parse_the_same():
     assert cells.parse_action("acs approve", "w") == cells.parse_action("acs:approve", "w")
+
+
+# --- Plan B: the new verbs ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "verb",
+    [
+        "present_token",
+        "tap_example_pay",
+        "relaunch",
+        "type_cvv",
+        "tap_google_pay",
+        "select_saved_card",
+        "save_card",
+    ],
+)
+def test_a_new_bare_verb_parses_and_takes_no_argument(verb):
+    assert cells.parse_action(verb, "w") == cells.Action(verb)
+    with pytest.raises(cells.CellError, match="takes no argument"):
+        cells.parse_action(f"{verb} 5", "w")
+
+
+@pytest.mark.parametrize(
+    "good, bad",
+    [
+        ("dont_keep_activities on", "dont_keep_activities maybe"),
+        ("enter_token not.a.real.token", "enter_token has spaces"),
+        ("wait_expired 960", "wait_expired soon"),
+    ],
+)
+def test_a_new_arg_verb_parses_and_rejects_a_bad_argument(good, bad):
+    verb, _, arg = good.partition(" ")
+
+    assert cells.parse_action(good, "w") == cells.Action(verb, arg)
+    with pytest.raises(cells.CellError, match="argument must be"):
+        cells.parse_action(bad, "w")
+
+
+@pytest.mark.parametrize("expectation", sorted(cells.EXPECTATIONS))
+def test_expect_takes_every_expectation_and_nothing_else(expectation):
+    assert cells.parse_action(f"expect {expectation}", "w").arg == expectation
+    with pytest.raises(cells.CellError, match="argument must be"):
+        cells.parse_action("expect success", "w")
+
+
+def test_enter_token_refuses_a_token_long_enough_to_be_a_real_one():
+    # ~1011 characters is what a live session token measures. The cap is far
+    # below it so a credential cannot be committed in a cell file by accident.
+    with pytest.raises(cells.CellError, match="argument must be"):
+        cells.parse_action("enter_token " + "a" * 1011, "w")
+
+
+@pytest.mark.parametrize("character", ["$", "`", '"', "'", "|", ";", "&", "<", ">"])
+def test_enter_token_refuses_every_shell_metacharacter(character):
+    # AndroidDriver._input_text hands this to `input text` on a device shell
+    # that re-splits and expands whatever it is given, so a literal carrying
+    # one of these would be mangled rather than typed -- and the cell would
+    # then be measuring a string it never sent.
+    with pytest.raises(cells.CellError, match="argument must be"):
+        cells.parse_action(f"enter_token ab{character}cd", "w")
