@@ -23,18 +23,25 @@ from xml.etree import ElementTree as ET
 
 from .. import tree
 from ..cells import Card
-from .base import Driver, DriverError
+from .base import Driver, DriverError, rig_path
 
-ADB = "/mnt/c/Users/Syllo/AppData/Local/Android/Sdk/platform-tools/adb.exe"
+#: This rig's Windows adb, overridable with PAYCROSS_E2E_ADB.
+ADB = rig_path(
+    "PAYCROSS_E2E_ADB",
+    "/mnt/c/Users/Syllo/AppData/Local/Android/Sdk/platform-tools/adb.exe",
+)
 PACKAGE = "com.paycross.paycross_flutter_example"
 
 #: Every adb call is bounded. A wedged emulator would otherwise hold the whole
 #: matrix on one round trip.
 RUN_TIMEOUT_SECONDS = 300
 
-#: Staged here because the Windows adb cannot open a WSL path.
-STAGING_DIR = "/mnt/c/dev/tmp"
-WINDOWS_STAGING = r"C:\dev\tmp"
+#: Staged here because the Windows adb cannot open a WSL path. The two
+#: spellings are the same directory seen from either side of the fence, so a
+#: rig that moves one must move both -- hence two variables rather than one
+#: guessed from the other.
+STAGING_DIR = rig_path("PAYCROSS_E2E_STAGING_DIR", "/mnt/c/dev/tmp")
+WINDOWS_STAGING = rig_path("PAYCROSS_E2E_WINDOWS_STAGING", r"C:\dev\tmp")
 STAGED_APK = "paycross-e2e.apk"
 
 #: Where `uiautomator dump` is told to write, and how many times a dump is
@@ -385,7 +392,7 @@ class AndroidDriver(Driver):
             lambda nodes: tree.label_from_tree(nodes, prefixes), timeout, interval
         )
         if label is None:
-            raise DriverError(f"no contract label within {timeout}s")
+            raise self.no_label_error(timeout)
         return label
 
     def acs(self, outcome: str) -> None:

@@ -39,18 +39,23 @@ from xml.etree import ElementTree as ET
 
 from .. import tree
 from ..cells import Card
-from .base import Driver, DriverError
+from .base import Driver, DriverError, rig_path
 
-SSH_HOST = "mac"
+#: The ssh alias for the Mac, overridable with PAYCROSS_E2E_SSH_HOST.
+SSH_HOST = rig_path("PAYCROSS_E2E_SSH_HOST", "mac")
 UDID = "C311AFDC-25FA-44A2-A800-10EB5A1039E3"
 BUNDLE = "com.paycross.paycrossFlutterExample"
 WDA = "http://127.0.0.1:8100"
 
 #: An ssh session gets launchd's minimal PATH, so every remote command sets
-#: these up front or xcrun, curl and flutter are all simply missing.
-MAC_ENV = (
+#: these up front or xcrun, curl and flutter are all simply missing. The
+#: prefixes are this Mac's; PAYCROSS_E2E_MAC_ENV replaces the whole preamble,
+#: and an override must keep the trailing `; ` because it is concatenated
+#: directly onto the command.
+MAC_ENV = rig_path(
+    "PAYCROSS_E2E_MAC_ENV",
     "export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer "
-    "PATH=/opt/homebrew/bin:$HOME/development/flutter/bin:$PATH; "
+    "PATH=/opt/homebrew/bin:$HOME/development/flutter/bin:$PATH; ",
 )
 
 #: Longer than the ceiling every curl below carries, so a WDA call that times
@@ -923,7 +928,7 @@ class IosDriver(Driver):
             lambda nodes: tree.label_from_tree(nodes, prefixes), timeout, interval
         )
         if label is None:
-            raise DriverError(f"no contract label within {timeout}s")
+            raise self.no_label_error(timeout)
         return label
 
     def acs(

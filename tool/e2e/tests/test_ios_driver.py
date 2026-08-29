@@ -8,6 +8,7 @@ pinned by asserting on what was recorded.
 """
 
 import base64
+import importlib
 import json
 import shlex
 from datetime import datetime, timedelta, timezone
@@ -1600,3 +1601,56 @@ def test_the_d3_actions_refuse():
     for call in refusals:
         with pytest.raises(NotImplementedError):
             call()
+
+
+#: The example app's result screen as a build WITHOUT the define renders it:
+#: the human-readable outcome, which is what `LEGACY_LABEL_PREFIXES` names.
+LEGACY_XML = (
+    '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Runner" '
+    'label="Runner" enabled="true" visible="true" x="0" y="0" width="402" '
+    'height="874">'
+    '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" '
+    'name="Paid 1000 EUR - 7d8e12aa" label="Paid 1000 EUR - 7d8e12aa" value="" '
+    'enabled="true" visible="true" x="16" y="200" width="370" height="24"/>'
+    "</XCUIElementTypeApplication>"
+)
+
+
+def test_a_wait_that_times_out_on_a_legacy_label_names_the_missing_define():
+    # Same failure as on Android: without --dart-define=PAYCROSS_E2E=true the
+    # app shows its human-readable outcome, and "no contract label" after
+    # 180 s reads as a hang rather than as the wrong build.
+    ssh = FakeSsh(xml=LEGACY_XML)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).wait_label(timeout=0, interval=0)
+
+    assert "PAYCROSS_E2E" in str(excinfo.value)
+
+
+def test_a_wait_that_times_out_on_nothing_at_all_does_not_blame_the_build():
+    ssh = FakeSsh(xml="<XCUIElementTypeApplication/>")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).wait_label(timeout=0, interval=0)
+
+    assert "PAYCROSS_E2E" not in str(excinfo.value)
+
+
+def test_the_rig_host_and_remote_env_are_overridable_from_the_environment(monkeypatch):
+    # `mac` is one ssh config's alias and MAC_ENV hardcodes this Mac's Xcode
+    # and Homebrew paths. A second rig must not need a fork of this file.
+    monkeypatch.setenv("PAYCROSS_E2E_SSH_HOST", "buildbox")
+    monkeypatch.setenv("PAYCROSS_E2E_MAC_ENV", "export PATH=/usr/local/bin:$PATH; ")
+    try:
+        importlib.reload(ios)
+        assert ios.SSH_HOST == "buildbox"
+        assert ios.MAC_ENV == "export PATH=/usr/local/bin:$PATH; "
+    finally:
+        monkeypatch.undo()
+        importlib.reload(ios)
+
+
+def test_the_rig_host_and_remote_env_fall_back_to_this_workstation():
+    assert ios.SSH_HOST == "mac"
+    assert "DEVELOPER_DIR=/Applications/Xcode.app" in ios.MAC_ENV
