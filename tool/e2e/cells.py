@@ -169,7 +169,7 @@ _CURRENCY = re.compile(r"^[A-Z]{3}$")
 #: whole and never split on ':' -- an `unrecognized(<raw>)` token may itself
 #: contain colons. An empty `<txn>` is allowed; the app emits one when the
 #: session never reached a transaction.
-_LABEL = re.compile(
+LABEL_RE = re.compile(
     r"^(result:success:[^\s]*"
     r"|result:failure:"
     r"(retry|change_method|restart|do_not_retry|contact_support|unrecognized\(.*\))"
@@ -177,6 +177,27 @@ _LABEL = re.compile(
     r"|result:cancelled"
     r"|error:[A-Za-z]+)$"
 )
+
+#: Expectations that are not a literal label.
+#:
+#: `<any>` is a discovery cell's expectation: any well-formed contract label,
+#: whatever it turns out to be. It asserts the three things the spec asks of
+#: D2's (b)-(d) -- a terminal outcome, exactly once, no crash -- and nothing
+#: about which one. Phase 3 replaces it with the label the run measured, so
+#: the final matrix asserts rather than records.
+#:
+#: `<none>` is the opposite: no label may appear. It exists for the Android
+#: process-kill cell, where the pending Dart call dies with the isolate and
+#: no result is delivered BY DESIGN, so "the app said nothing" is the pass.
+ANY_LABEL = "<any>"
+NO_LABEL = "<none>"
+LABEL_SENTINELS = frozenset({ANY_LABEL, NO_LABEL})
+
+#: Only ever appears last in a label, so `.*` cannot swallow a later field.
+#: Lives here rather than in `verify` because `load_cell` refuses a template
+#: carrying two of them -- an ambiguous capture -- and `verify` already
+#: imports this module for `LABEL_RE`.
+TXN_PLACEHOLDER = "<txn>"
 
 
 class CellError(ValueError):
@@ -296,7 +317,9 @@ def _require(mapping: Any, key: str, where: str) -> Any:
 def _check_label(label: Any, where: str) -> None:
     if not isinstance(label, str) or not label:
         raise CellError(f"{where}: label must be a non-empty string")
-    if not _LABEL.fullmatch(label):
+    if label in LABEL_SENTINELS:
+        return
+    if not LABEL_RE.fullmatch(label):
         raise CellError(f"{where}: label {label!r} is not in the frozen vocabulary")
 
 
@@ -347,6 +370,60 @@ def _expected(raw: Any, where: str) -> Expected:
         rearmed=raw.get("rearmed", False),
         merchant=raw.get("merchant", {}),
     )
+
+
+def _check_cross_fields(cell: Cell, where: str) -> None:
+    """Rules that relate an expectation to the actions, per platform.
+
+    Over every platform the cell declares, never the unmerged base. A cell
+    whose base says `rearmed: false` and whose `expected.android` says true
+    would otherwise load cleanly and fail on a device twenty minutes later --
+    and `expected_for`'s own docstring says D2 is the override mechanism's
+    first real user, so this is the dimension that would find out.
+
+    The two directions are deliberately asymmetric, because **one action list
+    is shared by every platform the cell runs on**. Any platform expecting a
+    re-armed sheet needs the action. The action being present needs *every*
+    platform to expect one -- it runs unconditionally, so on a platform where
+    the sheet resolves terminally instead it answers falsy and fails the
+    cell.
+
+    That forecloses one shape on purpose: "Android re-arms, iOS resolves
+    terminally" cannot be one cell and must be split into two single-platform
+    ones. Such a pair differs in more than the expectation anyway -- the
+    terminal variant has no `cancel_form` to reach a label with -- and it is
+    exactly the shape sub-project #2 will produce as it fixes one platform
+    before the other.
+    """
+    verbs = [(a.verb, a.arg) for a in cell.actions]
+    seen = [(p, cell.expected_for(p)) for p in cell.platforms]
+
+    for action, holds, describe in (
+        (
+            ("expect", "rearmed"),
+            lambda e: e.rearmed,
+            "expects a re-armed sheet",
+        ),
+        (
+            ("expect", "no_result"),
+            lambda e: e.label == NO_LABEL,
+            f"expects label {NO_LABEL!r}",
+        ),
+    ):
+        wanting = [p for p, e in seen if holds(e)]
+        if wanting and action not in verbs:
+            raise CellError(
+                f"{where}: {wanting} {describe}, but the cell has no "
+                f"{action[0]} {action[1]!r} action, so nothing would ever look"
+            )
+        missing = [p for p, e in seen if not holds(e)]
+        if action in verbs and missing:
+            raise CellError(
+                f"{where}: the cell runs {action[0]} {action[1]!r} but "
+                f"{missing} {describe.replace('expects', 'does not expect')}. "
+                "The action list is shared by every platform, so it runs "
+                "there too and answers falsy"
+            )
 
 
 def load_cell(path: Path) -> Cell:
@@ -404,7 +481,7 @@ def load_cell(path: Path) -> Cell:
                 override, where, f"expected.{platform}"
             )
 
-    return Cell(
+    cell = Cell(
         id=cell_id,
         path=path,
         platforms=platforms,
@@ -414,6 +491,10 @@ def load_cell(path: Path) -> Cell:
         expected=expected,
         overrides=overrides,
     )
+    # After construction rather than inline above: these rules read
+    # `expected_for(platform)`, which needs the whole cell.
+    _check_cross_fields(cell, where)
+    return cell
 
 
 def load_cells(directory: Path, platform: str) -> list[Cell]:

@@ -368,24 +368,18 @@ def test_a_rearm_cell_needs_both_the_predicate_and_the_merchant_state(tmp_path):
     assert any("rearm" in p for p in not_rearmed.results[0].problems)
 
 
-def test_a_cell_expecting_a_rearm_it_never_asks_for_says_so(tmp_path):
+def test_a_cell_expecting_a_rearm_it_never_asks_for_says_so():
     # `rearmed: true` with no `expect rearmed` action is a cell-authoring
     # mistake. Reporting it as "the sheet never re-armed" would send whoever
     # is triaging after an SDK bug that is not there.
-    directory = tmp_path / "d0"
-    directory.mkdir()
-    (directory / "control.yaml").write_text(
-        textwrap.dedent(CELL.format(id="control")).replace(
-            "expected:\n", "expected:\n  rearmed: true\n"
-        ),
-        encoding="utf-8",
-    )
-
-    report = run(directory, tmp_path, FakeDriver())
-
-    assert any(
-        "no 'expect rearmed' action" in p for p in report.results[0].problems
-    )
+    #
+    # `load_cell` now refuses that pairing outright, so no cell file can reach
+    # run_cell in this state. The branch stays because `run_cell` takes a
+    # `Cell`, not a path, and this is the honest message for one built by
+    # hand -- and because "the sheet never re-armed" is the wrong answer to
+    # give whichever way the shape arrived.
+    assert "no 'expect rearmed' action" in runner._rearm_problem(None)
+    assert "never re-armed" in runner._rearm_problem(False)
 
 
 # -- skepticism -------------------------------------------------------------

@@ -66,7 +66,9 @@ def test_parses_the_colon_and_space_action_forms(tmp_path):
         "  - background 5\n"
         "  - airplane on\n"
         "  - wait_result 120",
-    )
+        # `expect rearmed` is only well-formed alongside the expectation it
+        # looks for; load_cell refuses the two apart.
+    ).replace("expected:\n", "expected:\n  rearmed: true\n")
     cell = cells.load_cell(write(tmp_path, "control.yaml", body))
     verbs = [(a.verb, a.arg) for a in cell.actions]
 
@@ -184,7 +186,10 @@ def expect_rejected(tmp_path, body, name="control.yaml"):
         "airplane on",
         "airplane off",
         "background 5",
-        "expect rearmed",
+        # Not `expect rearmed`: that one is only well-formed alongside
+        # `rearmed: true`, which this body does not carry. Its own pairing has
+        # tests of its own under "cross-field rules".
+        "expect google_pay",
         "wait_result 1.5",
     ],
 )
@@ -408,7 +413,9 @@ def test_rearmed_must_be_a_bool(tmp_path, value):
 
 
 def test_rearmed_true_is_carried_through(tmp_path):
-    body = CONTROL.replace("expected:\n", "expected:\n  rearmed: true\n")
+    body = CONTROL.replace("expected:\n", "expected:\n  rearmed: true\n").replace(
+        "  - tap_pay\n", "  - tap_pay\n  - expect rearmed\n"
+    )
     cell = cells.load_cell(write(tmp_path, "control.yaml", body))
 
     assert cell.expected_for("android").rearmed is True
@@ -486,3 +493,79 @@ def test_enter_token_refuses_every_shell_metacharacter(character):
     # then be measuring a string it never sent.
     with pytest.raises(cells.CellError, match="argument must be"):
         cells.parse_action(f"enter_token ab{character}cd", "w")
+
+
+# --- Plan B: the label sentinels ------------------------------------------
+
+
+@pytest.mark.parametrize("sentinel", ["<any>", "<none>"])
+def test_a_label_sentinel_is_accepted_where_a_literal_would_be(tmp_path, sentinel):
+    body = CONTROL.replace('label: "result:success:<txn>"', f'label: "{sentinel}"')
+    if sentinel == "<none>":
+        body = body.replace("  - wait_result 120\n", "  - expect no_result\n")
+    cell = cells.load_cell(write(tmp_path, "control.yaml", body))
+
+    assert cell.expected_for("android").label == sentinel
+
+
+def test_the_sentinels_are_the_only_angle_bracket_labels(tmp_path):
+    body = CONTROL.replace('label: "result:success:<txn>"', 'label: "<whatever>"')
+
+    assert "frozen vocabulary" in expect_rejected(tmp_path, body)
+
+
+# --- Plan B: cross-field rules, per platform ------------------------------
+
+
+def test_expecting_a_rearmed_sheet_without_the_action_that_looks_is_refused(tmp_path):
+    body = CONTROL.replace("expected:\n", "expected:\n  rearmed: true\n")
+
+    message = expect_rejected(tmp_path, body)
+    assert "expect" in message and "rearmed" in message
+
+
+def test_looking_for_a_rearmed_sheet_the_cell_does_not_expect_is_refused(tmp_path):
+    body = CONTROL.replace("  - wait_result 120\n", "  - expect rearmed\n")
+
+    message = expect_rejected(tmp_path, body)
+    assert "does not expect" in message
+
+
+def test_a_platform_override_alone_can_require_the_rearm_action(tmp_path):
+    # The case a base-only check lets through: the base says false, so nothing
+    # in `expected:` asks for the action, and only android's override does.
+    body = CONTROL + textwrap.dedent(
+        """\
+        expected.android:
+          rearmed: true
+        """
+    )
+
+    message = expect_rejected(tmp_path, body)
+    assert "['android']" in message
+
+
+def test_expecting_no_label_without_the_action_that_looks_is_refused(tmp_path):
+    body = CONTROL.replace('label: "result:success:<txn>"', 'label: "<none>"')
+
+    message = expect_rejected(tmp_path, body)
+    assert "no_result" in message
+
+
+def test_looking_for_no_label_the_cell_does_not_expect_is_refused(tmp_path):
+    body = CONTROL.replace("  - wait_result 120\n", "  - expect no_result\n")
+
+    message = expect_rejected(tmp_path, body)
+    assert "does not expect" in message
+
+
+def test_a_platform_override_alone_can_require_the_no_result_action(tmp_path):
+    body = CONTROL + textwrap.dedent(
+        """\
+        expected.ios:
+          label: "<none>"
+        """
+    )
+
+    message = expect_rejected(tmp_path, body)
+    assert "['ios']" in message
