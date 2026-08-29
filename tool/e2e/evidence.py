@@ -67,7 +67,12 @@ def _stamp() -> str:
 UNSAFE_IN_PATH = ("/", "\\", "..")
 
 
-def _check_cell_id(cell_id: str) -> None:
+def check_cell_id(cell_id: str) -> None:
+    """Raises ValueError unless this id is safe to make a path out of.
+
+    Public because the runner builds one other path out of a cell id -- the
+    token file -- and one guard is one place to be wrong.
+    """
     if not cell_id or any(bad in cell_id for bad in UNSAFE_IN_PATH):
         raise ValueError(f"unsafe cell id: {cell_id!r}")
 
@@ -90,7 +95,7 @@ class Run:
         return self.dir / "progress.jsonl"
 
     def cell_dir(self, cell_id: str) -> Path:
-        _check_cell_id(cell_id)
+        check_cell_id(cell_id)
         path = self.dir / cell_id
         path.mkdir(parents=True, exist_ok=True)
         return path

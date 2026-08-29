@@ -13,6 +13,19 @@ all the same finding. And the session token lives in a 0600 file in a 0700
 directory outside the evidence root and is removed in a finally, so a driver
 failure does not leave a live credential on disk.
 
+Exit codes, which a nightly reads rather than the output:
+
+    0  every cell passed, or every cell was skipped as already passed
+    1  a cell failed, or the run itself had a problem
+    2  a setup or cell-authoring mistake; nothing ran
+    3  the run aborted on consecutive control failures -- the rig or the
+       backend is broken, and no finding above it should be believed
+
+One evidence root per build. A resume trusts what earlier runs recorded, and
+`passed_cells` has no idea which build a pass came from, so pointing a new APK
+or .app at an old root would report yesterday's result as today's. `--app`
+therefore implies `--all`.
+
 Contains no credentials and no internal hostnames beyond the TEST API the env
 file names.
 """
@@ -32,6 +45,7 @@ from pathlib import Path
 
 from . import evidence, tree, verify
 from .cells import Action, Card, Cell, CellError, load_cells
+from .drivers.android import DIGIT_PACING_SECONDS
 from .drivers.base import DriverError
 from .sandbox import Sandbox, SandboxError
 
@@ -50,7 +64,19 @@ REARM_TIMEOUT_SECONDS = 30
 #: and therefore the only steps a frame may ever be taken of. `redact()` is
 #: byte-level and cannot scrub a PNG, and the example app's own screen holds
 #: the session token in a TextField.
-SHOT_VERBS = ("tap_pay", "acs", "expect")
+#:
+#: `type_card` is one of them: the sheet's own card form is what is on screen
+#: throughout it. On Android that frame is black (FLAG_SECURE) and the
+#: `NN-type_card.uix` dump written beside it is the real evidence -- it is the
+#: post-PAN tree the seed script dumped by hand, and the artifact a caret bug
+#: shows up in.
+SHOT_VERBS = ("type_card", "tap_pay", "acs", "expect")
+
+#: Exit codes. Part of this module's interface: the nightly branches on them.
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_SETUP = 2
+EXIT_ABORTED = 3
 
 #: How much of the token has to appear in a dump for the runner to conclude
 #: that the example's own screen is showing. Short enough to survive a viewer
@@ -58,12 +84,23 @@ SHOT_VERBS = ("tap_pay", "acs", "expect")
 #: screenshot while a false negative costs a leak that cannot be undone.
 _TOKEN_PREFIX_CHARS = 24
 
+#: A PAN is typed one key event at a time, at the Android driver's own pacing.
+#: Referenced rather than restated so a change there moves the budget with it:
+#: that pacing is what the 0.3.2 caret fix was proven under.
+PAN_DIGITS = 16
+
+#: On top of the typing: four field round trips, the PAN read-back, and the
+#: IME drop that makes the Pay button reachable again.
+CARD_FIELDS_SECONDS = 150
+
 #: Wall-clock ceilings per verb, before slack, for a step that is making
-#: progress -- not expected durations. `type_card` spends ~17 s on key events
-#: alone (0.4 s x 16 digits) and `acs` gives the sandbox page 120 s.
+#: progress -- not expected durations. `acs` gives the sandbox page 120 s, and
+#: `type_card` spends ~7 s on key events before anything else happens.
 VERB_BUDGET_SECONDS = {
-    "paste_token": 120,
-    "type_card": 150,
+    # iOS is the worst case here: 60 s for the example's own screen to come
+    # up, 60 s for the sheet after it, a 10 s read-back, and the paste itself.
+    "paste_token": 180,
+    "type_card": PAN_DIGITS * DIGIT_PACING_SECONDS + CARD_FIELDS_SECONDS,
     "tap_pay": 60,
     "acs": 240,
     "cancel_challenge": 180,
@@ -104,6 +141,13 @@ class CellResult:
     label: str | None = None
     transaction_id: str | None = None
     is_control_check: bool = False
+    #: True when the cell asked for something Phase 0 does not implement. A
+    #: cell-authoring mistake, not a device fault, so no control check is
+    #: spent proving a rig that was never in doubt.
+    authoring: bool = False
+    #: Problems this cell found that belong to the run rather than to the
+    #: verdict -- a token file that would not go. Drained into Report.
+    run_problems: list[str] = field(default_factory=list)
     #: The directory its artifacts went to. Equal to `cell_id` except for an
     #: interleaved control check, which would otherwise overwrite the control
     #: cell's own proof with the probe's.
@@ -123,14 +167,18 @@ class Report:
 
     @property
     def exit_code(self) -> int:
-        """0 only when every cell passed and nothing else went wrong.
+        """See the table in the module docstring.
 
-        A run-level problem counts. A green exit has to mean the whole run
-        worked, or the next reader has no reason to read the output.
+        An abort is its own code because it is its own thing: the findings
+        under it are not findings. A run-level problem counts as a failure --
+        a green exit has to mean the whole run worked, or the next reader has
+        no reason to read the output.
         """
-        if self.aborted or self.problems:
-            return 1
-        return 0 if all(r.passed for r in self.results) else 1
+        if self.aborted:
+            return EXIT_ABORTED
+        if self.problems or not all(r.passed for r in self.results):
+            return EXIT_FAILED
+        return EXIT_OK
 
 
 def budget_for(cell: Cell) -> float:
@@ -140,6 +188,13 @@ def budget_for(cell: Cell) -> float:
     -- but bounded, because a driver's own transport timeouts (300 s for adb,
     900 s for ssh) are spent on top of a poll's deadline rather than inside
     it, and one wedged cell would otherwise take a 40-minute matrix with it.
+
+    What this is and is not. It is checked between steps, so it never
+    interrupts a driver call in progress and never fires after the last
+    action; a cell's true ceiling is this budget plus one transport timeout.
+    It is a backstop against a hang, not a bound on how long the matrix
+    takes, and it is not a performance assertion: a cell that finishes inside
+    it has proved nothing about how quickly it did so.
     """
     total = float(LAUNCH_BUDGET_SECONDS)
     for action in cell.actions:
@@ -168,6 +223,10 @@ def _kind(error: BaseException) -> str:
         return "driver"
     if isinstance(error, BudgetExceeded):
         return "budget"
+    if isinstance(error, NotImplementedError):
+        # The driver saying the cell asked for a D2/D3 action. The cell file
+        # is wrong, not the rig.
+        return "authoring"
     return type(error).__name__
 
 
@@ -240,8 +299,11 @@ def _perform(
         driver.airplane(arg == "on")
     elif verb == "kill_activity":
         driver.kill_activity()
-    else:  # pragma: no cover - cells.py rejects these at load time
-        raise DriverError(f"the runner cannot perform {verb!r}")
+    else:
+        # Reached only for an argument this function has no branch for --
+        # cells.py rejects those at load time -- so it is the argument that
+        # gets named, not the verb, which is supported and is not the problem.
+        raise DriverError(f"the runner cannot perform {verb} with {arg!r}")
     return None
 
 
@@ -275,10 +337,12 @@ def run_cell(
     started = datetime.now(timezone.utc)
 
     problems: list[str] = []
+    run_problems: list[str] = []
     label: str | None = None
     rearmed: bool | None = None
     session: dict[str, str] = {}
     reached_the_end = False
+    authoring = False
 
     try:
         session = sandbox.mint(
@@ -305,6 +369,9 @@ def run_cell(
         step, verb = "00-launch", "launch"
         try:
             os.chmod(token_dir, 0o700)
+            # The same guard the evidence tree puts on a directory name: this
+            # is the other path a cell id is made into.
+            evidence.check_cell_id(cell.id)
             token_path = token_dir / f"{cell.id}.token"
             token_path.write_text(token, encoding="utf-8")
             os.chmod(token_path, 0o600)
@@ -317,7 +384,7 @@ def run_cell(
                 step, verb = f"{index:02d}-{action.verb}", action.verb
                 if time.monotonic() - clock >= budget:
                     raise BudgetExceeded(
-                        f"the cell used its {budget:.0f}s budget before {step}"
+                        f"the cell used its {budget:.1f}s budget before {step}"
                     )
 
                 answer = _perform(
@@ -328,10 +395,20 @@ def run_cell(
                     amount_text=amount_text,
                 )
                 if action.verb == "wait_result":
-                    label = answer
+                    # Scrubbed where it is read: the label comes off the
+                    # device, and main prints it. Doing it here means the
+                    # match, the ledger, result.json and stdout all see the
+                    # same value.
+                    label = _redacted(answer, token)
                 elif action.verb == "expect":
                     rearmed = answer
 
+                # Unguarded, unlike the screenshot below and the log
+                # fetch at the end. Those are collected beside a verdict; the
+                # tree is how a verdict is reached at all, since every polling
+                # wait reads it. A device that will not produce one has
+                # nothing left to observe, so the cell ends here rather than
+                # carrying on blind.
                 dump = driver.dump_tree()
                 write(f"{step}.uix", dump)
                 if _may_screenshot(verb, dump, platform, token):
@@ -348,12 +425,15 @@ def run_cell(
             # reachable from a hung emulator or a dead WebDriverAgent. One bad
             # cell must not kill a 40-minute matrix: the interleaved control
             # and the abort rule exist to judge exactly that.
+            authoring = isinstance(error, NotImplementedError)
             problems.append(f"{_kind(error)}: {error}")
             # The tree at the moment of failure is usually the whole
             # diagnosis, and the write above never ran for this step. Best
             # effort: a device that has gone away must not replace the real
             # error with a second one.
             try:
+                # Best effort by now: a dump that fails here is the second
+                # failure in a row and costs only a diagnosis.
                 dump = driver.dump_tree()
                 write(f"{step}-failed.uix", dump)
             except Exception as secondary:  # noqa: BLE001
@@ -367,7 +447,14 @@ def run_cell(
                             f"screenshot: none after the failure ({secondary})"
                         )
         finally:
-            shutil.rmtree(token_dir, ignore_errors=True)
+            try:
+                shutil.rmtree(token_dir)
+            except OSError as error:
+                # Not ignore_errors: a live credential still on disk is not
+                # this cell's verdict, but it is nobody's if it is swallowed.
+                run_problems.append(
+                    _redacted(f"token file left behind at {token_dir}: {error}")
+                )
 
     matched, transaction_id = verify.match_label(expected.label, label)
     if reached_the_end:
@@ -387,9 +474,18 @@ def run_cell(
                 f"merchant: could not read session {session['id']}: {error}"
             )
         else:
+            # Filed either way: the merchant's view of a cell that died
+            # mid-flight is how you tell a driver that lost the device from a
+            # payment that never happened.
             write("merchant.json", json.dumps(resource, indent=2).encode())
-            problems += verify.verify_merchant(resource, expected.merchant)
-            problems += verify.verify_label_transaction(resource, transaction_id)
+            if reached_the_end:
+                # Gated for the same reason the label check is: a cell cut
+                # short never reached the state it describes, so a mismatch
+                # here is the first failure's consequence, not a finding.
+                problems += verify.verify_merchant(resource, expected.merchant)
+                problems += verify.verify_label_transaction(
+                    resource, transaction_id
+                )
 
         try:
             # Before the next cell's launch(), which is where the iOS console
@@ -401,6 +497,8 @@ def run_cell(
             problems.append(f"logs: {error}")
         else:
             write("logs.txt", log.encode())
+            # Never gated on reaching the end: a crash is not a consequence of
+            # the first failure, it is very often the cause of it.
             problems += [
                 f"crash: {line.strip()}"
                 for line in verify.crash_lines(log, driver.package)
@@ -415,6 +513,8 @@ def run_cell(
         label=label,
         transaction_id=transaction_id,
         is_control_check=is_control_check,
+        authoring=authoring,
+        run_problems=run_problems,
         artifact_id=artifact_id,
     )
     write(
@@ -470,6 +570,19 @@ def run_cells(
     if not everything:
         # Running nothing and exiting 0 reads as "everything passed".
         raise CellError(f"{cell_dir}: no cell in it runs on {platform}")
+    for cell in everything:
+        try:
+            evidence.check_cell_id(cell.id)
+        except ValueError as error:
+            raise CellError(f"{cell.path}: {error}") from error
+    if not any(c.id == CONTROL_CELL_ID for c in everything):
+        # The interleaved check and the abort rule are what tell an SDK
+        # finding from a broken rig. A run that cannot do that should not
+        # start rather than quietly report findings nothing vouches for.
+        raise CellError(
+            f"{cell_dir}: no {CONTROL_CELL_ID!r} cell runs on {platform}, so "
+            "no failure here could be checked against a known-good payment"
+        )
     chosen = everything
     if only:
         unknown = sorted(set(only) - {c.id for c in everything})
@@ -513,13 +626,17 @@ def run_cells(
             # holding the session token the record has to be scrubbed against.
             result = run_cell(cell, platform, driver, sandbox, run)
             report.results.append(result)
+            report.problems += result.run_problems
 
             if cell.id == CONTROL_CELL_ID:
                 consecutive_control_failures = (
                     0 if result.passed else consecutive_control_failures + 1
                 )
-            elif not result.passed and control is not None:
-                # Skepticism: prove the rig before believing the finding.
+            elif not result.passed and not result.authoring:
+                # Skepticism: prove the rig before believing the finding. Not
+                # for an authoring fault, though -- the driver refusing a D3
+                # verb says nothing about the rig, and a control cell costs a
+                # session and a minute.
                 checks += 1
                 check = run_cell(
                     control,
@@ -531,6 +648,7 @@ def run_cells(
                     is_control_check=True,
                 )
                 report.results.append(check)
+                report.problems += check.run_problems
                 consecutive_control_failures = (
                     0 if check.passed else consecutive_control_failures + 1
                 )
@@ -560,6 +678,22 @@ def run_cells(
     return report
 
 
+def _plural(count: int, thing: str) -> str:
+    return f"{count} {thing}" if count == 1 else f"{count} {thing}s"
+
+
+def _summary(report: Report) -> str:
+    """One line a person can read off the bottom of a 40-minute run."""
+    cells = [r for r in report.results if not r.is_control_check]
+    passed = sum(1 for r in cells if r.passed)
+    checks = sum(1 for r in report.results if r.is_control_check)
+    return (
+        f"{_plural(len(cells), 'cell')}, {passed} passed, "
+        f"{len(cells) - passed} failed, {_plural(checks, 'control check')}, "
+        f"aborted: {'yes' if report.aborted else 'no'}"
+    )
+
+
 def _build_driver(platform: str):
     if platform == "android":
         from .drivers.android import AndroidDriver
@@ -571,21 +705,41 @@ def _build_driver(platform: str):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="tool.e2e.runner")
+    parser = argparse.ArgumentParser(
+        prog="tool.e2e.runner",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "exit codes:\n"
+            "  0  every cell passed, or was skipped as already passed\n"
+            "  1  a cell failed, or the run itself had a problem\n"
+            "  2  a setup or cell-authoring mistake; nothing ran\n"
+            "  3  aborted on consecutive control failures -- the rig or the\n"
+            "     backend is broken, and no finding above it is believable\n"
+        ),
+    )
     parser.add_argument("--platform", required=True, choices=("android", "ios"))
     parser.add_argument("--cells", required=True, type=Path)
     parser.add_argument(
         "--evidence-root",
         required=True,
         type=Path,
-        help="outside any git checkout; survives a WSL reboot",
+        help=(
+            "outside any git checkout; survives a WSL reboot. One root per "
+            "build: a resume trusts what earlier runs in it recorded, and a "
+            "pass carries no build fingerprint"
+        ),
     )
     parser.add_argument("--env-file", required=True, type=Path)
     parser.add_argument(
         "--all", action="store_true", help="rerun cells that already passed"
     )
     parser.add_argument(
-        "--app", help="APK (Android) or .app on the Mac (iOS) to install first"
+        "--app",
+        help=(
+            "APK (Android) or .app on the Mac (iOS) to install first; implies "
+            "--all, because a pass recorded against another build is not this "
+            "build's"
+        ),
     )
     parser.add_argument(
         "--only", action="append", help="run just this cell; repeatable"
@@ -604,7 +758,7 @@ def main(argv: list[str] | None = None) -> int:
             evidence_root=args.evidence_root,
             driver=_build_driver(args.platform),
             sandbox=sandbox,
-            run_all=args.all,
+            run_all=args.all or bool(args.app),
             only=args.only,
             app_path=args.app,
         )
@@ -613,8 +767,12 @@ def main(argv: list[str] | None = None) -> int:
         # a mistake to explain, not a stack to read. Whatever a run did manage
         # is already on disk: progress is appended and fsynced per cell.
         print(f"error: {error}", file=sys.stderr)
-        return 2
+        return EXIT_SETUP
 
+    if report.aborted:
+        # First, so that what follows is read as what it is. The findings
+        # under a rig fault are not findings.
+        print(f"ABORT {report.abort_reason}")
     for cell_id in report.skipped:
         print(f"SKIP {cell_id} (passed in an earlier run; --all to rerun)")
     for result in report.results:
@@ -625,16 +783,22 @@ def main(argv: list[str] | None = None) -> int:
             if result.artifact_id != result.cell_id
             else ""
         )
+        # The control checks are the evidence for the abort, so they stand;
+        # the cell failures beside them are what nothing vouches for.
+        unverified = (
+            " (unverified)"
+            if report.aborted and not result.passed and not result.is_control_check
+            else ""
+        )
         print(
             f"{tag} {result.cell_id} session={result.session_id} "
-            f"label={result.label!r}{where}"
+            f"label={result.label!r}{where}{unverified}"
         )
         for problem in result.problems:
             print(f"     - {problem}")
     for problem in report.problems:
         print(f"RUN-PROBLEM {problem}")
-    if report.aborted:
-        print(f"ABORT {report.abort_reason}")
+    print(_summary(report))
     return report.exit_code
 
 

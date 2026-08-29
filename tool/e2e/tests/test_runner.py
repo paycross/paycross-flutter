@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from tool.e2e import cells, evidence, runner
+from tool.e2e.drivers import android
 from tool.e2e.cells import CellError
 from tool.e2e.drivers.base import DriverError
 from tool.e2e.sandbox import SandboxError
@@ -293,6 +294,11 @@ def test_a_crash_in_the_log_fails_an_otherwise_clean_cell(cell_dir, tmp_path):
 def test_a_rearm_cell_needs_both_the_predicate_and_the_merchant_state(tmp_path):
     directory = tmp_path / "d0"
     directory.mkdir()
+    # Every cell directory carries a control cell; `only` is what keeps this
+    # test to the one cell it is about.
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")), encoding="utf-8"
+    )
     (directory / "rearm.yaml").write_text(
         textwrap.dedent(
             """\
@@ -335,6 +341,7 @@ def test_a_rearm_cell_needs_both_the_predicate_and_the_merchant_state(tmp_path):
         driver=FakeDriver(labels=["result:cancelled"], rearmed=True),
         sandbox=sandbox,
         run_all=True,
+        only=["rearm"],
     )
     assert passing.results[0].passed
 
@@ -345,6 +352,7 @@ def test_a_rearm_cell_needs_both_the_predicate_and_the_merchant_state(tmp_path):
         driver=FakeDriver(labels=["result:cancelled"], rearmed=False),
         sandbox=sandbox,
         run_all=True,
+        only=["rearm"],
     )
     assert not not_rearmed.results[0].passed
     assert any("rearm" in p for p in not_rearmed.results[0].problems)
@@ -651,6 +659,9 @@ def test_a_failure_does_not_invent_a_label_finding(cell_dir, tmp_path):
 def test_a_failure_during_expect_does_not_also_claim_no_rearm(tmp_path):
     directory = tmp_path / "d0"
     directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")), encoding="utf-8"
+    )
     (directory / "rearm.yaml").write_text(
         textwrap.dedent(
             """\
@@ -675,7 +686,7 @@ def test_a_failure_during_expect_does_not_also_claim_no_rearm(tmp_path):
     # dump: a dead uiautomator is a rig fault, not a verdict about the sheet.
     driver.wait_rearmed = raises(DriverError("no parsable uiautomator dump"))
 
-    report = run(directory, tmp_path, driver)
+    report = run(directory, tmp_path, driver, only=["rearm"])
 
     problems = report.results[0].problems
     assert any("driver: no parsable" in p for p in problems)
@@ -850,6 +861,9 @@ def test_a_cell_that_overruns_its_budget_is_failed_with_a_dump(
 
     assert not report.results[0].passed
     assert any("budget: " in p for p in report.results[0].problems)
+    # Seconds to one decimal: a budget is a real number, and "0s" reads as
+    # a missing value rather than as the number that was actually spent.
+    assert any("0.0s" in p for p in report.results[0].problems)
     assert "01-paste_token-failed.uix" in names(tmp_path)
 
 
@@ -867,19 +881,20 @@ def test_only_refuses_a_cell_id_that_does_not_exist(cell_dir, tmp_path):
 def test_a_cell_that_does_not_run_on_this_platform_is_not_run(tmp_path):
     directory = tmp_path / "d0"
     directory.mkdir()
-    (directory / "control.yaml").write_text(
-        textwrap.dedent(CELL.format(id="control")).replace(
+    for name in ("control", "frictionless"):
+        (directory / f"{name}.yaml").write_text(
+            textwrap.dedent(CELL.format(id=name)), encoding="utf-8"
+        )
+    (directory / "ios_only.yaml").write_text(
+        textwrap.dedent(CELL.format(id="ios_only")).replace(
             "platforms: [android, ios]", "platforms: [ios]"
         ),
         encoding="utf-8",
     )
-    (directory / "frictionless.yaml").write_text(
-        textwrap.dedent(CELL.format(id="frictionless")), encoding="utf-8"
-    )
 
     report = run(directory, tmp_path, FakeDriver())
 
-    assert [r.cell_id for r in report.results] == ["frictionless"]
+    assert [r.cell_id for r in report.results] == ["control", "frictionless"]
 
 
 def test_a_directory_with_nothing_for_this_platform_is_refused(tmp_path):
@@ -1090,3 +1105,344 @@ def test_main_reports_an_unknown_only_id_in_one_line(
 
     assert code != 0
     assert "contrl" in capsys.readouterr().err
+
+
+# -- what a consumer of the report is allowed to see --------------------------
+
+
+def test_the_label_is_scrubbed_before_it_reaches_stdout(
+    cell_dir, tmp_path, capsys, monkeypatch
+):
+    # The label is read off the device and main prints it. Scrubbing it in
+    # run_cell rather than at the print keeps every consumer -- stdout, the
+    # progress ledger, result.json -- looking at the same redacted value.
+    class StubSandbox:
+        @staticmethod
+        def from_env_file(path):
+            return FakeSandbox()
+
+    monkeypatch.setattr(runner, "Sandbox", StubSandbox)
+    monkeypatch.setattr(
+        runner,
+        "_build_driver",
+        lambda platform: FakeDriver(labels=[f"result:success:{TOKEN}"] * 4),
+    )
+
+    runner.main(
+        [
+            "--platform",
+            "android",
+            "--cells",
+            str(cell_dir),
+            "--evidence-root",
+            str(tmp_path / "evidence"),
+            "--env-file",
+            str(tmp_path / "never-opened.env"),
+            "--all",
+        ]
+    )
+
+    assert TOKEN not in capsys.readouterr().out
+
+
+def test_the_scrubbed_label_is_what_the_result_carries(cell_dir, tmp_path):
+    driver = FakeDriver(labels=[f"result:success:{TOKEN}"])
+
+    report = run(cell_dir, tmp_path, driver, only=["control"])
+
+    assert TOKEN not in report.results[0].label
+    assert "REDACTED-SESSION-TOKEN" in report.results[0].label
+
+
+# -- findings a cut-short cell is not allowed to invent ------------------------
+
+
+def test_a_failure_does_not_invent_a_merchant_finding(cell_dir, tmp_path):
+    # The cell never got to the payment, so "the session is still open" is
+    # what the first failure implies, not a second finding.
+    sandbox = FakeSandbox(
+        {"sess-0": {"id": "sess-0", "status": "open", "transactions": []}}
+    )
+    driver = FakeDriver()
+    driver.tap_pay = raises(DriverError("no node with text 'Pay'"))
+
+    report = run(cell_dir, tmp_path, driver, sandbox=sandbox, only=["control"])
+
+    problems = report.results[0].problems
+    assert any("driver: " in p for p in problems)
+    assert not any(p.startswith("session_status:") for p in problems)
+    assert not any(p.startswith("txn_count:") for p in problems)
+    # Still filed: it is how you tell a driver that lost the device from a
+    # payment that never happened.
+    assert "merchant.json" in names(tmp_path)
+
+
+def test_a_crash_is_reported_even_when_the_cell_was_cut_short(cell_dir, tmp_path):
+    # A crash is not a consequence of the first failure -- it is very often
+    # the cause of it.
+    driver = FakeDriver()
+    driver.tap_pay = raises(DriverError("no node with text 'Pay'"))
+    driver.logs_since = lambda since: "E AndroidRuntime: FATAL EXCEPTION: main\n"
+
+    report = run(cell_dir, tmp_path, driver, only=["control"])
+
+    assert any("FATAL EXCEPTION" in p for p in report.results[0].problems)
+
+
+# -- the rig checks cannot be silently off ------------------------------------
+
+
+def test_a_cell_directory_with_no_control_cell_is_refused(tmp_path):
+    # Without one there is no interleaved check and no abort rule, and a run
+    # that cannot tell an SDK finding from a broken rig should not start.
+    directory = tmp_path / "d0"
+    directory.mkdir()
+    (directory / "frictionless.yaml").write_text(
+        textwrap.dedent(CELL.format(id="frictionless")), encoding="utf-8"
+    )
+
+    with pytest.raises(CellError) as error:
+        run(directory, tmp_path, FakeDriver())
+
+    assert "control" in str(error.value)
+
+
+def test_a_cell_id_that_could_escape_the_run_directory_is_refused(tmp_path):
+    # The same guard the evidence tree uses, applied before a cell id is made
+    # into a token filename or a directory name.
+    directory = tmp_path / "d0"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")), encoding="utf-8"
+    )
+    (directory / "...yaml").write_text(
+        textwrap.dedent(CELL.format(id="..")), encoding="utf-8"
+    )
+
+    with pytest.raises(CellError) as error:
+        run(directory, tmp_path, FakeDriver())
+
+    assert "unsafe" in str(error.value).lower()
+
+
+def test_a_d3_action_is_an_authoring_problem_and_skips_the_control_check(tmp_path):
+    # NotImplementedError is the driver saying the cell asked for something
+    # Phase 0 does not have. Nothing about the rig is in doubt, so spending a
+    # control cell on it would only add a session and a minute.
+    directory = tmp_path / "d0"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")), encoding="utf-8"
+    )
+    (directory / "lifecycle.yaml").write_text(
+        textwrap.dedent(CELL.format(id="lifecycle")).replace(
+            "  - tap_pay\n", "  - tap_pay\n  - rotate\n"
+        ),
+        encoding="utf-8",
+    )
+    driver = FakeDriver()
+    driver.rotate = raises(NotImplementedError("rotate is a D3 action"))
+
+    report = run(directory, tmp_path, driver, only=["lifecycle"])
+
+    assert any("authoring: " in p for p in report.results[0].problems)
+    assert [r.cell_id for r in report.results] == ["lifecycle"]
+
+
+# -- hygiene the run owns -----------------------------------------------------
+
+
+def test_a_token_file_that_will_not_go_is_a_run_problem(
+    cell_dir, tmp_path, monkeypatch
+):
+    # A live credential still on disk is not a verdict about the payment, and
+    # it must not be swallowed by ignore_errors either.
+    def refuse(path):
+        raise OSError("device or resource busy")
+
+    monkeypatch.setattr(runner.shutil, "rmtree", refuse)
+
+    report = run(cell_dir, tmp_path, FakeDriver(), only=["control"])
+
+    assert report.results[0].passed
+    assert any("token" in p for p in report.problems)
+    assert report.exit_code != 0
+
+
+def test_the_card_form_is_shot_while_the_sheet_is_foreground(cell_dir, tmp_path):
+    # type_card runs with the sheet up, so the guard covers it -- and the dump
+    # beside the frame is the caret evidence the seed script used to produce.
+    run(cell_dir, tmp_path, FakeDriver(), only=["control"])
+
+    assert "02-type_card.png" in names(tmp_path)
+    assert "02-type_card.uix" in names(tmp_path)
+
+
+# -- budgets ------------------------------------------------------------------
+
+
+def test_the_type_card_budget_is_derived_from_the_drivers_own_pacing():
+    # Restated rather than referenced, it drifts the first time the pacing
+    # changes -- and the pacing is what the 0.3.2 caret fix was proven under.
+    assert runner.VERB_BUDGET_SECONDS["type_card"] == pytest.approx(
+        16 * android.DIGIT_PACING_SECONDS + runner.CARD_FIELDS_SECONDS
+    )
+
+
+def test_the_paste_token_budget_covers_the_ios_worst_case():
+    # 60 s for the example's own screen, 60 s for the sheet, a 10 s read-back
+    # and the paste itself.
+    assert runner.VERB_BUDGET_SECONDS["paste_token"] >= 160
+
+
+# -- exit codes ---------------------------------------------------------------
+
+
+def test_an_aborted_run_exits_three_so_the_nightly_can_tell_it_apart(tmp_path):
+    directory = tmp_path / "d0"
+    directory.mkdir()
+    for name in ("a_cell", "b_cell", "control"):
+        (directory / f"{name}.yaml").write_text(
+            textwrap.dedent(CELL.format(id=name)), encoding="utf-8"
+        )
+
+    report = run(directory, tmp_path, FakeDriver(labels=["result:cancelled"] * 20))
+
+    assert report.aborted
+    assert report.exit_code == 3
+
+
+def test_a_cell_failure_exits_one_and_a_clean_run_exits_zero(cell_dir, tmp_path):
+    assert run(cell_dir, tmp_path, FakeDriver()).exit_code == 0
+
+    failed = run(
+        cell_dir, tmp_path, FakeDriver(labels=["result:cancelled"]), only=["control"]
+    )
+
+    assert failed.exit_code == 1
+
+
+# -- the command line ---------------------------------------------------------
+
+
+def test_installing_a_build_reruns_every_cell(cell_dir, tmp_path, capsys, monkeypatch):
+    # An APK is a different build, and passed_cells has no idea which build a
+    # pass came from: resuming onto a new one would report yesterday's result.
+    class StubSandbox:
+        @staticmethod
+        def from_env_file(path):
+            return FakeSandbox()
+
+    monkeypatch.setattr(runner, "Sandbox", StubSandbox)
+    monkeypatch.setattr(runner, "_build_driver", lambda platform: FakeDriver())
+    argv = [
+        "--platform",
+        "android",
+        "--cells",
+        str(cell_dir),
+        "--evidence-root",
+        str(tmp_path / "evidence"),
+        "--env-file",
+        str(tmp_path / "never-opened.env"),
+    ]
+    runner.main(argv + ["--all"])
+    capsys.readouterr()
+
+    code = runner.main(argv + ["--app", "/tmp/app-debug.apk"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "SKIP" not in out
+    assert "PASS control" in out
+
+
+def test_an_abort_is_printed_before_the_findings_it_disbelieves(
+    tmp_path, capsys, monkeypatch
+):
+    directory = tmp_path / "d0"
+    directory.mkdir()
+    for name in ("a_cell", "b_cell", "control"):
+        (directory / f"{name}.yaml").write_text(
+            textwrap.dedent(CELL.format(id=name)), encoding="utf-8"
+        )
+
+    class StubSandbox:
+        @staticmethod
+        def from_env_file(path):
+            return FakeSandbox()
+
+    monkeypatch.setattr(runner, "Sandbox", StubSandbox)
+    monkeypatch.setattr(
+        runner,
+        "_build_driver",
+        lambda platform: FakeDriver(labels=["result:cancelled"] * 20),
+    )
+
+    code = runner.main(
+        [
+            "--platform",
+            "android",
+            "--cells",
+            str(directory),
+            "--evidence-root",
+            str(tmp_path / "evidence"),
+            "--env-file",
+            str(tmp_path / "never-opened.env"),
+        ]
+    )
+
+    out = capsys.readouterr().out.splitlines()
+    assert code == 3
+    assert out[0].startswith("ABORT")
+    findings = [line for line in out if line.startswith("FAIL")]
+    assert findings and all("(unverified)" in line for line in findings)
+
+
+def test_the_summary_line_counts_the_cells_and_the_control_checks(
+    cell_dir, tmp_path, capsys, monkeypatch
+):
+    class StubSandbox:
+        @staticmethod
+        def from_env_file(path):
+            return FakeSandbox()
+
+    monkeypatch.setattr(runner, "Sandbox", StubSandbox)
+    monkeypatch.setattr(
+        runner,
+        "_build_driver",
+        lambda platform: FakeDriver(
+            labels=["result:success:txn-1", "result:cancelled", "result:success:txn-1"]
+        ),
+    )
+
+    runner.main(
+        [
+            "--platform",
+            "android",
+            "--cells",
+            str(cell_dir),
+            "--evidence-root",
+            str(tmp_path / "evidence"),
+            "--env-file",
+            str(tmp_path / "never-opened.env"),
+            "--all",
+        ]
+    )
+
+    summary = capsys.readouterr().out.splitlines()[-1]
+    assert summary == "2 cells, 1 passed, 1 failed, 1 control check, aborted: no"
+
+
+def test_perform_names_the_argument_it_cannot_perform():
+    # cells.py rejects this at load time; the message is for whoever adds a
+    # verb argument here and forgets the branch that performs it.
+    with pytest.raises(DriverError) as error:
+        runner._perform(
+            FakeDriver(),
+            cells.Action("expect", "settled"),
+            card=None,
+            token_path=Path("/dev/null"),
+            amount_text="\u20ac10.00",
+        )
+
+    assert "settled" in str(error.value)
