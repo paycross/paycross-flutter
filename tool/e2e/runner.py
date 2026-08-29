@@ -117,8 +117,11 @@ VERB_BUDGET_SECONDS = {
 }
 DEFAULT_VERB_SECONDS = 120
 
-#: Verbs whose argument already says how long they may take.
-TIMED_VERBS = ("wait_result", "background")
+#: Verbs whose argument already says how long they may take. `wait_expired` is
+#: here for the definition rather than for a cell that exists yet: D2 waits 16
+#: and 30 minutes for a session to pass its own expiry, and on the default
+#: budget such a cell would breach mid-wait and report a hang.
+TIMED_VERBS = ("wait_result", "wait_expired", "background")
 
 #: On top of such a verb's own deadline, because that deadline bounds when the
 #: next look starts, not how long one takes: a dump's transport timeout is

@@ -1838,3 +1838,20 @@ def test_a_cell_whose_dumps_are_unreadable_files_no_frame(cell_dir, tmp_path):
     run(cell_dir, tmp_path, driver, only=["control"])
 
     assert not list((tmp_path / "evidence").glob("*/control/*.png"))
+
+
+def test_a_wait_expired_cell_is_budgeted_from_its_own_argument(tmp_path):
+    # D2's session_expired cells wait 16 and 30 minutes. On the default 120 s
+    # a cell would breach its budget mid-wait and report a hang, which is the
+    # false finding this whole file is arranged to avoid.
+    directory = tmp_path / "d2"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")).replace(
+            "  - wait_result 60\n", "  - wait_expired 960\n  - wait_result 60\n"
+        ),
+        encoding="utf-8",
+    )
+    cell = cells.load_cell(directory / "control.yaml")
+
+    assert runner.budget_for(cell) > 960
