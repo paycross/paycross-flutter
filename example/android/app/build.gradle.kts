@@ -31,6 +31,20 @@ android {
             // signing it with them keeps `flutter run --release` working with no
             // keystore. A real app replaces this with its own signing config.
             signingConfig = signingConfigs.getByName("debug")
+            // What a merchant's release pipeline does, and the reason D1
+            // exists. The SDK passes PayCrossResult and Recovery through an
+            // Intent and ships consumer rules to keep them; if those rules
+            // ever stop being applied, R8 renames the classes, the result
+            // never unmarshals, and every payment comes back as
+            // error:resultUnknown instead of its real outcome. Only a
+            // release build can show that, and only a real payment on one
+            // can prove it does not.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
