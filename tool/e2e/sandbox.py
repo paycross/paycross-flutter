@@ -284,6 +284,26 @@ class Sandbox:
         }
         merged.update(headers or {})
         status, payload = self._request(method, url, merged, body)
+        if status == 401:
+            # The proactive refresh in `_bearer` trusts `expires_in`, and the
+            # token endpoint sits behind an API-Gateway cache: a Sandbox built
+            # partway through a token's life is handed the cached token with a
+            # full `expires_in: 3600` as if it had just been issued, and then
+            # believes it for the ~51 minutes the token has already spent. The
+            # 2026-08-29 Android matrix died exactly that way mid-run.
+            #
+            # So a 401 is treated as the authoritative expiry notice the clock
+            # could not give: drop the token and replay once. That refetch
+            # always reaches the origin because the cache TTL (3300 s) is
+            # shorter than the token lifetime (3600 s) -- any token old enough
+            # to be refused has already outlived its cache entry.
+            #
+            # Once, never in a loop. A replay refused again means the
+            # credentials or the environment are wrong, and `_decode` says so.
+            self._access_token = None
+            self._token_expires_at = 0.0
+            merged["Authorization"] = f"Bearer {self._bearer()}"
+            status, payload = self._request(method, url, merged, body)
         return _decode(method, url, status, payload)
 
     def _request(

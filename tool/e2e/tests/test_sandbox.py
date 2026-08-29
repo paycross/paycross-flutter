@@ -60,8 +60,8 @@ class FakeClock:
         self.now += seconds
 
 
-def access_token_response(expires_in=None):
-    payload = {"access_token": "bearer-789"}
+def access_token_response(expires_in=None, token="bearer-789"):
+    payload = {"access_token": token}
     if expires_in is not None:
         payload["expires_in"] = expires_in
     return json.dumps(payload).encode()
@@ -448,6 +448,97 @@ def test_a_4xx_is_never_retried():
 
     assert len(transport.calls) == 2
     assert clock.slept == []
+
+
+UNAUTHORIZED = (
+    401,
+    json.dumps(
+        {"error": {"type": "authentication_error", "message": "Invalid or expired access token"}}
+    ).encode(),
+)
+
+
+def _mints(transport):
+    return [c for c in transport.calls if c[1] == ENV["PAYMENT_API_URL"]]
+
+
+def _token_fetches(transport):
+    return [c for c in transport.calls if c[1] == ENV["TOKEN_URL"]]
+
+
+def test_a_401_refetches_the_token_and_replays_the_request():
+    # The 2026-08-29 Android run died here: a cached token reported as fresh
+    # expired mid-matrix and every later mint was a 401.
+    client, transport, _ = client_with(
+        access_token_response(expires_in=3600),
+        UNAUTHORIZED,
+        access_token_response(expires_in=3600, token="bearer-fresh"),
+        MINTED,
+    )
+
+    assert client.mint(amount=1000, currency="EUR", options={})["id"] == "01a0-sess"
+    assert len(_token_fetches(transport)) == 2
+    assert _mints(transport)[-1][2]["Authorization"] == "Bearer bearer-fresh"
+
+
+def test_the_replayed_mint_reuses_its_idempotency_key():
+    # Regenerating it would bill a second live sandbox session for one cell.
+    client, transport, _ = client_with(
+        access_token_response(),
+        UNAUTHORIZED,
+        access_token_response(token="bearer-fresh"),
+        MINTED,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+
+    first, replay = _mints(transport)
+    assert first[2]["Idempotency-Key"] == replay[2]["Idempotency-Key"]
+    assert first[3] == replay[3]
+
+
+def test_a_401_on_read_is_replayed_too():
+    client, transport, _ = client_with(
+        access_token_response(),
+        UNAUTHORIZED,
+        access_token_response(token="bearer-fresh"),
+        json.dumps({"id": "01a0-sess", "status": "completed"}).encode(),
+    )
+
+    assert client.read("01a0-sess")["status"] == "completed"
+    assert len(_token_fetches(transport)) == 2
+
+
+def test_a_second_401_is_reported_rather_than_retried_again():
+    # One retry, never a loop: if a freshly minted token is also refused the
+    # credentials or the environment are wrong and the run must say so.
+    client, transport, _ = client_with(
+        access_token_response(),
+        UNAUTHORIZED,
+        access_token_response(token="bearer-fresh"),
+        UNAUTHORIZED,
+    )
+
+    with pytest.raises(sandbox.SandboxError, match="HTTP 401"):
+        client.mint(amount=1000, currency="EUR", options={})
+
+    assert len(_token_fetches(transport)) == 2
+    assert len(_mints(transport)) == 2
+
+
+def test_a_401_never_echoes_the_token_it_was_refused_with():
+    client, _, _ = client_with(
+        access_token_response(),
+        UNAUTHORIZED,
+        access_token_response(token="bearer-fresh"),
+        UNAUTHORIZED,
+    )
+
+    with pytest.raises(sandbox.SandboxError) as caught:
+        client.mint(amount=1000, currency="EUR", options={})
+
+    assert "bearer-fresh" not in str(caught.value)
+    assert "secret-456" not in str(caught.value)
 
 
 def test_the_real_transport_returns_the_status_and_body_of_an_error(monkeypatch):
