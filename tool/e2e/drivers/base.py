@@ -314,16 +314,18 @@ class Driver(ABC):
         raise NotImplementedError("dont_keep_activities is a D3 action, Android only")
 
     def type_cvv(self, cvv: str) -> None:
-        raise NotImplementedError("type_cvv is a D5 action; saved cards are D5's")
+        raise NotImplementedError(
+            "type_cvv is a D5 action, for retyping a saved card's CVV"
+        )
 
     def tap_google_pay(self) -> None:
-        raise NotImplementedError("Google Pay is a D4 action, Android only")
+        raise NotImplementedError("tap_google_pay is a D4 action, Android only")
 
     def select_saved_card(self) -> None:
-        raise NotImplementedError("saved cards are a D5 action")
+        raise NotImplementedError("select_saved_card is a D5 action")
 
     def save_card(self) -> None:
-        raise NotImplementedError("saved cards are a D5 action")
+        raise NotImplementedError("save_card is a D5 action")
 
     # -- expectations, same contract ------------------------------------------
     #
@@ -336,10 +338,12 @@ class Driver(ABC):
         raise NotImplementedError("wait_acs is a D2 predicate; this driver has none")
 
     def wait_google_pay(self, timeout: float) -> bool:
-        raise NotImplementedError("Google Pay is a D4 expectation, Android only")
+        raise NotImplementedError("wait_google_pay is a D4 expectation, Android only")
 
     def wait_no_google_pay(self, timeout: float) -> bool:
-        raise NotImplementedError("Google Pay is a D4 expectation, Android only")
+        raise NotImplementedError(
+            "wait_no_google_pay is a D4 expectation, Android only"
+        )
 
     def wait_saved_card(self, timeout: float) -> bool:
-        raise NotImplementedError("saved cards are a D5 expectation")
+        raise NotImplementedError("wait_saved_card is a D5 expectation")

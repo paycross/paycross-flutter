@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from tool.e2e import cells, evidence, runner
+from tool.e2e import cells, evidence, runner, tree
 from tool.e2e.cells import CellError
 from tool.e2e.drivers import android
-from tool.e2e.drivers.base import DriverError
+from tool.e2e.drivers.base import Driver, DriverError
 from tool.e2e.sandbox import SandboxError
 
 CELL = """\
@@ -91,12 +91,24 @@ class FakeSandbox:
         )
 
 
-class FakeDriver:
-    package = "com.paycross.example"
+class FakeDriver(Driver):
+    """A device that does whatever the test says, on the real interface.
 
-    def __init__(self, labels=None, rearmed=True):
+    A `Driver` subclass rather than a bare stand-in, so every verb and
+    predicate a later dimension owns raises NotImplementedError here exactly
+    as it would on a real driver. That distinction is the whole of the
+    authoring-fault classification: an AttributeError would be read as a
+    broken device and spend an interleaved control check.
+    """
+
+    _parse_dump = staticmethod(tree.parse_uiautomator)
+
+    def __init__(self, labels=None, rearmed=True, acs_page=True, stray_label=None):
+        super().__init__(package="com.paycross.example", sleep=lambda seconds: None)
         self.labels = list(labels or [])
         self.rearmed = rearmed
+        self.acs_page = acs_page
+        self.stray_label = stray_label
         self.actions = []
         self.token_paths = []
 
@@ -106,13 +118,26 @@ class FakeDriver:
     def launch(self):
         self.actions.append(("launch", None))
 
-    def paste_token(self, token_path):
-        self.actions.append(("paste_token", None))
+    def _took_the_token(self, token_path):
         self.token_paths.append(Path(token_path))
         # The runner must have written a real token, readable only by us.
         assert Path(token_path).read_text().startswith("eyJ")
         assert oct(Path(token_path).stat().st_mode)[-3:] == "600"
         assert oct(Path(token_path).parent.stat().st_mode)[-3:] == "700"
+
+    def paste_token(self, token_path):
+        self.actions.append(("paste_token", None))
+        self._took_the_token(token_path)
+
+    def present_token(self, token_path):
+        self.actions.append(("present_token", None))
+        self._took_the_token(token_path)
+
+    def tap_example_pay(self):
+        self.actions.append(("tap_example_pay", None))
+
+    def enter_token(self, literal):
+        self.actions.append(("enter_token", literal))
 
     def type_card(self, card):
         self.actions.append(("type_card", card.pan))
@@ -120,8 +145,19 @@ class FakeDriver:
     def tap_pay(self, amount_text):
         self.actions.append(("tap_pay", amount_text))
 
+    def airplane(self, on):
+        self.actions.append(("airplane", on))
+
     def acs(self, outcome):
         self.actions.append(("acs", outcome))
+
+    def wait_acs(self, timeout):
+        self.actions.append(("wait_acs", timeout))
+        return self.acs_page
+
+    def wait_no_label(self, timeout):
+        self.actions.append(("wait_no_label", timeout))
+        return self.stray_label
 
     def cancel_challenge(self):
         self.actions.append(("cancel_challenge", None))
@@ -178,6 +214,21 @@ def raises(error):
         raise error
 
     return fail
+
+
+def step_for(driver, **over):
+    """One `Step`, so a `_perform` test names only the field it is about."""
+    fields = {
+        "driver": driver,
+        "sandbox": FakeSandbox(),
+        "card": None,
+        "token_path": None,
+        "amount_text": "\u20ac10.00",
+        "session_id": "sess-0",
+        "secrets": [],
+    }
+    fields.update(over)
+    return runner.Step(**fields)
 
 
 # -- the happy path ---------------------------------------------------------
@@ -375,18 +426,14 @@ def test_a_rearm_cell_needs_both_the_predicate_and_the_merchant_state(tmp_path):
     assert any("rearm" in p for p in not_rearmed.results[0].problems)
 
 
-def test_a_cell_expecting_a_rearm_it_never_asks_for_says_so():
-    # `rearmed: true` with no `expect rearmed` action is a cell-authoring
-    # mistake. Reporting it as "the sheet never re-armed" would send whoever
-    # is triaging after an SDK bug that is not there.
-    #
-    # `load_cell` now refuses that pairing outright, so no cell file can reach
-    # run_cell in this state. The branch stays because `run_cell` takes a
-    # `Cell`, not a path, and this is the honest message for one built by
-    # hand -- and because "the sheet never re-armed" is the wrong answer to
-    # give whichever way the shape arrived.
-    assert "no 'expect rearmed' action" in runner._rearm_problem(None)
-    assert "never re-armed" in runner._rearm_problem(False)
+def test_a_rearm_that_never_came_names_the_deadline_the_wait_really_used():
+    # Replaces `_rearm_problem`, whose two cases are both gone: a falsy answer
+    # is reported by the generic `expect` handler with the expectation's name
+    # and its own timeout, and "expects a re-arm and never looks for one" is
+    # refused at load by `load_cell`'s cross-field rule. A branch that can no
+    # longer be reached is worse than no branch.
+    assert not hasattr(runner, "_rearm_problem")
+    assert runner.EXPECT_TIMEOUT_SECONDS["rearmed"] == runner.REARM_TIMEOUT_SECONDS
 
 
 # -- skepticism -------------------------------------------------------------
@@ -1510,13 +1557,7 @@ def test_perform_names_the_argument_it_cannot_perform():
     # cells.py rejects this at load time; the message is for whoever adds a
     # verb argument here and forgets the branch that performs it.
     with pytest.raises(DriverError) as error:
-        runner._perform(
-            FakeDriver(),
-            cells.Action("expect", "settled"),
-            card=None,
-            token_path=Path("/dev/null"),
-            amount_text="\u20ac10.00",
-        )
+        runner._perform(step_for(FakeDriver()), cells.Action("expect", "settled"))
 
     assert "settled" in str(error.value)
 
@@ -1885,44 +1926,54 @@ def test_a_wait_expired_cell_is_budgeted_from_its_own_argument(tmp_path):
 # --- review: a verb with no branch is an authoring fault ------------------
 
 
-@pytest.mark.parametrize("verb", ["tap_google_pay", "select_saved_card", "relaunch"])
-def test_a_grammar_legal_verb_with_no_branch_is_an_authoring_fault(verb):
+@pytest.mark.parametrize(
+    "verb, arg",
+    [
+        ("tap_google_pay", None),
+        ("select_saved_card", None),
+        ("save_card", None),
+        ("type_cvv", None),
+        ("dont_keep_activities", "on"),
+    ],
+)
+def test_a_verb_a_later_dimension_owns_is_an_authoring_fault(verb, arg):
     # The cell file is wrong, not the rig, so no control check is spent
     # proving a rig that was never in doubt. `cells.py` accepts these verbs
-    # today; the dimension that owns each one adds its branch.
+    # today and `_perform` dispatches every one of them; what refuses is the
+    # `Driver` declaration behind it, which is the layer that knows whether
+    # the dimension has landed.
+    # And the refusal names the verb, because `run_cell` files the exception's
+    # own message as the cell's problem: without the name the reader is told a
+    # dimension has not landed but not which action asked for it.
     with pytest.raises(NotImplementedError, match=verb):
         runner._perform(
-            FakeDriver(),
-            cells.Action(verb),
-            card=None,
-            token_path=None,
-            amount_text="€10.00",
+            step_for(FakeDriver(), card=cells.Card("4111111111111111", "12/28", "123")),
+            cells.Action(verb, arg),
         )
 
 
-@pytest.mark.parametrize("arg", ["google_pay", "no_result", "saved_card"])
-def test_an_expectation_with_no_branch_is_an_authoring_fault_too(arg):
-    with pytest.raises(NotImplementedError, match="expect"):
-        runner._perform(
-            FakeDriver(),
-            cells.Action("expect", arg),
-            card=None,
-            token_path=None,
-            amount_text="€10.00",
-        )
+@pytest.mark.parametrize("arg", ["google_pay", "no_google_pay", "saved_card"])
+def test_an_expectation_a_later_dimension_owns_is_an_authoring_fault_too(arg):
+    with pytest.raises(NotImplementedError, match=f"wait_{arg}"):
+        runner._perform(step_for(FakeDriver()), cells.Action("expect", arg))
 
 
 def test_a_verb_the_grammar_does_not_know_is_still_a_driver_error():
     # Not reachable from a cell file -- load_cell refuses it -- but run_cell
     # takes an Action, so this is the honest answer for one built by hand.
     with pytest.raises(DriverError, match="invented"):
-        runner._perform(
-            FakeDriver(),
-            cells.Action("invented", "x"),
-            card=None,
-            token_path=None,
-            amount_text="€10.00",
-        )
+        runner._perform(step_for(FakeDriver()), cells.Action("invented", "x"))
+
+
+def test_a_verb_added_to_the_grammar_with_no_branch_is_an_authoring_fault(monkeypatch):
+    # Every verb the grammar holds today has a branch, so this guard is about
+    # the next one somebody adds. NotImplementedError rather than a silent
+    # no-op or an AttributeError: the cell reached for a dimension that has
+    # not landed, which is a cell-file mistake and costs no control check.
+    monkeypatch.setattr(runner, "BARE_ACTIONS", runner.BARE_ACTIONS | {"teleport"})
+
+    with pytest.raises(NotImplementedError, match="no branch"):
+        runner._perform(step_for(FakeDriver()), cells.Action("teleport"))
 
 
 def test_an_authoring_fault_spends_no_control_check(cell_dir, tmp_path):
@@ -1948,3 +1999,341 @@ def test_an_authoring_fault_spends_no_control_check(cell_dir, tmp_path):
     assert any("tap_google_pay" in p for p in wallet.problems)
     # No interleaved control check was run for it.
     assert [r.artifact_id for r in report.results if r.is_control_check] == []
+
+
+# --- D2: the generic observer ----------------------------------------------
+
+
+@pytest.mark.parametrize("what", sorted(cells.EXPECTATIONS))
+def test_every_expectation_has_a_deadline_and_a_predicate(what):
+    # The drift this exists to stop: `run_cell`'s obvious shape -- an `elif`
+    # per argument -- silently discards the answer of every expectation it has
+    # no branch for, and the ones that arrive later are exactly the ones whose
+    # only job is to look. So a new expectation is one line in `_observe` and
+    # one in the table, and this fails the suite if it is neither.
+    assert what in runner.EXPECT_TIMEOUT_SECONDS
+
+    driver = FakeDriver()
+    # Whichever predicate this expectation reaches, it answers "no".
+    driver.wait_rearmed = lambda amount_text, timeout: False
+    driver.wait_no_label = lambda timeout: "result:success:txn-9"
+    driver.wait_acs = lambda timeout: False
+    driver.wait_google_pay = lambda timeout: False
+    driver.wait_no_google_pay = lambda timeout: False
+    driver.wait_saved_card = lambda timeout: False
+
+    observed, _ = runner._observe(step_for(driver), what)
+
+    assert observed is False
+
+
+def test_a_falsy_predicate_is_a_cell_failure_that_names_it(tmp_path, cell_dir):
+    # `expect google_pay` answering False would otherwise leave
+    # `google_pay_offered` passing on a sheet with no wallet button at all.
+    driver = FakeDriver()
+    driver.wait_google_pay = lambda timeout: False
+    directory = tmp_path / "d4"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")), encoding="utf-8"
+    )
+    (directory / "wallet.yaml").write_text(
+        textwrap.dedent(CELL.format(id="wallet")).replace(
+            "  - wait_result 60\n", "  - expect google_pay\n  - wait_result 60\n"
+        ),
+        encoding="utf-8",
+    )
+
+    report = run(directory, tmp_path, driver, only=["wallet"])
+
+    problem = next(p for p in report.results[0].problems if p.startswith("expect:"))
+    assert "'google_pay'" in problem
+    # And the number the wait actually used, not a constant restated here.
+    assert f"{runner.WALLET_TIMEOUT_SECONDS}s" in problem
+
+
+def test_expect_no_result_reports_the_label_that_should_not_exist(tmp_path):
+    # Inverted, and converted inside `_observe` rather than leaving every
+    # caller to know which way round it reads.
+    driver = FakeDriver(stray_label="result:success:txn-9")
+
+    observed, detail = runner._observe(step_for(driver), "no_result")
+
+    assert observed is False
+    assert detail == "result:success:txn-9"
+    assert runner._observe(step_for(FakeDriver()), "no_result") == (True, None)
+
+
+def test_an_expectation_with_no_deadline_is_not_a_key_error():
+    # A direct lookup would raise KeyError, and KeyError is exactly the
+    # miscategorised error this design is about: `run_cell` reads DriverError
+    # and NotImplementedError as things it knows how to report, and anything
+    # else as a device problem worth an interleaved control check.
+    with pytest.raises(DriverError, match="no deadline"):
+        runner._observe(step_for(FakeDriver()), "settled")
+
+
+def test_an_expectation_with_a_deadline_and_no_predicate_says_so(monkeypatch):
+    # Not the same drift as the guard above: falling off the end instead would
+    # return None, which `run_cell` unpacks as a tuple.
+    monkeypatch.setitem(runner.EXPECT_TIMEOUT_SECONDS, "settled", 30)
+
+    with pytest.raises(DriverError, match="no predicate"):
+        runner._observe(step_for(FakeDriver()), "settled")
+
+
+def test_expect_acs_observes_the_page_and_taps_nothing(tmp_path):
+    driver = FakeDriver()
+
+    assert runner._observe(step_for(driver), "acs") == (True, None)
+    assert driver.actions == [("wait_acs", runner.ACS_PAGE_TIMEOUT_SECONDS)]
+
+
+def test_the_expect_table_agrees_with_the_drivers_own_defaults():
+    # `runner` imports `drivers`, so a driver cannot import back: each keeps
+    # its own literal default and `_observe` always passes `timeout=`
+    # explicitly. That makes this table the value really used and the driver
+    # defaults a courtesy to a direct caller -- but the pair must stay equal
+    # or a message would name a number no wait ever spent.
+    import inspect
+
+    from tool.e2e.drivers.android import AndroidDriver
+    from tool.e2e.drivers.ios import IosDriver
+
+    for driver_class in (AndroidDriver, IosDriver):
+        default = inspect.signature(driver_class.wait_acs).parameters["timeout"].default
+        assert default == runner.EXPECT_TIMEOUT_SECONDS["acs"], driver_class
+
+
+# --- D2: the new action branches --------------------------------------------
+
+
+def test_present_token_hands_the_driver_the_cells_token_file(tmp_path, cell_dir):
+    driver = FakeDriver()
+    directory = tmp_path / "d2"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")).replace(
+            "  - paste_token\n  - type_card\n  - tap_pay\n", "  - present_token\n"
+        ),
+        encoding="utf-8",
+    )
+
+    run(directory, tmp_path, driver)
+
+    assert ("present_token", None) in driver.actions
+    assert driver.token_paths and driver.token_paths[0].name == "control.token"
+
+
+def test_enter_token_passes_the_literal_through_untouched(tmp_path):
+    driver = FakeDriver()
+
+    runner._perform(step_for(driver), cells.Action("enter_token", "not.a.token"))
+
+    assert driver.actions == [("enter_token", "not.a.token")]
+
+
+def test_tap_example_pay_and_relaunch_reach_the_driver(tmp_path):
+    driver = FakeDriver()
+
+    runner._perform(step_for(driver), cells.Action("tap_example_pay"))
+    runner._perform(step_for(driver), cells.Action("relaunch"))
+
+    # relaunch's default on `Driver` is `launch()`, which is the whole answer
+    # on Android; iOS overrides it to keep its console capture.
+    assert driver.actions == [("tap_example_pay", None), ("launch", None)]
+
+
+def test_airplane_translates_on_and_off_into_a_bool(tmp_path):
+    driver = FakeDriver()
+
+    runner._perform(step_for(driver), cells.Action("airplane", "on"))
+    runner._perform(step_for(driver), cells.Action("airplane", "off"))
+
+    assert driver.actions == [("airplane", True), ("airplane", False)]
+
+
+def test_wait_spends_exactly_the_seconds_the_cell_asked_for(monkeypatch):
+    naps = []
+    monkeypatch.setattr(runner.time, "sleep", naps.append)
+
+    runner._perform(step_for(FakeDriver()), cells.Action("wait", "300"))
+
+    assert naps == [300.0]
+
+
+def test_a_cell_that_waits_reaches_its_result_afterwards(tmp_path, monkeypatch):
+    # End to end, because `wait` is the one verb whose whole job is to do
+    # nothing: a branch that silently fell through would look identical here
+    # until the expiry cell measured a token that was still valid.
+    naps = []
+    monkeypatch.setattr(runner.time, "sleep", naps.append)
+    directory = tmp_path / "d2"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")).replace(
+            "  - wait_result 60\n", "  - wait 300\n  - wait_result 60\n"
+        ),
+        encoding="utf-8",
+    )
+
+    report = run(directory, tmp_path, FakeDriver())
+
+    assert naps == [300.0]
+    assert report.results[0].passed
+
+
+def test_every_verb_in_the_grammar_reaches_a_branch_or_a_declaration(monkeypatch):
+    # The two lists cannot drift: a verb `cells.py` accepts with no `_perform`
+    # branch would be reported as "the runner has no branch for it yet", and
+    # one whose driver method is simply missing would raise AttributeError --
+    # which `run_cell` reads as a broken device rather than a cell-file
+    # mistake, and two of those abort the whole matrix.
+    monkeypatch.setattr(runner.time, "sleep", lambda seconds: None)
+    legal = {
+        "acs": "approve",
+        "airplane": "on",
+        "background": "5",
+        "dont_keep_activities": "on",
+        "enter_token": "abc",
+        "expect": "rearmed",
+        "wait": "1",
+        "wait_expired": "1",
+        "wait_result": "1",
+    }
+    card = cells.Card("4111111111111111", "12/28", "123")
+
+    for verb in sorted(cells.BARE_ACTIONS | set(cells.ARG_ACTIONS)):
+        driver = FakeDriver()
+        step = step_for(driver, card=card, token_path=Path("/dev/null"))
+        try:
+            runner._perform(step, cells.Action(verb, legal.get(verb)))
+        except NotImplementedError as error:
+            assert "no branch" not in str(error), verb
+        except AttributeError as error:  # pragma: no cover - the failure mode
+            pytest.fail(f"{verb}: {error}")
+        except Exception:  # noqa: BLE001 - a fake device refusing is fine
+            pass
+
+
+# --- D2: waiting a session out ----------------------------------------------
+
+
+class ExpiringSandbox(FakeSandbox):
+    """A session that answers `open` a few times and then `expired`.
+
+    Every read of an open one re-mints a token, exactly as
+    `PaymentSessionResource.php` does.
+    """
+
+    def __init__(self, opens=2):
+        super().__init__()
+        self.opens = opens
+        self.reads = 0
+
+    def read(self, session_id):
+        self.reads += 1
+        if self.reads <= self.opens:
+            return {
+                "id": session_id,
+                "status": "open",
+                "session_token": f"{JWT}-{self.reads}",
+            }
+        return {"id": session_id, "status": "expired"}
+
+
+def test_wait_expired_returns_once_the_backend_has_flipped_the_session(tmp_path):
+    sandbox = ExpiringSandbox()
+    token_path = tmp_path / "cell.token"
+    token_path.write_text(TOKEN, encoding="utf-8")
+    secrets = [TOKEN]
+    naps = []
+    step = step_for(
+        FakeDriver(), sandbox=sandbox, token_path=token_path, secrets=secrets
+    )
+
+    runner._wait_expired(step, 3600, sleep=naps.append)
+
+    assert sandbox.reads == 3
+    assert naps == [runner.SESSION_POLL_SECONDS] * 2
+
+
+def test_wait_expired_leaves_the_freshest_token_on_the_cells_file(tmp_path):
+    # The session outlives the token minted with it -- expires_at is
+    # mint + 1200 s while the JWT dies at mint + 900 s -- so re-presenting the
+    # original would measure the JWT expiry all over again rather than the
+    # server's verdict.
+    sandbox = ExpiringSandbox()
+    token_path = tmp_path / "cell.token"
+    token_path.write_text(TOKEN, encoding="utf-8")
+    step = step_for(
+        FakeDriver(), sandbox=sandbox, token_path=token_path, secrets=[TOKEN]
+    )
+
+    runner._wait_expired(step, 3600, sleep=lambda seconds: None)
+
+    assert token_path.read_text(encoding="utf-8") == f"{JWT}-2"
+
+
+def test_wait_expired_adds_every_re_minted_token_to_the_cells_secrets(tmp_path):
+    # A GET on an open session hands back a credential the runner never
+    # minted. Everything filed afterwards is scrubbed of it by literal.
+    sandbox = ExpiringSandbox()
+    token_path = tmp_path / "cell.token"
+    token_path.write_text(TOKEN, encoding="utf-8")
+    secrets = [TOKEN]
+    step = step_for(
+        FakeDriver(), sandbox=sandbox, token_path=token_path, secrets=secrets
+    )
+
+    runner._wait_expired(step, 3600, sleep=lambda seconds: None)
+
+    assert f"{JWT}-1" in secrets and f"{JWT}-2" in secrets
+
+
+def test_wait_expired_gives_up_with_the_status_it_last_saw(tmp_path):
+    sandbox = ExpiringSandbox(opens=99)
+    token_path = tmp_path / "cell.token"
+    token_path.write_text(TOKEN, encoding="utf-8")
+    step = step_for(
+        FakeDriver(), sandbox=sandbox, token_path=token_path, secrets=[TOKEN]
+    )
+
+    with pytest.raises(runner.BudgetExceeded) as error:
+        runner._wait_expired(step, 0, sleep=lambda seconds: None)
+
+    assert "'open'" in str(error.value)
+
+
+# --- D2: budgets -------------------------------------------------------------
+
+
+def test_a_bare_wait_is_budgeted_from_its_own_argument(tmp_path):
+    # Without this a 20-minute cell trips its budget at step three and reports
+    # a hang, which is the false finding this whole file is arranged to avoid.
+    assert "wait" in runner.TIMED_VERBS
+    directory = tmp_path / "d2"
+    directory.mkdir()
+    (directory / "expired.yaml").write_text(
+        textwrap.dedent(CELL.format(id="expired")).replace(
+            "  - wait_result 60\n", "  - wait 900\n  - wait_result 60\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert runner.budget_for(cells.load_cell(directory / "expired.yaml")) > 900
+
+
+@pytest.mark.parametrize(
+    "verb, seconds",
+    [
+        ("present_token", 180),
+        ("enter_token", 60),
+        ("tap_example_pay", 30),
+        ("relaunch", 90),
+    ],
+)
+def test_the_new_verbs_carry_their_own_budget(verb, seconds):
+    # Rather than being left on DEFAULT_VERB_SECONDS, which is a hang backstop
+    # for a verb nobody has measured.
+    assert runner.VERB_BUDGET_SECONDS[verb] == seconds
