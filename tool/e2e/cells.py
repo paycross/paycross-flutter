@@ -152,6 +152,10 @@ _MERCHANT_VALUES = {
     "txn_status": (_is_non_empty_str, "a non-empty string"),
     "no_succeeded_txn": (_is_bool, "true or false"),
     "failure_recovery": (_is_recovery, "a non-empty string or null"),
+    "failure_code": (_is_recovery, "a non-empty string or null"),
+    "network_decline_code": (_is_recovery, "a non-empty string or null"),
+    "saved_card_saved": (_is_bool, "true or false"),
+    "saved_card_used": (_is_bool, "true or false"),
     "threeds": (_is_mapping, "a mapping"),
 }
 

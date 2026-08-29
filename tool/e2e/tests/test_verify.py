@@ -294,3 +294,132 @@ def test_a_fatal_exception_with_no_process_line_is_kept():
     log = "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
 
     assert verify.crash_lines(log, "com.paycross.x") == [log.strip()]
+
+
+# --- Plan B: no_succeeded_txn: false is an assertion ----------------------
+
+
+def test_no_succeeded_txn_false_fails_a_session_where_no_money_moved():
+    # It used to be a no-op that read like an assertion.
+    problems = verify.verify_merchant(
+        session(status="open", txns=[txn(status="failed")]),
+        {"no_succeeded_txn": False},
+    )
+
+    assert len(problems) == 1
+    assert "expected a transaction that moved money" in problems[0]
+
+
+def test_no_succeeded_txn_false_passes_a_session_where_money_moved():
+    assert (
+        verify.verify_merchant(session(txns=[txn()]), {"no_succeeded_txn": False}) == []
+    )
+
+
+@pytest.mark.parametrize("status", sorted(verify.MONEY_MOVED))
+def test_no_succeeded_txn_true_fails_on_every_status_that_means_money_moved(status):
+    # An `auth` session stops at `authorized` and an `auth_capture` at
+    # `captured`; a cancel cell that only looked for `succeeded` passed on
+    # either of those.
+    problems = verify.verify_merchant(
+        session(status="open", txns=[txn(status=status)]),
+        {"no_succeeded_txn": True},
+    )
+
+    assert len(problems) == 1
+    assert "moved money" in problems[0]
+
+
+# --- Plan B: the four assertions D2, D4 and D5 need -----------------------
+
+
+def test_failure_code_and_network_decline_code_read_the_failure_block():
+    # The shape is the one the 2026-08-29 Android run recorded for
+    # challenge_fraud_suspected.
+    declined = session(
+        status="open",
+        txns=[
+            txn(
+                status="failed",
+                failure={
+                    "code": "fraud_suspected",
+                    "recovery": "do_not_retry",
+                    "network_decline_code": "59",
+                },
+            )
+        ],
+    )
+
+    assert (
+        verify.verify_merchant(
+            declined,
+            {
+                "failure_code": "fraud_suspected",
+                "failure_recovery": "do_not_retry",
+                "network_decline_code": "59",
+            },
+        )
+        == []
+    )
+    problems = verify.verify_merchant(declined, {"failure_code": "card_expired"})
+    assert len(problems) == 1
+    assert "failure_code" in problems[0]
+
+
+def test_a_failure_key_asserted_null_is_a_real_assertion():
+    approved = session(txns=[txn(failure=None)])
+
+    assert verify.verify_merchant(approved, {"network_decline_code": None}) == []
+    assert len(verify.verify_merchant(approved, {"failure_code": "declined"})) == 1
+
+
+def test_the_saved_card_assertions_read_presence_not_the_value():
+    # `evidence.scrub_resource` drops both keys by name before this ever sees
+    # them, so what is left is the redaction marker for a card that was stored
+    # and null for one that was not.
+    saved = session(
+        txns=[txn(stored_credentials={"saved_token": "[REDACTED-SESSION-TOKEN]"})]
+    )
+    not_saved = session(txns=[txn(stored_credentials=None)])
+
+    assert verify.verify_merchant(saved, {"saved_card_saved": True}) == []
+    assert verify.verify_merchant(not_saved, {"saved_card_saved": False}) == []
+    problems = verify.verify_merchant(not_saved, {"saved_card_saved": True})
+    assert len(problems) == 1
+    assert "stored_credentials.saved_token" in problems[0]
+
+
+def test_saved_card_used_is_separate_from_saved_card_saved():
+    reused = session(
+        txns=[txn(stored_credentials={"used_token": "[REDACTED-SESSION-TOKEN]"})]
+    )
+
+    assert (
+        verify.verify_merchant(
+            reused, {"saved_card_used": True, "saved_card_saved": False}
+        )
+        == []
+    )
+
+
+# --- Plan B: match_label and the two sentinels ----------------------------
+
+
+@pytest.mark.parametrize(
+    "template, actual, ok",
+    [
+        ("<none>", None, True),
+        ("<none>", "result:cancelled", False),
+        ("<any>", "result:cancelled", True),
+        ("<any>", "result:failure:retry:txn-1", True),
+        ("<any>", "not a label", False),
+        ("<any>", None, False),
+    ],
+)
+def test_a_sentinel_decides_whether_a_label_had_to_appear(template, actual, ok):
+    matched, captured = verify.match_label(template, actual)
+
+    assert matched is ok
+    # Neither sentinel captures: `<any>` records the label it measured in
+    # result.json rather than cross-checking an id it never named.
+    assert captured is None
