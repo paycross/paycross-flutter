@@ -78,6 +78,14 @@ OBSERVED_TOKEN_CACHE_TTL_SECONDS = 3300.0
 #: the boundary and still replaces the token four minutes before it dies.
 TOKEN_REFRESH_MARGIN_SECONDS = 240.0
 
+#: How far in the past an `exp` has to be before it is treated as a clock
+#: problem rather than a dead token. A token really is dead the moment it
+#: passes, but nothing hands out one older than its own lifetime -- so an
+#: `exp` further back than that is this machine's clock, not the issuer's.
+#: (WSL suspends; the monotonic clock not advancing across one is a failure
+#: mode this campaign has already reasoned about.)
+IMPLAUSIBLE_EXP_AGE_SECONDS = OBSERVED_TOKEN_LIFETIME_SECONDS
+
 #: Failures worth one more try. HTTPException covers the short reads and bad
 #: status lines that surface out of `response.read()`, after the status line
 #: has already arrived: those are not URLErrors and would otherwise escape
@@ -180,34 +188,49 @@ def _safe_to_echo(payload: Any) -> str:
     return _JWT.sub("<redacted>", json.dumps(_scrub(payload)))[:_ECHO_LIMIT]
 
 
-def _jwt_exp(token: Any) -> float | None:
-    """The `exp` claim out of a JWT, or None if there is not one to read.
+def _jwt_exp(token: Any) -> tuple[float | None, str | None]:
+    """The `exp` claim out of a JWT, and why there was not one to read.
+
+    Two answers rather than one, because only this function can tell "that is
+    not a JWT at all" -- a legitimate `expires_in` case, worth no warning --
+    from "that is a JWT whose `exp` is unusable", which is the trap the
+    fallback was written to avoid falling into silently. The second value is
+    non-None only in the second case, and describes the claim's shape without
+    quoting it: this text reaches a report.
 
     Deliberately does not verify the signature: this is scheduling, not
     authentication. A forged `exp` costs an unnecessary refresh, and the API
     is what decides whether a token is honoured.
     """
     if not isinstance(token, str):
-        return None
+        return None, None
     parts = token.split(".")
     if len(parts) != 3:
-        return None
+        return None, None
     padded = parts[1] + "=" * (-len(parts[1]) % 4)
     try:
         # binascii.Error subclasses ValueError, so a payload that is not
         # base64 at all lands here with the rest.
         claims = json.loads(base64.urlsafe_b64decode(padded))
     except (ValueError, TypeError):
-        return None
-    exp = claims.get("exp") if isinstance(claims, dict) else None
+        return None, None
+    if not isinstance(claims, dict):
+        # Three segments that decode to something that is not a claim set.
+        # Not a JWT, whatever it is shaped like.
+        return None, None
+    if "exp" not in claims:
+        return None, "absent"
+    exp = claims["exp"]
     # bool is an int; `exp: true` is not a deadline.
-    if isinstance(exp, bool) or not isinstance(exp, (int, float)):
-        return None
-    return float(exp)
+    if isinstance(exp, bool):
+        return None, "a boolean"
+    if not isinstance(exp, (int, float)):
+        return None, f"a {type(exp).__name__}"
+    return float(exp), None
 
 
-def _refresh_after(raw: dict[str, Any], now: float) -> float:
-    """How long a freshly issued access token may be reused for.
+def _refresh_after(raw: dict[str, Any], now: float) -> tuple[float, list[str]]:
+    """How long a freshly issued access token may be reused for, and any doubts.
 
     The JWT's own `exp` is preferred over `expires_in` because only one of
     them describes *this* token. The M2M endpoint sits behind an API-Gateway
@@ -217,16 +240,54 @@ def _refresh_after(raw: dict[str, Any], now: float) -> float:
     signed payload and is not rewritten by the cache (cognito-m2m#1).
 
     `expires_in` remains the fallback for a token that is not a JWT, or whose
-    payload carries no usable `exp`.
+    payload carries no usable `exp`. Falling back to the distrusted field is
+    worth saying out loud, so the warnings come back alongside the delay --
+    the same shape `verify_merchant` and `scrub_resource` already use. Pure,
+    and a caller decides what to do with them.
     """
-    exp = _jwt_exp(raw.get("access_token"))
+    exp, unusable = _jwt_exp(raw.get("access_token"))
+    warnings = []
+    if unusable:
+        warnings.append(
+            f"the access token is a JWT but its 'exp' is {unusable}; falling "
+            "back to expires_in, which the API-Gateway cache is known to "
+            "restate -- cognito-m2m#1"
+        )
+    elif exp is not None and exp < now - IMPLAUSIBLE_EXP_AGE_SECONDS:
+        warnings.append(
+            f"the access token's exp is {now - exp:.0f}s in the past, further "
+            "back than a whole token lifetime; treating that as this machine's "
+            "clock rather than the issuer's, and falling back to expires_in"
+        )
+        exp = None
+
     if exp is not None:
-        return max(exp - now - TOKEN_REFRESH_MARGIN_SECONDS, 0.0)
+        return max(exp - now - TOKEN_REFRESH_MARGIN_SECONDS, 0.0), warnings
     try:
         lifetime = float(raw.get("expires_in", DEFAULT_TOKEN_LIFETIME_SECONDS))
     except (TypeError, ValueError):
         lifetime = DEFAULT_TOKEN_LIFETIME_SECONDS
-    return max(lifetime - TOKEN_REFRESH_MARGIN_SECONDS, 0.0)
+    return max(lifetime - TOKEN_REFRESH_MARGIN_SECONDS, 0.0), warnings
+
+
+def _deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """`over` wins, one key at a time, all the way down.
+
+    A shallow merge is enough until a cell needs to change one field of a
+    nested block: D5 pins `customer.merchant_reference` so two sessions
+    resolve to one customer, and a shallow merge would drop the rest of the
+    customer with it -- and the create schema requires those fields.
+
+    Neither side is mutated: a cell's `options` mapping is loaded once and
+    reused across a resume.
+    """
+    out = dict(base)
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
 
 
 def _session_body(amount: int, currency: str, reference: str | None) -> dict[str, Any]:
@@ -286,6 +347,11 @@ class Sandbox:
         self._now = now
         self._access_token: str | None = None
         self._token_expires_at = 0.0
+        #: Things that went quietly right-ish and are worth saying out loud.
+        #: The runner drains these into report.json and prints them; they are
+        #: never problems, because a warning that turns a green matrix red is
+        #: a warning the next person learns to silence.
+        self.warnings: list[str] = []
 
     def __repr__(self) -> str:
         # The default repr would print the client secret, and a repr that
@@ -310,11 +376,12 @@ class Sandbox:
 
         `options` is merged over the default body rather than replacing it, so
         a cell can add `save_card_config` or a `data.wallets` gate without
-        restating the customer block every time. The merge is one level deep:
-        a cell that sets `customer` replaces the whole block.
+        restating the customer block every time. The merge is deep: a cell
+        that sets one field of `customer` keeps the rest of it, and a scalar
+        still replaces a scalar. There is no way to *remove* a default field,
+        and nothing needs one.
         """
-        body = _session_body(amount, currency, reference)
-        body.update(options)
+        body = _deep_merge(_session_body(amount, currency, reference), options)
 
         raw = self._call(
             "POST",
@@ -431,7 +498,9 @@ class Sandbox:
         if not isinstance(raw, dict) or "access_token" not in raw:
             raise SandboxError("the token endpoint returned no access_token")
         self._access_token = raw["access_token"]
-        self._token_expires_at = self._monotonic() + _refresh_after(raw, self._now())
+        delay, warnings = _refresh_after(raw, self._now())
+        self.warnings.extend(warnings)
+        self._token_expires_at = self._monotonic() + delay
         return self._access_token
 
 
