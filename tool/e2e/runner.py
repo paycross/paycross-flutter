@@ -694,7 +694,14 @@ def run_cell(
                     # device, and main prints it. Doing it here means the
                     # match, the ledger, result.json and stdout all see the
                     # same value.
-                    label = _redacted(answer, token)
+                    #
+                    # The whole `secrets` list, not the token this cell
+                    # minted: `wait_expired` re-mints on every poll and
+                    # appends, so by a later action the credential on the
+                    # device is one the runner learned about mid-cell -- and a
+                    # re-minted token with short segments is invisible to the
+                    # shape rule, leaving the literal as the only tell.
+                    label = _redacted(answer, *secrets)
                 elif action.verb == "expect":
                     observed, detail = answer
                     if action.arg == "rearmed":

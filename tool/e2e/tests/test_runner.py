@@ -1913,27 +1913,27 @@ def test_a_frame_is_refused_while_a_re_minted_token_is_on_screen():
     )
 
 
-def test_a_cell_that_re_minted_files_no_frame_of_the_new_token(tmp_path, monkeypatch):
-    # The wiring half: `run_cell` has to hand the guard the list it keeps
-    # extending, not the one credential it started with. Reverting that call
-    # site leaves the unit test above green.
-    monkeypatch.setattr(runner.time, "sleep", lambda seconds: None)
+class ReMintingSandbox(FakeSandbox):
+    """A merchant API that re-mints once and has expired by the next read.
 
-    class ReMinting(FakeSandbox):
-        def __init__(self):
-            super().__init__()
-            self.reads = 0
+    Both halves of what `wait_expired` is for: the first read of an open
+    session hands back a token the runner never minted, and the read after it
+    is the flip the verb is waiting for.
+    """
 
-        def read(self, session_id):
-            self.reads += 1
-            if self.reads == 1:
-                return {"id": session_id, "status": "open", "session_token": RE_MINTED}
-            return {"id": session_id, "status": "expired"}
+    def __init__(self):
+        super().__init__()
+        self.reads = 0
 
-    driver = FakeDriver()
-    driver.dump_tree = (
-        lambda: f'<hierarchy><node text="{RE_MINTED}"/></hierarchy>'.encode()
-    )
+    def read(self, session_id):
+        self.reads += 1
+        if self.reads == 1:
+            return {"id": session_id, "status": "open", "session_token": RE_MINTED}
+        return {"id": session_id, "status": "expired"}
+
+
+def re_minting_cell_dir(tmp_path):
+    """A control cell that re-mints before the step whose frame is at stake."""
     directory = tmp_path / "d2"
     directory.mkdir()
     (directory / "control.yaml").write_text(
@@ -1942,12 +1942,101 @@ def test_a_cell_that_re_minted_files_no_frame_of_the_new_token(tmp_path, monkeyp
         ),
         encoding="utf-8",
     )
+    return directory
 
-    run(directory, tmp_path, driver, sandbox=ReMinting())
+
+def test_a_cell_that_re_minted_files_no_frame_of_the_new_token(tmp_path, monkeypatch):
+    # The wiring half: `run_cell` has to hand the guard the list it keeps
+    # extending, not the one credential it started with. Reverting that call
+    # site leaves the unit test above green.
+    monkeypatch.setattr(runner.time, "sleep", lambda seconds: None)
+    driver = FakeDriver()
+    driver.dump_tree = (
+        lambda: f'<hierarchy><node text="{RE_MINTED}"/></hierarchy>'.encode()
+    )
+
+    run(
+        re_minting_cell_dir(tmp_path),
+        tmp_path,
+        driver,
+        sandbox=ReMintingSandbox(),
+    )
 
     # tap_pay is a SHOT_VERB, and its dump is showing the re-minted token.
     assert not list((tmp_path / "evidence").glob("*/control/*tap_pay*.png"))
     assert list((tmp_path / "evidence").glob("*/control/*tap_pay*.uix"))
+
+
+def test_a_cell_that_died_after_re_minting_files_no_frame_either(tmp_path, monkeypatch):
+    # The failure path takes its own frame, from a second `_may_screenshot`
+    # call site -- the `-failed.png` beside the dump of the moment the cell
+    # died. The test above cannot reach it, because a cell that reaches its
+    # last action never fails, so reverting THAT call site to the minted token
+    # alone left the whole suite green and photographed the example's screen,
+    # token field and all.
+    monkeypatch.setattr(runner.time, "sleep", lambda seconds: None)
+    driver = FakeDriver()
+    driver.dump_tree = (
+        lambda: f'<hierarchy><node text="{RE_MINTED}"/></hierarchy>'.encode()
+    )
+
+    def never_appeared(amount_text):
+        raise DriverError("the Pay button never appeared")
+
+    driver.tap_pay = never_appeared
+
+    run(
+        re_minting_cell_dir(tmp_path),
+        tmp_path,
+        driver,
+        sandbox=ReMintingSandbox(),
+    )
+
+    # The failure path really ran -- there is a dump of the step that died --
+    # and it filed no frame beside it. Scoped to the `-failed` pair: the
+    # frames before `wait_expired` are taken while the re-minted token does
+    # not yet exist, and this fake serves the same dump at every step.
+    assert list((tmp_path / "evidence").glob("*/control/*tap_pay-failed.uix"))
+    assert not list((tmp_path / "evidence").glob("*/control/*-failed.png"))
+
+
+def test_a_re_minted_token_in_a_label_never_reaches_stdout(
+    tmp_path, monkeypatch, capsys
+):
+    # A label comes off the device and `main` prints it, so the scrub happens
+    # where it is read. Told only the token the cell minted, that scrub goes
+    # stale the moment `wait_expired` re-mints -- and a re-minted token whose
+    # segments are shorter than the shape rule wants is caught by nothing
+    # else, so it would have reached the terminal intact.
+    monkeypatch.setattr(runner.time, "sleep", lambda seconds: None)
+    driver = FakeDriver(labels=[f"result:success:{RE_MINTED}"])
+    sandbox = ReMintingSandbox()
+    monkeypatch.setattr(runner, "_build_driver", lambda platform: driver)
+    monkeypatch.setattr(
+        runner.Sandbox,
+        "from_env_file",
+        classmethod(lambda cls, path, transport=None: sandbox),
+    )
+    env = tmp_path / ".env"
+    env.write_text("x=1\n", encoding="utf-8")
+
+    runner.main(
+        [
+            "--platform",
+            "android",
+            "--cells",
+            str(re_minting_cell_dir(tmp_path)),
+            "--evidence-root",
+            str(tmp_path / "evidence"),
+            "--env-file",
+            str(env),
+            "--all",
+        ]
+    )
+
+    printed = capsys.readouterr().out
+    assert RE_MINTED not in printed
+    assert "result:success:[REDACTED-SESSION-TOKEN]" in printed
 
 
 def test_a_dump_that_cannot_be_parsed_is_not_a_licence_to_photograph():
