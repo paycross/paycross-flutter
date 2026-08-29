@@ -1163,6 +1163,9 @@ def test_paste_token_refuses_something_that_is_not_shaped_like_a_token(tmp_path)
 
     message = str(excinfo.value)
     assert "JWT" in message
+    # The shape check is shared with Android; the verb is this transport's own
+    # word, so the message still says what was about to happen.
+    assert "Refusing to paste it" in message
     # The value is never echoed, whatever it turned out to be.
     assert "unauthorized" not in message
     assert ssh.calls == []
@@ -1654,3 +1657,23 @@ def test_the_rig_host_and_remote_env_are_overridable_from_the_environment(monkey
 def test_the_rig_host_and_remote_env_fall_back_to_this_workstation():
     assert ios.SSH_HOST == "mac"
     assert "DEVELOPER_DIR=/Applications/Xcode.app" in ios.MAC_ENV
+
+
+# --- Plan B: the Driver contract is enforced at construction --------------
+
+
+def test_the_ios_driver_scopes_its_crash_markers_to_the_bundle_it_was_given():
+    # `bundle`, not BUNDLE: a driver constructed against another build must
+    # not match `ANR in`/`Fatal error:` lines belonging to the default one.
+    made = ios.IosDriver(ssh=FakeSsh(), bundle="com.example.other")
+
+    assert made.package == "com.example.other"
+    assert ios.IosDriver(ssh=FakeSsh()).package == ios.BUNDLE
+
+
+def test_the_ios_driver_waits_through_the_sleep_it_was_given():
+    slept = []
+
+    ios.IosDriver(ssh=FakeSsh(), sleep=slept.append)._sleep(0.25)
+
+    assert slept == [0.25]

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from tool.e2e.cells import Card
-from tool.e2e.drivers import android
+from tool.e2e.drivers import android, base
 from tool.e2e.drivers.base import DriverError
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -418,6 +418,9 @@ def test_paste_token_refuses_something_that_is_not_shaped_like_a_token(tmp_path)
 
     message = str(excinfo.value)
     assert "JWT" in message
+    # The shape check is shared with iOS; the verb is this transport's own
+    # word, so the message still says what was about to happen.
+    assert "Refusing to type it" in message
     # The value is never echoed, whatever it turned out to be.
     assert "rm -rf" not in message
     assert shell.calls == []
@@ -717,3 +720,31 @@ def test_the_rig_paths_fall_back_to_this_workstation():
     assert android.ADB.endswith("adb.exe")
     assert android.STAGING_DIR == "/mnt/c/dev/tmp"
     assert android.WINDOWS_STAGING == r"C:\dev\tmp"
+
+
+# --- Plan B: the Driver contract is enforced at construction --------------
+
+
+def test_a_driver_that_skips_super_init_has_no_package_at_all():
+    # Bare annotations let a driver forget one and fail mid-run instead.
+    class Forgetful(base.Driver):
+        _parse_dump = staticmethod(lambda dump: [])
+
+        def __init__(self):
+            pass
+
+        install = launch = paste_token = type_card = tap_pay = lambda *a, **k: None
+        wait_label = acs = cancel_challenge = cancel_form = lambda *a, **k: None
+        wait_rearmed = dump_tree = screenshot = logs_since = lambda *a, **k: None
+
+    with pytest.raises(AttributeError, match="package"):
+        Forgetful().package
+
+
+def test_the_android_driver_exposes_what_it_was_constructed_with():
+    slept = []
+    made = android.AndroidDriver(shell=FakeShell(), sleep=slept.append)
+
+    assert made.package == android.PACKAGE
+    made._sleep(1.5)
+    assert slept == [1.5]

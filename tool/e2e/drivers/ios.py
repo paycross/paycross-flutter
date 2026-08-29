@@ -39,7 +39,7 @@ from xml.etree import ElementTree as ET
 
 from .. import tree
 from ..cells import Card
-from .base import Driver, DriverError, rig_path
+from .base import Driver, DriverError, device_text, read_token, rig_path
 
 #: The ssh alias for the Mac, overridable with PAYCROSS_E2E_SSH_HOST.
 SSH_HOST = rig_path("PAYCROSS_E2E_SSH_HOST", "mac")
@@ -143,14 +143,6 @@ _EXCERPT = 200
 #: `xcrun simctl list devices` puts the state last: `iPhone 17 (UDID) (Booted)`.
 _DEVICE_STATE = re.compile(r"\(([^()]+)\)\s*$")
 
-#: base64url segments joined by dots. The Android driver checks the same shape
-#: for a stronger reason -- there the value reaches a device shell that
-#: re-splits it. Here it never touches a command line, so this is about the
-#: other half: a mint that answered with an error document would otherwise be
-#: pasted as though it were a credential and come back as an instant 401.
-_JWT = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
-
-
 def _is_token_field(node: tree.Node) -> bool:
     """The example's token field, in both shapes its accessible name takes.
 
@@ -168,12 +160,6 @@ def _is_token_field(node: tree.Node) -> bool:
     """
     name = node.identifier or node.content_desc
     return name == TOKEN_FIELD or name.startswith(TOKEN_FIELD + "\n")
-
-
-def _text(raw: bytes) -> str:
-    # `--console-pty` copies the app's output through a pty, so every line in
-    # the console log arrives with a CR in front of its LF.
-    return raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
 
 
 def _ssh(command: str, *, stdin: bytes | None = None) -> str:
@@ -207,15 +193,13 @@ def _ssh(command: str, *, stdin: bytes | None = None) -> str:
         ) from exc
     except OSError as exc:
         raise DriverError(f"could not run ssh for {what!r}: {exc}") from exc
-    out = _text(done.stdout)
+    out = device_text(done.stdout)
     if done.returncode != 0:
-        out += _text(done.stderr)
+        out += device_text(done.stderr)
     return out
 
 
 class IosDriver(Driver):
-    package = BUNDLE
-
     #: WebDriverAgent's `/source` on this side of the fence; base._nodes
     #: calls it.
     _parse_dump = staticmethod(tree.parse_wda)
@@ -223,6 +207,9 @@ class IosDriver(Driver):
     def __init__(
         self, ssh=_ssh, udid: str = UDID, bundle: str = BUNDLE, sleep=time.sleep
     ):
+        # `bundle`, not BUNDLE: a driver constructed against another build
+        # scopes its crash markers to that one.
+        super().__init__(package=bundle, sleep=sleep)
         self._ssh = ssh
         self._udid = udid
         #: Every interpolation into a remote command goes through this. A udid
@@ -237,9 +224,6 @@ class IosDriver(Driver):
         #: crash_lines and fail every later cell in the matrix.
         self._console_from: int | None = None
         self._console_pid: int | None = None
-        # Every wait goes through this. The durations are the rig's real ones
-        # and stay pinned by the tests asserting on what was recorded here.
-        self._sleep = sleep
 
     # -- transport -----------------------------------------------------------
 
@@ -815,27 +799,6 @@ class IosDriver(Driver):
 
     # -- actions -------------------------------------------------------------
 
-    def _read_token(self, token_path: Path) -> str:
-        """The token, checked before anything is allowed to paste it.
-
-        Neither failure prints the value. An empty file would be pasted as
-        nothing and present as an instant 401; a mint that answered with an
-        error document would be pasted as though it were a credential and do
-        the same. The Android driver checks the same shape for a second reason
-        that does not apply here -- there the value reaches a device shell that
-        re-splits it, while here it only ever travels on a pipe.
-        """
-        text = token_path.read_text(encoding="utf-8").strip()
-        if not text:
-            raise DriverError(f"{token_path} is empty: there is no token to paste")
-        if not _JWT.fullmatch(text):
-            raise DriverError(
-                f"{token_path} does not hold a JWT: {len(text)} characters in "
-                f"{text.count('.') + 1} dot-separated segments, and not all of "
-                "them are base64url. Refusing to paste it."
-            )
-        return text
-
     def paste_token(self, token_path: Path) -> None:
         """Copies the token in through the pasteboard, never a command line.
 
@@ -845,7 +808,7 @@ class IosDriver(Driver):
         the cell and anything on the simulator can read it.
         """
         token_path = Path(token_path)
-        text = self._read_token(token_path)
+        text = read_token(token_path, verb="paste")
 
         field = self._find(
             TOKEN_FIELD, timeout=SCREEN_TIMEOUT_SECONDS, match=_is_token_field

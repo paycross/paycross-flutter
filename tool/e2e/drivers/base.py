@@ -14,6 +14,7 @@ the first thing to drive both, and one waiting rule is one place to be wrong.
 from __future__ import annotations
 
 import os
+import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -43,15 +44,56 @@ class DriverError(RuntimeError):
     """The device did not do what was asked. Names what was being looked for."""
 
 
-class Driver(ABC):
-    #: What `verify.crash_lines` matches `ANR in <package>` against. Log
-    #: capture does not use it -- it is deliberately device-wide, because
-    #: an ANR is logged by system_server rather than by the app.
-    package: str
+#: base64url segments joined by dots. Checked before a token is entered on
+#: either platform, for two different reasons that both want the same shape:
+#: on Android the value reaches a device shell that re-splits whatever it is
+#: given, and on both a mint that answered with an error document would
+#: otherwise be entered as though it were a credential and come back as an
+#: instant 401 that reads like an SDK bug.
+JWT_SHAPE = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
 
-    #: Every wait goes through this. The concrete drivers inject it so their
-    #: tests can pin the rig's real timings without spending them.
-    _sleep: Callable[[float], None]
+
+def read_token(token_path: Path, *, verb: str) -> str:
+    """The token, checked before anything is allowed to `verb` it.
+
+    Neither failure prints the value. `verb` is the transport's own word --
+    "type" on Android, "paste" on iOS -- so the message still says what was
+    about to happen.
+    """
+    text = Path(token_path).read_text(encoding="utf-8").strip()
+    if not text:
+        raise DriverError(f"{token_path} is empty: there is no token to {verb}")
+    if not JWT_SHAPE.fullmatch(text):
+        raise DriverError(
+            f"{token_path} does not hold a JWT: {len(text)} characters in "
+            f"{text.count('.') + 1} dot-separated segments, and not all of "
+            f"them are base64url. Refusing to {verb} it."
+        )
+    return text
+
+
+def device_text(raw: bytes) -> str:
+    """Whatever the host said, decoded and with its line endings normalised.
+
+    Two transports arrived at the same two lines for different reasons:
+    `adb shell` returns CRLF where `adb exec-out` does not, and iOS reads a
+    console log that `simctl launch --console-pty` copied through a pty, which
+    puts a CR in front of every LF. Decoding with replacement rather than
+    strictly, because an undecodable byte in a device log is not a reason to
+    lose the log.
+    """
+    return raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+class Driver(ABC):
+    def __init__(self, *, package: str, sleep: Callable[[float], None]):
+        #: What `verify.crash_lines` matches `ANR in <package>` against. Log
+        #: capture does not use it -- that is deliberately device-wide,
+        #: because an ANR is logged by system_server rather than by the app.
+        self.package = package
+        #: Every wait goes through this. The concrete drivers inject it so
+        #: their tests pin the rig's real timings without spending them.
+        self._sleep = sleep
 
     @staticmethod
     @abstractmethod

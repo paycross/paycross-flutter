@@ -23,7 +23,7 @@ from xml.etree import ElementTree as ET
 
 from .. import tree
 from ..cells import Card
-from .base import Driver, DriverError, rig_path
+from .base import Driver, DriverError, device_text, read_token, rig_path
 
 #: This rig's Windows adb, overridable with PAYCROSS_E2E_ADB.
 ADB = rig_path(
@@ -94,17 +94,6 @@ CANCEL_CONFIRM = "Yes, Cancel"
 #: unusable cutoff yields an empty log, which reads as "nothing crashed".
 _LOGCAT_CUTOFF = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$")
 
-#: base64url segments joined by dots. Checked before the value is sent to a
-#: device shell, which re-splits whatever it is given: a token that is not
-#: this shape is a command, not a credential. It also guarantees the value
-#: needs no quoting, which is what makes the stdin form below safe.
-_JWT = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
-
-
-def _text(raw: bytes) -> str:
-    return raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
-
-
 def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
     """Invokes adb once, normalising CRLF and never discarding a failure.
 
@@ -137,18 +126,16 @@ def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
     if binary:
         if done.returncode != 0:
             raise DriverError(
-                f"adb {argv[0]} exited {done.returncode}: {_text(done.stderr).strip()}"
+                f"adb {argv[0]} exited {done.returncode}: {device_text(done.stderr).strip()}"
             )
         return done.stdout
-    out = _text(done.stdout)
+    out = device_text(done.stdout)
     if done.returncode != 0:
-        out += _text(done.stderr)
+        out += device_text(done.stderr)
     return out
 
 
 class AndroidDriver(Driver):
-    package = PACKAGE
-
     #: `uiautomator dump` on this side of the fence; base._nodes calls it.
     _parse_dump = staticmethod(tree.parse_uiautomator)
 
@@ -159,13 +146,10 @@ class AndroidDriver(Driver):
         windows_staging: str = WINDOWS_STAGING,
         sleep=time.sleep,
     ):
+        super().__init__(package=PACKAGE, sleep=sleep)
         self._shell = shell
         self._staging_dir = Path(staging_dir)
         self._windows_staging = windows_staging
-        # Every wait goes through this. The durations are the rig's real ones
-        # and stay pinned by the tests asserting on what was recorded here,
-        # which is cheaper than the suite sleeping through them.
-        self._sleep = sleep
 
     # -- primitives ----------------------------------------------------------
 
@@ -269,25 +253,6 @@ class AndroidDriver(Driver):
 
     # -- actions -------------------------------------------------------------
 
-    def _read_token(self, token_path: Path) -> str:
-        """The token, checked before anything is allowed to type it.
-
-        Neither failure prints the value. An empty file would otherwise be
-        entered as nothing and present as an instant 401; a value that is not
-        base64url-and-dots would be handed to a device shell that re-splits
-        it, where it is a command rather than a credential.
-        """
-        text = token_path.read_text(encoding="utf-8").strip()
-        if not text:
-            raise DriverError(f"{token_path} is empty: there is no token to enter")
-        if not _JWT.fullmatch(text):
-            raise DriverError(
-                f"{token_path} does not hold a JWT: {len(text)} characters in "
-                f"{text.count('.') + 1} dot-separated segments, and not all of "
-                "them are base64url. Refusing to type it."
-            )
-        return text
-
     def _type_token(self, text: str) -> None:
         """Enters the token without it ever entering this process's argv.
 
@@ -304,7 +269,7 @@ class AndroidDriver(Driver):
 
     def paste_token(self, token_path: Path) -> None:
         token_path = Path(token_path)
-        text = self._read_token(token_path)
+        text = read_token(token_path, verb="type")
         expected = len(text)
 
         field = self._find(
