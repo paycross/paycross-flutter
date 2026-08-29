@@ -436,7 +436,7 @@ def test_paste_token_sends_the_token_on_stdin_never_in_an_argv(tmp_path):
     # A command line is world-readable for as long as the process lives.
     assert not any(TOKEN in " ".join(argv) for argv in shell.calls)
     carried = [
-        (argv, s) for argv, s in zip(shell.calls, shell.stdins, strict=False) if s
+        (argv, s) for argv, s in zip(shell.calls, shell.stdins, strict=True) if s
     ]
     assert len(carried) == 1
     assert carried[0] == (["shell"], f"input text {TOKEN}\n")

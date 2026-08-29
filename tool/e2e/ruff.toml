@@ -4,7 +4,8 @@ target-version = "py310"
 [lint]
 # Deliberately conservative. E/F/W/I are the uncontroversial core, B catches
 # the mutable-default and loop-variable-capture classes, and BLE is here
-# because this code catches broadly ON PURPOSE in a handful of places and
-# each one carries a `noqa: BLE001` with its reason -- the rule's job is to
-# make sure a new one cannot appear without that reason.
+# because this code catches broadly ON PURPOSE in a handful of places -- each
+# one carrying a `noqa: BLE001` and a comment beside it saying why that
+# breadth is the right answer there. The rule's job is to make sure a new one
+# cannot appear without someone writing that reason down.
 select = ["E", "F", "W", "I", "B", "BLE"]

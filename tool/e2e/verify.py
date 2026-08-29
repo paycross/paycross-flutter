@@ -227,6 +227,15 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
             # redaction marker for a card that was stored and `null` for one
             # that was not -- which is exactly the distinction being asserted.
             stored = (latest or {}).get("stored_credentials") or {}
+            if not isinstance(stored, dict):
+                # A shape fault, said as one. Without the guard `.get` raises
+                # AttributeError out of a pure function whose whole contract is
+                # to return problems.
+                problems.append(
+                    f"{key}: stored_credentials is a "
+                    f"{type(stored).__name__}, not an object"
+                )
+                continue
             present = bool(stored.get(field))
             if present != expected[key]:
                 problems.append(

@@ -31,7 +31,7 @@ def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
     for cell in loaded:
         text = cell.path.read_text(encoding="utf-8")
         expected = cell.expected_for(platform)
-        verbs = [(a.verb, a.arg) for a in cell.actions]
+        verbs = {a.verb for a in cell.actions}
 
         assert cell.actions[-1].verb in TERMINAL_VERBS, cell.id
         for pan in APPROVING_PANS:
@@ -46,7 +46,7 @@ def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
         # this loop and the assertion would be dead code.
         if not expected.label.startswith("result:success"):
             assert "no_succeeded_txn" in expected.merchant, cell.id
-        assert ("airplane" not in [v for v, _ in verbs]) or platform == "android", (
+        assert "airplane" not in verbs or platform == "android", (
             f"{cell.id}: airplane mode does not exist on the iOS simulator"
         )
     return loaded

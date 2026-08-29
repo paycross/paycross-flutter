@@ -1205,7 +1205,7 @@ def test_paste_token_never_puts_the_token_on_a_command_line(tmp_path):
     assert "eyJhbGciOiJSUzI1NiJ9" not in ssh.joined()
     carried = [
         (c, sent)
-        for c, sent in zip(ssh.calls, ssh.stdins, strict=False)
+        for c, sent in zip(ssh.calls, ssh.stdins, strict=True)
         if sent is not None
     ]
     assert len(carried) == 2
@@ -1753,7 +1753,9 @@ def test_relaunch_still_replaces_the_capture_and_the_session():
 # --- Plan B: the simulator's locale ---------------------------------------
 
 
-@pytest.mark.parametrize("locale", ["en_US\n", "en_US@rg=lvzzzz\n", "en_GB\n"])
+@pytest.mark.parametrize(
+    "locale", ["en_US\n", "en_US@rg=lvzzzz\n", "en_GB\n", "en\n", "en-US\n"]
+)
 def test_launch_accepts_an_english_locale(locale):
     # This rig answers `en_US@rg=lvzzzz`, and the amount predicate absorbs the
     # swapped decimal separator that comes with it.
@@ -1764,16 +1766,29 @@ def test_launch_accepts_an_english_locale(locale):
     assert any("AppleLocale" in c for c in ssh.calls)
 
 
-def test_launch_refuses_a_simulator_that_is_not_in_english():
+@pytest.mark.parametrize(
+    "locale",
+    [
+        "fr_FR\n",
+        # Three subtags, which the first shape only matched up to `zh`.
+        "zh_Hans_CN\n",
+        # A hyphen and a UN M.49 region, which iOS writes for Latin American
+        # Spanish. Neither is a `_` followed by letters.
+        "es-419\n",
+        "de\n",
+    ],
+)
+def test_launch_refuses_a_simulator_that_is_not_in_english(locale):
     # The sheet's Pay button and the re-arm banner are English strings, which
-    # the amount predicate cannot absorb.
-    ssh = FakeSsh(*launch_outputs(locale="fr_FR\n"))
+    # the amount predicate cannot absorb. A shape too narrow to recognise one
+    # of these reads it as unreadable and lets the rig through.
+    ssh = FakeSsh(*launch_outputs(locale=locale))
 
     with pytest.raises(DriverError) as excinfo:
         ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
 
     message = str(excinfo.value)
-    assert "fr_FR" in message
+    assert locale.strip() in message
     # Named as a locale, not as whatever failed next.
     assert "locale" in message
 

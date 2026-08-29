@@ -540,6 +540,9 @@ def run_cell(
     if session:
         try:
             resource = sandbox.read(session["id"])
+        # Beside the verdict, never in place of it: a merchant API that will
+        # not answer is a problem to record, and the label and the crash scan
+        # are still worth reaching.
         except Exception as error:  # noqa: BLE001
             problems.append(
                 f"merchant: could not read session {session['id']}: {error}"
@@ -767,6 +770,11 @@ def run_cells(
         if app_path:
             try:
                 driver.install(app_path)
+            # Broad on purpose: adb and ssh fail in ways that are not
+            # DriverError -- a Windows mount that is not there, a Mac asleep --
+            # and every one of them means the same thing here. An install that
+            # did not happen makes every result below it a result for the
+            # previous build, so this aborts rather than failing a cell.
             except Exception as error:  # noqa: BLE001
                 stop(f"could not install {app_path}: {_redacted(str(error))}")
                 return report

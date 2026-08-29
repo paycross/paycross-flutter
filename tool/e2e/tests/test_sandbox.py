@@ -954,3 +954,26 @@ def test_a_warning_never_quotes_the_claim_it_read():
     client.mint(amount=1000, currency="EUR", options={})
 
     assert "not-a-timestamp" not in client.warnings[0]
+
+
+def test_the_same_warning_is_recorded_once_however_often_it_recurs():
+    # A 40-minute matrix refreshes repeatedly. The same degradation restated
+    # forty times in a report reads as forty findings.
+    clock = FakeClock()
+    stale = jwt_with({"exp": "not-a-number"})
+    client, transport, _ = client_with(
+        access_token_response(expires_in=600, token=stale),
+        MINTED,
+        access_token_response(expires_in=600, token=stale),
+        MINTED,
+        access_token_response(expires_in=600, token=stale),
+        MINTED,
+        clock=clock,
+    )
+
+    for _ in range(3):
+        client.mint(amount=1000, currency="EUR", options={})
+        clock.now += 600
+
+    assert len(_token_fetches(transport)) == 3
+    assert len(client.warnings) == 1

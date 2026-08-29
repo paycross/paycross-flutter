@@ -504,7 +504,13 @@ class Sandbox:
             raise SandboxError("the token endpoint returned no access_token")
         self._access_token = raw["access_token"]
         delay, warnings = _refresh_after(raw, self._now())
-        self.warnings.extend(warnings)
+        # Once each, however many times a long run refreshes: the same
+        # degradation restated forty times in a report reads as forty
+        # findings. A list rather than a set, because the order they were
+        # first noticed in is the order worth reading them in -- and the
+        # clock warning carries its own measurement, so two genuinely
+        # different ones stay two.
+        self.warnings += [w for w in warnings if w not in self.warnings]
         self._token_expires_at = self._monotonic() + delay
         return self._access_token
 

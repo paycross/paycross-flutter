@@ -438,3 +438,14 @@ def test_a_sentinel_decides_whether_a_label_had_to_appear(template, actual, ok):
     # Neither sentinel captures: `<any>` records the label it measured in
     # result.json rather than cross-checking an id it never named.
     assert captured is None
+
+
+def test_a_stored_credentials_of_the_wrong_shape_is_a_problem_not_a_crash():
+    # `verify_merchant`'s whole contract is to return problems; raising
+    # AttributeError out of it turns a malformed resource into a traceback.
+    odd = session(txns=[txn(stored_credentials=["saved_token"])])
+
+    problems = verify.verify_merchant(odd, {"saved_card_saved": True})
+
+    assert len(problems) == 1
+    assert "stored_credentials is a list" in problems[0]

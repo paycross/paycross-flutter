@@ -574,7 +574,12 @@ class IosDriver(Driver):
             f"xcrun simctl spawn {self._quoted_udid} defaults read -g AppleLocale "
             "2>/dev/null"
         ).strip()
-        return said if re.fullmatch(r"[a-z]{2}(_[A-Za-z0-9@=]+)?", said) else ""
+        # Wide enough to recognise every locale iOS actually writes, because
+        # a shape too narrow does not fail safe: an unrecognised answer is
+        # treated as unreadable and lets the simulator through. `zh_Hans_CN`
+        # has three subtags and `es-419` uses a hyphen and a UN M.49 region,
+        # and both were read as "cannot tell" by a `[a-z]{2}(_...)` shape.
+        return said if re.fullmatch(r"[a-z]{2,3}([_-][A-Za-z0-9@=_]+)?", said) else ""
 
     # -- finding and tapping -------------------------------------------------
 

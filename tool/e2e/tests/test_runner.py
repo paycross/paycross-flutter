@@ -1665,6 +1665,18 @@ def test_the_build_id_is_recorded_in_result_json(cell_dir, tmp_path):
 # --- Plan B: the run-level report ----------------------------------------
 
 
+@pytest.fixture
+def distinct_run_ids(monkeypatch):
+    """One evidence directory per run, even for two runs in the same second.
+
+    `Run`'s generated id is second-resolution, so without this two runs in one
+    test share a directory -- and a test about what a run leaves *on its own*
+    then reads the other one's files and passes for the wrong reason.
+    """
+    stamps = iter(f"20260829-1200{n:02d}" for n in range(20))
+    monkeypatch.setattr(evidence, "_stamp", lambda: next(stamps))
+
+
 def report_json(tmp_path):
     """The newest report.json under the evidence root.
 
@@ -1702,7 +1714,9 @@ def test_a_report_is_written_when_the_run_aborts(cell_dir, tmp_path):
     assert written["exit_code"] == report.exit_code == runner.EXIT_ABORTED
 
 
-def test_a_report_is_written_even_when_every_cell_was_skipped(cell_dir, tmp_path):
+def test_a_report_is_written_even_when_every_cell_was_skipped(
+    cell_dir, tmp_path, distinct_run_ids
+):
     # A fully-resumed run is exactly what Task 10 reads while assembling its
     # tables, and it used to return before the Run was ever constructed.
     run(cell_dir, tmp_path, FakeDriver())
@@ -1711,22 +1725,33 @@ def test_a_report_is_written_even_when_every_cell_was_skipped(cell_dir, tmp_path
 
     assert second.results == []
     assert second.skipped == ["control", "frictionless"]
+    # Its own directory, holding nothing but the report -- which is what the
+    # resume test below turns on.
+    latest = sorted((tmp_path / "evidence").iterdir())[-1]
+    assert [p.name for p in latest.iterdir()] == ["report.json"]
     written = report_json(tmp_path)
     assert written["cells"] == []
     assert written["skipped"] == ["control", "frictionless"]
     assert written["exit_code"] == second.exit_code == 0
 
 
-def test_a_skipped_runs_directory_cannot_satisfy_a_later_resume(cell_dir, tmp_path):
+def test_a_skipped_runs_directory_cannot_satisfy_a_later_resume(
+    cell_dir, tmp_path, distinct_run_ids
+):
     run(cell_dir, tmp_path, FakeDriver(), only=["control"])
     run(cell_dir, tmp_path, FakeDriver(), only=["control"], run_all=False)
 
-    # The skipped run left a directory with no progress.jsonl in it, which is
-    # what passed_cells globs for.
+    # Two directories, and the second really is the bare one: without distinct
+    # ids both runs share a directory and this passes for the wrong reason.
+    written = sorted((tmp_path / "evidence").iterdir())
+    assert len(written) == 2
+    assert not (written[-1] / "progress.jsonl").exists()
+    # And passed_cells globs `*/progress.jsonl`, so the bare one contributes
+    # nothing rather than being counted as a run that passed no cells.
     assert evidence.passed_cells(tmp_path / "evidence", "android") == {"control"}
 
 
-def test_a_fully_skipped_run_touches_no_device(cell_dir, tmp_path):
+def test_a_fully_skipped_run_touches_no_device(cell_dir, tmp_path, distinct_run_ids):
     run(cell_dir, tmp_path, FakeDriver())
     driver = FakeDriver()
 
