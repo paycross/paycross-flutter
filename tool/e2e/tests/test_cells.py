@@ -569,3 +569,96 @@ def test_a_platform_override_alone_can_require_the_no_result_action(tmp_path):
 
     message = expect_rejected(tmp_path, body)
     assert "['ios']" in message
+
+
+# --- Plan B: the threeds block's own keys ---------------------------------
+
+
+def test_a_misspelled_threeds_key_is_refused_at_load(tmp_path):
+    # Untreated it reads as an SDK finding twenty minutes into a run: the
+    # field is simply never compared, so the assertion passes vacuously.
+    body = with_merchant(
+        CONTROL,
+        "    session_status: completed\n"
+        "    threeds:\n"
+        "      outcom: authenticated\n",
+    )
+
+    message = expect_rejected(tmp_path, body)
+    assert "unknown threeds key(s) ['outcom']" in message
+
+
+@pytest.mark.parametrize(
+    "line, key",
+    [
+        ("      outcome: 3\n", "outcome"),
+        ("      flow: ''\n", "flow"),
+        ("      liability_shifted: 'yes'\n", "liability_shifted"),
+    ],
+)
+def test_a_threeds_value_of_the_wrong_type_is_refused(tmp_path, line, key):
+    body = with_merchant(
+        CONTROL, "    session_status: completed\n    threeds:\n" + line
+    )
+
+    assert f"threeds {key} must be" in expect_rejected(tmp_path, body)
+
+
+def test_eci_and_version_are_not_assertable(tmp_path):
+    # Sandbox implementation detail: a sandbox upgrade must not present as a
+    # finding.
+    body = with_merchant(
+        CONTROL,
+        "    session_status: completed\n    threeds:\n      eci: '05'\n",
+    )
+
+    assert "unknown threeds key(s) ['eci']" in expect_rejected(tmp_path, body)
+
+
+def test_every_threeds_key_a_shipped_cell_uses_is_assertable(tmp_path):
+    body = with_merchant(
+        CONTROL,
+        "    session_status: completed\n"
+        "    threeds:\n"
+        "      outcome: not_authenticated\n"
+        "      flow: challenge\n"
+        "      liability_shifted: false\n",
+    )
+    cell = cells.load_cell(write(tmp_path, "control.yaml", body))
+
+    assert cell.expected_for("android").merchant["threeds"]["flow"] == "challenge"
+
+
+# --- Plan B: shapes that used to load and mean something else -------------
+
+
+def test_a_bare_string_of_platforms_is_refused_as_a_shape(tmp_path):
+    # `tuple("android")` is ('a','n','d',...), and every character is then an
+    # unknown platform -- a message about 'a', 'n', 'd'.
+    body = CONTROL.replace("platforms: [android, ios]", "platforms: android")
+
+    message = expect_rejected(tmp_path, body)
+    assert "platforms must be a list, got str" in message
+
+
+def test_a_label_with_two_transaction_placeholders_is_refused(tmp_path):
+    body = with_label(CONTROL, "result:success:<txn><txn>")
+
+    assert "more than one '<txn>'" in expect_rejected(tmp_path, body)
+
+
+def test_an_override_label_with_two_placeholders_is_refused_too(tmp_path):
+    body = CONTROL + textwrap.dedent(
+        """\
+        expected.ios:
+          label: "result:success:<txn><txn>"
+        """
+    )
+
+    assert "more than one '<txn>'" in expect_rejected(tmp_path, body)
+
+
+def test_the_transaction_placeholder_is_one_constant_in_both_modules():
+    from tool.e2e import verify
+
+    assert verify.TXN_PLACEHOLDER is cells.TXN_PLACEHOLDER

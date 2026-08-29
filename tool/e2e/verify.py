@@ -18,8 +18,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-#: Only ever appears last in a label, so `.*` cannot swallow a later field.
-TXN_PLACEHOLDER = "<txn>"
+#: `<txn>` only ever appears last in a label, so `.*` cannot swallow a later
+#: field. Owned by `cells` because `load_cell` is what refuses a template
+#: carrying two of them; imported here, and still readable as
+#: `verify.TXN_PLACEHOLDER`, because this is where the label rules live.
+#: Importing the other way round would be a cycle.
+from .cells import TXN_PLACEHOLDER
 
 #: Faults whose own log line names the component it is about, and which are
 #: therefore matched only when that component is the app under test. `ANR in

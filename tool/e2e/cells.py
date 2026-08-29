@@ -157,6 +157,17 @@ _MERCHANT_VALUES = {
 
 MERCHANT_KEYS = frozenset(_MERCHANT_VALUES)
 
+#: The 3-D Secure fields a cell may assert. `eci` and `version` are
+#: deliberately absent: they are sandbox implementation detail, and a sandbox
+#: upgrade must not present as a finding.
+_THREEDS_VALUES = {
+    "outcome": (_is_non_empty_str, "a non-empty string"),
+    "flow": (_is_non_empty_str, "a non-empty string"),
+    "liability_shifted": (_is_bool, "true or false"),
+}
+
+THREEDS_KEYS = frozenset(_THREEDS_VALUES)
+
 #: The keys an `expected` or `expected.<platform>` block may carry.
 EXPECTED_KEYS = frozenset({"label", "rearmed", "merchant"})
 
@@ -321,6 +332,14 @@ def _check_label(label: Any, where: str) -> None:
         return
     if not LABEL_RE.fullmatch(label):
         raise CellError(f"{where}: label {label!r} is not in the frozen vocabulary")
+    # Here rather than beside the constructed `Expected`, so an override's
+    # label is held to it as well: `match_label`'s capture is exactly as
+    # ambiguous either way.
+    if label.count(TXN_PLACEHOLDER) > 1:
+        raise CellError(
+            f"{where}: label {label!r} has more than one '{TXN_PLACEHOLDER}'; "
+            "the capture would be ambiguous"
+        )
 
 
 def _check_merchant(raw: Any, where: str) -> dict[str, Any]:
@@ -335,6 +354,18 @@ def _check_merchant(raw: Any, where: str) -> dict[str, Any]:
             raise CellError(
                 f"{where}: merchant {key} must be {description}, got {value!r}"
             )
+
+    threeds = raw.get("threeds")
+    if isinstance(threeds, dict):
+        unknown = sorted(set(threeds) - THREEDS_KEYS)
+        if unknown:
+            raise CellError(f"{where}: unknown threeds key(s) {unknown}")
+        for key, value in threeds.items():
+            accepts, description = _THREEDS_VALUES[key]
+            if not accepts(value):
+                raise CellError(
+                    f"{where}: threeds {key} must be {description}, got {value!r}"
+                )
     return raw
 
 
@@ -437,7 +468,14 @@ def load_cell(path: Path) -> Cell:
     if cell_id != path.stem:
         raise CellError(f"{where}: id {cell_id!r} does not match the filename stem")
 
-    platforms = tuple(_require(raw, "platforms", where))
+    raw_platforms = _require(raw, "platforms", where)
+    if not isinstance(raw_platforms, list):
+        raise CellError(
+            f"{where}: platforms must be a list, got {type(raw_platforms).__name__}"
+            # A bare string iterates into characters, and every one of them is
+            # an unknown platform -- a message about 'a', 'n', 'd'.
+        )
+    platforms = tuple(raw_platforms)
     bad = [p for p in platforms if p not in PLATFORMS]
     if bad or not platforms:
         raise CellError(f"{where}: unknown platform(s) {bad or '<empty>'}")
