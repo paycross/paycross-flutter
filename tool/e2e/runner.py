@@ -316,9 +316,18 @@ def _perform(driver, action: Action, *, card: Card, token_path: Path, amount_tex
     elif verb == "kill_activity":
         driver.kill_activity()
     else:
-        # Reached only for an argument this function has no branch for --
-        # cells.py rejects those at load time -- so it is the argument that
-        # gets named, not the verb, which is supported and is not the problem.
+        # Reached for anything the branches above do not cover, which since
+        # Plan B opened the grammar means two different things: an argument
+        # this function has no branch for, and a whole verb whose branch the
+        # dimension that owns it has yet to add. Both name the verb and the
+        # argument, because from here they are indistinguishable and the
+        # reader needs to see which half is unfamiliar.
+        #
+        # A DriverError rather than NotImplementedError, so a cell reaching
+        # this does spend a control check. That is the wrong side of the
+        # authoring/device line for a missing branch: pair a new verb's
+        # branch with its driver method, and the driver's own
+        # NotImplementedError classifies it correctly.
         raise DriverError(f"the runner cannot perform {verb} with {arg!r}")
     return None
 
