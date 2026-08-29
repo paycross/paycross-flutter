@@ -280,6 +280,25 @@ class IosDriver(Driver):
 
     # -- lifecycle -----------------------------------------------------------
 
+    def _close_open_session(self) -> None:
+        """Closes whatever session WebDriverAgent already has open.
+
+        A session bound to a bundleId terminates its app under test when a new
+        session displaces it, and on this rig the app it terminates is the
+        instance `launch()` started one step later -- taking the --console-pty
+        capture with it and failing the cell in `_check_console`. Measured
+        2026-08-29: it is what the first live iOS run died of, twice, and it
+        survives across runs because the stale session outlives the process
+        that opened it.
+
+        Called before the capture exists, so the termination it provokes is
+        spent on an app nobody is watching. WebDriverAgent reports the open
+        session at the top level of /status, and null when there is none.
+        """
+        open_session = self._wda("GET", "/status").get("sessionId")
+        if open_session:
+            self._wda("DELETE", f"/session/{open_session}")
+
     def install(self, app_path: str) -> None:
         """`app_path` is a path **on the Mac**: the .app is built there."""
         self._remote(
@@ -406,13 +425,23 @@ class IosDriver(Driver):
             )
 
     def close(self) -> None:
-        """Stops this run's console capture. Idempotent, and safe before launch.
+        """Ends this run on the Mac: the console capture, then the session.
 
         launch() clears the *previous* cell's capture, so without this the last
         one of a run outlives it: a simctl still holding the app, and a log
         still being written to. Task 9 calls this in a `finally`.
+
+        The session goes too, so the next run does not inherit one -- see
+        `_close_open_session` for what an inherited one costs. The `finally`
+        is why: a capture that will not die must not strand a session as well.
+        Idempotent, and safe before launch.
         """
-        self._stop_console()
+        try:
+            self._stop_console()
+        finally:
+            session_id, self._session_id = self._session_id, None
+            if session_id:
+                self._wda("DELETE", f"/session/{session_id}")
 
     def launch(self) -> None:
         """Cold-starts the example app with its console captured.
@@ -435,6 +464,9 @@ class IosDriver(Driver):
             raise DriverError(f"simulator {self._udid} is {state!r}, not booted")
         # Before the terminate: the old capture still owns the app.
         self._stop_console()
+        # Before the capture is started, so the termination a stale bundle-bound
+        # session provokes lands on an app nobody is capturing.
+        self._close_open_session()
         self._remote(
             f"xcrun simctl terminate {self._quoted_udid} {self._bundle} "
             "2>/dev/null || true"

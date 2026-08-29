@@ -388,9 +388,18 @@ def test_wda_raises_when_the_answer_is_empty():
 # -- launch -------------------------------------------------------------------
 
 
-def launch_outputs(session=None, alive="alive\n"):
+#: WebDriverAgent reports whatever session is currently open at the top level
+#: of /status, and null when there is none.
+NO_OPEN_SESSION = json.dumps({"value": {"ready": True}, "sessionId": None})
+
+
+def launch_outputs(session=None, alive="alive\n", status=NO_OPEN_SESSION):
+    stale = json.loads(status).get("sessionId")
     return (
         DEVICE_LINE,
+        status,
+        # Only asked for when /status named one.
+        *([json.dumps({"value": None})] if stale else []),
         "",
         CONSOLE_STARTED,
         session or json.dumps({"value": {"sessionId": "sess-9"}}),
@@ -497,10 +506,11 @@ def test_close_kills_the_capture_the_run_started():
 
 def test_close_before_launch_does_nothing():
     # Task 9 calls it in a finally, which runs whether or not launch() got far
-    # enough to start anything.
+    # enough to start anything -- so with no capture and no session there is
+    # nothing to say to the Mac at all.
     ssh = FakeSsh()
 
-    driver(ssh).close()
+    unlaunched(ssh).close()
 
     assert ssh.calls == []
 
@@ -565,6 +575,59 @@ def test_launch_does_not_let_the_session_relaunch_the_app_out_from_under_it():
     assert capabilities["shouldWaitForQuiescence"] is False
 
 
+def test_launch_closes_a_session_left_open_before_it_starts_the_capture():
+    # Measured on the rig 2026-08-29, and the second failure of the live run:
+    # an existing session bound to a bundleId terminates its app under test
+    # when a new session displaces it. The app it terminates is the instance
+    # this driver just launched, so the --console-pty capture goes with it and
+    # _check_console fails the cell. Closing the stale session first spends
+    # that termination on an app nobody is capturing yet.
+    ssh = FakeSsh(*launch_outputs(status=json.dumps({"sessionId": "stale-1"})))
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    deleted = [c for c in ssh.calls if "DELETE" in c and "stale-1" in c]
+    assert len(deleted) == 1
+    started = next(i for i, c in enumerate(ssh.calls) if "--console-pty" in c)
+    assert ssh.calls.index(deleted[0]) < started
+
+
+def test_launch_does_not_delete_a_session_when_none_is_open():
+    ssh = FakeSsh(*launch_outputs())
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    assert not [c for c in ssh.calls if "DELETE" in c]
+
+
+def test_close_deletes_the_session_it_opened():
+    # Otherwise the run leaves one open, and the next run's launch pays for it.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.outputs = ["gone\n", json.dumps({"value": None})]
+    ssh.calls.clear()
+
+    d.close()
+
+    assert [c for c in ssh.calls if "DELETE" in c and "sess-9" in c]
+
+
+def test_close_deletes_the_session_even_when_the_capture_will_not_die():
+    # close() runs in the runner's finally; a capture that will not die must
+    # not also strand the session.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.outputs = ["alive\n", json.dumps({"value": None})]
+    ssh.calls.clear()
+
+    with pytest.raises(DriverError):
+        d.close()
+
+    assert [c for c in ssh.calls if "DELETE" in c and "sess-9" in c]
+
+
 def test_launch_checks_the_console_capture_after_the_session_not_before():
     ssh = FakeSsh(*launch_outputs(alive="dead\n"))
 
@@ -584,7 +647,9 @@ def test_launch_checks_the_console_capture_after_the_session_not_before():
 
 
 def test_launch_reports_a_console_capture_that_would_not_start():
-    ssh = FakeSsh(DEVICE_LINE, "", "sh: xcrun: command not found\n")
+    ssh = FakeSsh(
+        DEVICE_LINE, NO_OPEN_SESSION, "", "sh: xcrun: command not found\n"
+    )
 
     with pytest.raises(DriverError) as excinfo:
         ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
