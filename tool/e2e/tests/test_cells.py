@@ -409,3 +409,16 @@ def test_rearmed_true_is_carried_through(tmp_path):
     cell = cells.load_cell(write(tmp_path, "control.yaml", body))
 
     assert cell.expected_for("android").rearmed is True
+
+
+# --- Plan B: one delimiter grammar ----------------------------------------
+
+
+def test_an_argument_holding_a_colon_is_reported_against_the_verb_that_takes_it():
+    # Not "unknown action": the verb is real and the argument is what is wrong.
+    with pytest.raises(cells.CellError, match=r"wait_result 1:20.*positive number"):
+        cells.parse_action("wait_result 1:20", "cell.yaml")
+
+
+def test_the_space_form_and_the_colon_form_parse_the_same():
+    assert cells.parse_action("acs approve", "w") == cells.parse_action("acs:approve", "w")

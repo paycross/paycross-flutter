@@ -217,8 +217,14 @@ def parse_action(raw: Any, where: str) -> Action:
     if not isinstance(raw, str):
         raise CellError(f"{where}: action must be a string, got {raw!r}")
     text = raw.strip()
-    verb, _, arg = text.partition(":") if ":" in text else text.partition(" ")
-    verb, arg = verb.strip(), arg.strip()
+    # Whichever delimiter comes first, so `verb arg` and `verb:arg` are one
+    # grammar rather than two with a precedence rule between them. The old
+    # colon-first split misparsed `wait_result 1:20` as the verb
+    # `wait_result 1` and reported an unknown action -- a diagnosis that
+    # sends the reader after the wrong half of the line.
+    parts = re.split(r"[:\s]", text, maxsplit=1)
+    verb = parts[0].strip()
+    arg = parts[1].strip() if len(parts) == 2 else ""
 
     if verb in BARE_ACTIONS:
         if arg:
