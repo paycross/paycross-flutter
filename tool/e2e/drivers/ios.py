@@ -728,8 +728,10 @@ class IosDriver(Driver):
                 return node
         return None
 
-    def dismiss_keyboard(self, *, settle: float = SETTLE_SECONDS) -> None:
-        """Puts away the keyboard the CVV field raised.
+    def dismiss_keyboard(
+        self, *, settle: float = SETTLE_SECONDS, required: bool = True
+    ) -> bool:
+        """Puts away the keyboard the CVV field raised. True if it went.
 
         It covers the bottom ~35% of the sheet, which is where the ACS page's
         decline outcomes land -- and `scroll_to` drags from `height * 0.75`,
@@ -744,12 +746,21 @@ class IosDriver(Driver):
         (`CardFormView.swift:179`) and is never interactive. Above is checked
         rather than assumed -- tapping a node the keyboard covers types into
         the keyboard.
+
+        On the card form none of that works, measured on the rig 2026-08-29:
+        dismissKeyboard answers "invalid element state", and taps on `amount`,
+        on TOTAL and on the navigation bar, and a drag down the form, all leave
+        the pad up -- the SwiftUI form offers no affordance at all. So
+        `required` says whether a pad that stays is fatal. `type_card` passes
+        False, because on the form the pad covers nothing that matters:
+        payButton sits above it. `acs()` keeps the default, because there it
+        covers the answer.
         """
         if self._keyboard() is None:
             # acs() calls this on a page that has no keyboard, where
             # dismissKeyboard costs two round trips to answer with an error
             # envelope and change nothing.
-            return
+            return True
         try:
             self._wda("POST", self._session("/wda/keyboard/dismiss"), {})
         except DriverError:
@@ -757,12 +768,14 @@ class IosDriver(Driver):
         self._sleep(settle)
         keyboard = self._keyboard()
         if keyboard is None:
-            return
+            return True
 
         target = self._find(AMOUNT, timeout=5)
         x, y = target.centre
         left, top, right, bottom = keyboard.bounds
         if left <= x <= right and top <= y <= bottom:
+            if not required:
+                return False
             raise DriverError(
                 f"the only way out of the keyboard is {AMOUNT!r}, and it is "
                 f"behind the keyboard at {target.centre}; tapping it would type "
@@ -770,12 +783,15 @@ class IosDriver(Driver):
             )
         self._tap_node(target)
         self._sleep(settle)
-        if self._keyboard() is not None:
-            raise DriverError(
-                "the keyboard is still up after dismissKeyboard and a tap on "
-                "'amount'; it covers the ACS page's decline outcomes and blocks "
-                "the scroll, so failing here beats burning every swipe"
-            )
+        if self._keyboard() is None:
+            return True
+        if not required:
+            return False
+        raise DriverError(
+            "the keyboard is still up after dismissKeyboard and a tap on "
+            "'amount'; it covers the ACS page's decline outcomes and blocks "
+            "the scroll, so failing here beats burning every swipe"
+        )
 
     def _keys(self, text: str) -> None:
         # One character at a time, as wda.py does: WDA's /wda/keys takes a list.
@@ -872,8 +888,12 @@ class IosDriver(Driver):
             self._keys(value)
             self._sleep(SETTLE_SECONDS)
         # CVV is typed last and leaves a numeric keyboard over the bottom of
-        # the sheet, which then covers the ACS page's decline outcomes.
-        self.dismiss_keyboard()
+        # the sheet, which then covers the ACS page's decline outcomes. Tried
+        # here so it is already gone by the time a challenge page loads, but
+        # not required: on the form the pad covers nothing (payButton is above
+        # it), and on this build nothing dismisses it. `acs()` is where it has
+        # to be gone, and `acs()` asks again.
+        self.dismiss_keyboard(required=False)
         self._sleep(SETTLE_SECONDS)
 
     def tap_pay(self, amount_text: str) -> None:

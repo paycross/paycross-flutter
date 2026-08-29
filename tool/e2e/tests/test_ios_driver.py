@@ -1002,6 +1002,36 @@ def test_dismiss_keyboard_raises_if_the_pad_survives_even_that():
     assert "keyboard is still up" in str(excinfo.value)
 
 
+def test_dismiss_keyboard_reports_rather_than_raises_when_it_is_not_required():
+    # type_card's call is a tidy-up: on the card form the pad covers nothing
+    # that matters, because payButton sits above it. Only acs() needs it gone.
+    ssh = KeyboardFakeSsh(clears_on_tap=False)
+
+    assert driver(ssh).dismiss_keyboard(settle=0, required=False) is False
+
+
+def test_dismiss_keyboard_says_so_when_the_pad_did_go():
+    ssh = KeyboardFakeSsh(clears_on_tap=True)
+
+    assert driver(ssh).dismiss_keyboard(settle=0) is True
+
+
+def test_type_card_does_not_fail_a_cell_over_a_pad_that_will_not_go():
+    # Measured on the rig 2026-08-29: nothing dismisses this pad. It is
+    # numeric, so it has no Done or Return key; XCUIApplication.dismissKeyboard
+    # answers "invalid element state"; and taps on 'amount', on TOTAL, on the
+    # navigation bar and a drag down the form all leave it up -- the SwiftUI
+    # form offers no affordance at all. Every cell failed here, including
+    # control, which never sees an ACS page.
+    ssh = KeyboardFakeSsh(clears_on_tap=False)
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.type_card(Card(pan="4111111111170000", expiry="12/28", cvv="123"))
+
+    assert any("keyboard/dismiss" in c for c in ssh.calls)
+
+
 def test_dismiss_keyboard_does_nothing_at_all_when_no_pad_is_up():
     # acs() calls this on a page that has no keyboard, where dismissKeyboard
     # would answer with an error envelope and cost two round trips to learn
