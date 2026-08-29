@@ -214,8 +214,10 @@ expected:
 # cell needs it. No D0 cell carries an override: both platforms return
 # change_method for authentication_failed, which is what the live runs measured.
 # Merged one key deep over `expected`; `merchant` is merged key by key, so an
-# override restates only the field that actually differs. D2 is expected to be
-# the first live user of this path.
+# override restates only the field that actually differs. No D2 cell carries
+# one either: where its platforms may diverge it records the label per
+# platform with `<any>` rather than asserting two different ones. Phase 3 is
+# where an override lands, once a live run has shown one is needed.
 expected.ios:
   merchant:
     failure_recovery: retry

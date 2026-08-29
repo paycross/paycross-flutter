@@ -294,11 +294,15 @@ class Cell:
         platforms diverge they diverge in one merchant field at a time, and
         restating the other five in every override is how they drift apart.
 
-        No shipped cell has an override. The mechanism was added for a
-        divergence in `failure.recovery` that the live runs disproved -- both
-        platforms answer `change_method` for authentication_failed -- so this
-        path has unit coverage and no live coverage. D2 is expected to be its
-        first real user.
+        No shipped cell has an override, D2 included. The mechanism was
+        added for a divergence in `failure.recovery` that the live runs
+        disproved -- both platforms answer `change_method` for
+        authentication_failed -- so this path has unit coverage and no live
+        coverage. D2 was expected to be its first real user and is not: where
+        the platforms may diverge it records the label per platform (`<any>`)
+        rather than asserting two different ones, which is what a dimension
+        does before anything has measured it. An override lands in Phase 3 if
+        a live run shows one is needed.
         """
         override = self.overrides.get(platform)
         if not override:
@@ -429,8 +433,8 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
     Over every platform the cell declares, never the unmerged base. A cell
     whose base says `rearmed: false` and whose `expected.android` says true
     would otherwise load cleanly and fail on a device twenty minutes later --
-    and `expected_for`'s own docstring says D2 is the override mechanism's
-    first real user, so this is the dimension that would find out.
+    and D2 is the dimension that would find out, being the first with cells
+    whose two platforms are expected to answer differently.
 
     The two directions are deliberately asymmetric, because **one action list
     is shared by every platform the cell runs on**. Any platform expecting a
