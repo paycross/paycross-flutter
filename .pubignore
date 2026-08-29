@@ -1,0 +1,24 @@
+# Pub reads this file INSTEAD of .gitignore in this directory -- not in
+# addition to it -- so everything .gitignore excludes has to be repeated here
+# or it starts shipping the day this file lands.
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+local.properties
+.DS_Store
+Pods/
+Podfile.lock
+.symlinks/
+
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Repo tooling. The E2E matrix runner needs a device rig and an env file; it is
+# no use to a merchant, and pana would score its fixtures as if they were
+# library code.
+tool/
