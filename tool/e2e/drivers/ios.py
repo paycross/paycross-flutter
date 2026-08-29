@@ -423,6 +423,12 @@ class IosDriver(Driver):
         once per cell, before the next `launch()`, and `close()` at the end of
         the run.
         """
+        # Before anything that can fail. The log is truncated by
+        # _start_console and by nothing else, so a launch that gives up ahead
+        # of it would leave the previous cell's window in place and readable,
+        # and logs_since would hand that back as this cell's -- failing this
+        # cell for the last one's crash, and the interleaved control after it.
+        self._console_from = None
         state = self._device_state()
         if state != "Booted":
             raise DriverError(f"simulator {self._udid} is {state!r}, not booted")

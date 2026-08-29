@@ -437,6 +437,22 @@ def run_cell(
             indent=2,
         ).encode(),
     )
+    # Last, and with the token. This line is the ledger a resume reads, so it
+    # is appended only once the evidence it points at is on disk -- and its
+    # `label` is read off the device, which makes it the one field here that
+    # has not already been through _redacted.
+    run.append_progress(
+        {
+            "cell": cell.id,
+            "status": "pass" if result.passed else "fail",
+            "session_id": result.session_id,
+            "label": result.label,
+            "problems": problems,
+            "control_check": is_control_check,
+            "evidence": artifact_id,
+        },
+        secrets=(token,),
+    )
     return result
 
 
@@ -479,20 +495,6 @@ def run_cells(
     consecutive_control_failures = 0
     checks = 0
 
-    def record(result: CellResult) -> None:
-        report.results.append(result)
-        run.append_progress(
-            {
-                "cell": result.cell_id,
-                "status": "pass" if result.passed else "fail",
-                "session_id": result.session_id,
-                "label": result.label,
-                "problems": result.problems,
-                "control_check": result.is_control_check,
-                "evidence": result.artifact_id,
-            }
-        )
-
     def stop(reason: str) -> None:
         report.aborted = True
         report.abort_reason = reason
@@ -507,8 +509,10 @@ def run_cells(
                 return report
 
         for cell in todo:
+            # run_cell appends its own progress line: it is the only scope
+            # holding the session token the record has to be scrubbed against.
             result = run_cell(cell, platform, driver, sandbox, run)
-            record(result)
+            report.results.append(result)
 
             if cell.id == CONTROL_CELL_ID:
                 consecutive_control_failures = (
@@ -526,7 +530,7 @@ def run_cells(
                     artifact_id=f"{CONTROL_CELL_ID}-check-{checks:02d}",
                     is_control_check=True,
                 )
-                record(check)
+                report.results.append(check)
                 consecutive_control_failures = (
                     0 if check.passed else consecutive_control_failures + 1
                 )

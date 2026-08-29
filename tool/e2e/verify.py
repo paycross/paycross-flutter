@@ -21,10 +21,25 @@ from typing import Any
 #: Only ever appears last in a label, so `.*` cannot swallow a later field.
 TXN_PLACEHOLDER = "<txn>"
 
-#: `ANR in <package>` is checked against the app; a bare AndroidRuntime line is
-#: not, because the uiautomator and monkey harnesses log dozens of those on a
-#: perfectly healthy run.
-_ANDROID_FAULTS = ("FATAL EXCEPTION", "Force finishing activity")
+#: Faults whose own log line names the component it is about, and which are
+#: therefore matched only when that component is the app under test. `ANR in
+#: <package>` comes from system_server and `Force finishing activity
+#: <package>/<activity>` from the activity manager, and the emulator does
+#: plenty of both on its own housekeeping. Unscoped, one of those fails a cell,
+#: then fails the interleaved control for the same reason, and aborts the whole
+#: run as a rig fault.
+_SCOPED_FAULTS = ("ANR in", "Force finishing activity")
+
+#: The Android crash header. Its own line carries no package -- the `Process:`
+#: line below it does -- so `_fatal_is_ours` scopes it instead. A bare
+#: AndroidRuntime line is not a fault at all: the uiautomator and monkey
+#: harnesses log dozens of those on a perfectly healthy run.
+_FATAL = "FATAL EXCEPTION"
+_PROCESS = "Process:"
+
+#: How far below the header that line is looked for. It is the very next one;
+#: two leaves room for a logcat that interleaves another buffer's line.
+_PROCESS_LOOKAHEAD = 2
 
 _IOS_FAULTS = ("Fatal error:", "*** Terminating app due to uncaught exception")
 
@@ -35,7 +50,8 @@ _IOS_FAULTS = ("Fatal error:", "*** Terminating app due to uncaught exception")
 _DART_FAULTS = ("Unhandled Exception:",)
 
 #: Built once rather than per log line: `crash_lines` scans a whole device log.
-_FAULTS = _ANDROID_FAULTS + _IOS_FAULTS + _DART_FAULTS
+#: These name no component, so they are faults wherever they appear.
+_FAULTS = _IOS_FAULTS + _DART_FAULTS
 
 
 #: The merchant assertions `verify_merchant` implements. Kept equal to
@@ -183,12 +199,32 @@ def verify_label_transaction(resource: dict[str, Any], txn_id: str | None) -> li
     return [f"label_transaction: {txn_id!r} is not among the session's {sorted(known)}"]
 
 
+def _fatal_is_ours(lines: list[str], index: int, package: str) -> bool:
+    """Whether the crash header at `index` belongs to the app under test.
+
+    `E AndroidRuntime: FATAL EXCEPTION: main` is followed by `E AndroidRuntime:
+    Process: <package>, PID: <pid>`, which is the only place the crash names
+    itself. When that line is there it decides; when it is not -- a window that
+    starts mid-crash, an unfamiliar format -- the fault is kept, because a
+    missed crash is the expensive direction to be wrong in.
+    """
+    for line in lines[index + 1 : index + 1 + _PROCESS_LOOKAHEAD]:
+        if _PROCESS in line:
+            return package in line
+    return True
+
+
 def crash_lines(log: str, package: str) -> list[str]:
     """Pass criterion 3, over logcat or the simulator's unified log."""
+    lines = log.splitlines()
     faults = []
-    for line in log.splitlines():
-        if any(marker in line for marker in _FAULTS):
-            faults.append(line)
-        elif "ANR in" in line and package in line:
+    for index, line in enumerate(lines):
+        if _FATAL in line:
+            if _fatal_is_ours(lines, index, package):
+                faults.append(line)
+        elif any(marker in line for marker in _SCOPED_FAULTS):
+            if package in line:
+                faults.append(line)
+        elif any(marker in line for marker in _FAULTS):
             faults.append(line)
     return faults

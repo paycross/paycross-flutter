@@ -729,13 +729,21 @@ def test_a_wait_past_its_deadline_blames_the_dump_not_the_missing_node():
 def test_wait_rearmed_is_true_when_the_banner_is_in_the_tree_but_offscreen():
     ssh = FakeSsh(source_response())
 
-    assert driver(ssh).wait_rearmed("EUR 10.00", timeout=10, interval=0) is True
+    # The fixture's payButton is labelled "Pay €10.00", and sheet_rearmed now
+    # asks that the amount be this cell's rather than any sheet's at all.
+    assert driver(ssh).wait_rearmed("€10.00", timeout=10, interval=0) is True
+
+
+def test_wait_rearmed_is_false_when_the_sheet_re_armed_at_another_amount():
+    ssh = FakeSsh(source_response())
+
+    assert driver(ssh).wait_rearmed("€12.50", timeout=0, interval=0) is False
 
 
 def test_wait_rearmed_gives_up_and_says_so():
     ssh = FakeSsh(*([json.dumps({"value": "<XCUIElementTypeApplication/>"})] * 3))
 
-    assert driver(ssh).wait_rearmed("EUR 10.00", timeout=0, interval=0) is False
+    assert driver(ssh).wait_rearmed("€10.00", timeout=0, interval=0) is False
 
 
 # -- finding and tapping ------------------------------------------------------
@@ -1296,6 +1304,24 @@ def test_logs_since_before_launch_refuses_to_read_the_whole_console_log():
 
     assert "launch()" in str(excinfo.value)
     assert ssh.calls == []
+
+
+def test_a_launch_that_fails_early_drops_the_previous_cells_console_mark():
+    # The console log is truncated by _start_console and by nothing else, so a
+    # launch that fails before it leaves the previous cell's window in place
+    # and readable. Handing that back would fail this cell for the last one's
+    # crash -- and then fail the interleaved control the same way.
+    ssh = FakeSsh()
+    d = launched(ssh)
+    assert d._console_from == CONSOLE_MARK
+    ssh.outputs.append(DEVICE_LINE.replace("(Booted)", "(Shutdown)"))
+
+    with pytest.raises(DriverError):
+        d.launch()
+
+    with pytest.raises(DriverError) as excinfo:
+        d.logs_since(datetime.now(timezone.utc))
+    assert "launch()" in str(excinfo.value)
 
 
 def test_logs_since_reads_the_console_appended_since_this_launch():

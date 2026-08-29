@@ -551,6 +551,18 @@ def test_progress_is_written_per_cell_not_at_the_end(cell_dir, tmp_path):
     assert record["session_id"] == "sess-0"
 
 
+def test_the_progress_record_is_scrubbed_with_the_token_too(cell_dir, tmp_path):
+    # The label is read off the device, so it can carry anything that is on
+    # screen -- and progress.jsonl is the one artifact whose text does not
+    # come from the already-redacted problems list.
+    driver = FakeDriver(labels=[f"result:success:{TOKEN}"])
+
+    run(cell_dir, tmp_path, driver, only=["control"])
+
+    progress = next((tmp_path / "evidence").glob("*/progress.jsonl"))
+    assert TOKEN.encode() not in progress.read_bytes()
+
+
 def test_the_result_file_records_the_verdict_and_what_was_expected(
     cell_dir, tmp_path
 ):

@@ -159,10 +159,16 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
     criterion 2's merchant check (transaction `failed`, session still `open`),
     because the banner is not unique to a retryable decline.
 
-    `amount_text` applies to Android only, where the Pay button's text is the
-    only handle. iOS matches identifiers, so a sheet re-armed at a different
-    amount satisfies it too; tightening that is a Task 9 decision.
+    `amount_text` is required on both platforms. Android has nothing but the
+    Pay button's text to match on; iOS matches the payButton identifier and
+    then asks that its label carry the amount, because an identifier says
+    nothing about which payment it belongs to -- without that half, a sheet
+    re-armed at a different amount, or a form that was never this cell's,
+    satisfies the predicate.
     """
+    if not amount_text:
+        # An empty string is in every label, so this would match any sheet.
+        raise ValueError("sheet_rearmed needs the cell's amount text")
     if platform == "android":
         return bool(
             find_text_exact(nodes, ANDROID_REARM_BANNER)
@@ -175,6 +181,9 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
         # banner last in the ScrollView, below the pinned footer.
         return bool(
             find_identifier(nodes, "errorBanner")
-            and find_identifier(nodes, "payButton")
+            and any(
+                amount_text in node.text
+                for node in find_identifier(nodes, "payButton")
+            )
         )
     raise ValueError(f"unknown platform {platform!r}")

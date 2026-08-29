@@ -122,6 +122,22 @@ def test_sheet_rearmed_on_ios_matches_identifiers_not_copy():
     assert tree.sheet_rearmed(without_pay, "ios", "€10.00") is False
 
 
+def test_sheet_rearmed_on_ios_needs_the_pay_button_to_carry_this_amount():
+    # payButton is an identifier, so without this a sheet re-armed at some
+    # other amount -- or a form that was never this cell's -- satisfies it.
+    nodes = ios()
+
+    assert tree.sheet_rearmed(nodes, "ios", "€10.00") is True
+    assert tree.sheet_rearmed(nodes, "ios", "€12.50") is False
+
+
+@pytest.mark.parametrize("platform", ["android", "ios"])
+def test_sheet_rearmed_refuses_an_empty_amount(platform):
+    # "" is in every label, so an empty amount would match any sheet at all.
+    with pytest.raises(ValueError):
+        tree.sheet_rearmed(ios(), platform, "")
+
+
 def test_sheet_rearmed_rejects_an_unknown_platform():
     with pytest.raises(ValueError):
         tree.sheet_rearmed([], "windows", "€10.00")

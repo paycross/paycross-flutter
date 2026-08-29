@@ -221,16 +221,27 @@ def test_crash_lines_finds_only_real_faults():
     "line",
     [
         "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main",
-        "08-28 12:00:02.000 I am_finish_activity: Force finishing activity",
         "Fatal error: Unexpectedly found nil while unwrapping an Optional",
         "*** Terminating app due to uncaught exception 'NSInvalidArgument'",
         "E/flutter ( 8123): [ERROR:flutter/runtime/dart_vm_initializer.cc(41)] "
         "Unhandled Exception: Bad state: no element",
     ],
 )
-def test_every_fault_marker_fires(line):
-    # The package is deliberately absent from each line: a marker is a fault
-    # on its own, and only the ANR branch is package-scoped.
+def test_every_unscoped_fault_marker_fires(line):
+    # The package is deliberately absent from each line: these markers carry no
+    # component of their own, so a marker is a fault on its own.
+    assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == [line]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "08-28 12:00:03.000 E ActivityManager: ANR in com.paycross.x",
+        "08-28 12:00:02.000 I ActivityManager: Force finishing activity "
+        "com.paycross.x/.MainActivity",
+    ],
+)
+def test_every_scoped_fault_marker_fires_for_this_app(line):
     assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == [line]
 
 
@@ -240,3 +251,46 @@ def test_an_anr_in_another_package_is_not_this_apps_crash():
     log = "08-28 12:00:03.000 E ActivityManager: ANR in com.other.app\n"
 
     assert verify.crash_lines(log, "com.paycross.paycross_flutter_example") == []
+
+
+def test_a_force_finish_of_another_app_is_not_this_apps_crash():
+    # The activity manager names the component it is finishing, and it finishes
+    # other apps' activities all day. Unscoped, one of those fails a cell, then
+    # fails the interleaved control for the same reason, and aborts the run.
+    log = (
+        "08-28 12:00:02.000 I ActivityManager: Force finishing activity "
+        "com.android.settings/.Settings\n"
+    )
+
+    assert verify.crash_lines(log, "com.paycross.paycross_flutter_example") == []
+
+
+def test_a_fatal_exception_in_another_process_is_not_ours():
+    # The header line names no package; the Process: line under it does.
+    log = (
+        "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
+        "08-28 12:00:02.000 E AndroidRuntime: Process: com.other.app, PID: 9\n"
+        "08-28 12:00:02.000 E AndroidRuntime: java.lang.NullPointerException\n"
+    )
+
+    assert verify.crash_lines(log, "com.paycross.paycross_flutter_example") == []
+
+
+def test_a_fatal_exception_in_our_process_is_ours():
+    log = (
+        "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
+        "08-28 12:00:02.000 E AndroidRuntime: Process: com.paycross.x, PID: 9\n"
+    )
+
+    found = verify.crash_lines(log, "com.paycross.x")
+
+    assert len(found) == 1
+    assert "FATAL EXCEPTION" in found[0]
+
+
+def test_a_fatal_exception_with_no_process_line_is_kept():
+    # A window that starts mid-crash has the header and not the line under it.
+    # A missed crash is the expensive direction to be wrong in.
+    log = "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
+
+    assert verify.crash_lines(log, "com.paycross.x") == [log.strip()]
