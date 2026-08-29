@@ -12,7 +12,10 @@
 # 120 s where the shopper has already abandoned and only the sheet's own
 # teardown is outstanding (cancel_mid_challenge, and the tail of the re-arm
 # cell). Per-cell budgets in runner.py are computed from these and are the
-# real timeout; see the budget note in task-10-notes.md.
+# real timeout: budget_for() sums a launch allowance, each verb's own
+# allowance and the wait_result seconds above, plus slack, and is checked
+# between steps rather than inside a driver call. A cell that trips its budget
+# has hung, not run slowly.
 id: control
 platforms: [android, ios]
 card:

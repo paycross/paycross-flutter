@@ -191,10 +191,15 @@ class Cell:
 
         This is the only correct way to read a cell's expectations.
 
-        Merged one key deep rather than replaced wholesale: the platforms
-        differ in one merchant field at a time (the sandbox returns a
-        different `failure.recovery` for the same ACS outcome), and restating
-        the other five in every override is how they drift apart.
+        Merged one key deep rather than replaced wholesale: where the
+        platforms diverge they diverge in one merchant field at a time, and
+        restating the other five in every override is how they drift apart.
+
+        No shipped cell has an override. The mechanism was added for a
+        divergence in `failure.recovery` that the live runs disproved -- both
+        platforms answer `change_method` for authentication_failed -- so this
+        path has unit coverage and no live coverage. D2 is expected to be its
+        first real user.
         """
         override = self.overrides.get(platform)
         if not override:

@@ -173,11 +173,15 @@ expected:
       flow: challenge
       liability_shifted: true
 
-# Optional. Merged one key deep over `expected`; `merchant` is merged key by
-# key, so an override restates only the field that actually differs.
+# Optional, and HYPOTHETICAL -- shown for the grammar, not because any shipped
+# cell needs it. No D0 cell carries an override: both platforms return
+# change_method for authentication_failed, which is what the live runs measured.
+# Merged one key deep over `expected`; `merchant` is merged key by key, so an
+# override restates only the field that actually differs. D2 is expected to be
+# the first live user of this path.
 expected.ios:
   merchant:
-    failure_recovery: change_method
+    failure_recovery: retry
 ```
 
 Everything a cell can say is validated at load time — verbs, their arguments,
@@ -214,7 +218,7 @@ Two things worth knowing before you write an expectation:
 | `cancel_form` | abandons the sheet from the card form and confirms |
 | `expect rearmed` | waits up to 30 s for the `sheet_rearmed` predicate |
 | `wait_result <s>` | waits up to `<s>` for a contract label |
-| `background <s>`, `rotate`, `airplane on\|off`, `kill_activity` | declared, not implemented (D2/D3); a cell using one fails as an authoring mistake |
+| `background <s>`, `rotate`, `airplane on\|off`, `kill_activity` | declared, not implemented (D3); a cell using one fails as an authoring mistake |
 
 An argument is written `verb:arg` or `verb arg`, and the two are not
 interchangeable in one case: **an argument containing a colon must use the
@@ -309,10 +313,22 @@ the merchant check (transaction `failed`, session still `open`).
   is an HTTP 4xx with a JSON body rather than a transport error, so the wrapper
   checks `value.error` and raises — truncating the message, because the
   envelope's traceback runs to ~10 KB.
-* `launch()` deletes whatever session `/status` reports open, without checking
-  whose it is: WDA has exactly one, and a foreign session would break this run
-  just as thoroughly. That makes **one run per WebDriverAgent** the standing
-  rule, the way one run per emulator is on Android.
+* **The WDA session is created without a `bundleId`, deliberately.** WDA reads
+  one as "launch this", and for `XCUIApplication` launching means
+  terminate-*then*-launch — which kills the app `launch()` started a moment
+  earlier and takes its `--console-pty` capture with it, so criterion 3 then has
+  an empty log to pass on. `forceAppLaunch: false` is a literal in the 16.2.2
+  binary and does **not** stop it: measured on the rig 2026-08-29, where it
+  failed every cell in `_check_console` (commit `ae3e460`). A session naming no
+  bundle launches nothing and attaches to whatever is foreground, which is
+  enough — everything asked of a session here is coordinate- or device-level and
+  `/source` is unscoped. The full reasoning is in the capabilities comment in
+  `drivers/ios.py`.
+* `launch()` also deletes whatever session `/status` reports open, without
+  checking whose it is: WDA has exactly one, and a foreign session would break
+  this run just as thoroughly — a session bound to a bundle terminates its app
+  when a new one displaces it. That makes **one run per WebDriverAgent** the
+  standing rule, the way one run per emulator is on Android.
 * The SDK emits no `os_log`, so the crash markers criterion 3 looks for reach the
   app's stdout and stderr and nowhere else. They are captured by launching
   through `simctl launch --console-pty` into a log file on the Mac. **That log is
@@ -324,6 +340,14 @@ the merchant check (transaction `failed`, session still `open`).
   onward. `cancel_form` matches the sheet's toolbar Cancel by identifier only,
   because the challenge bar's item is *labelled* "Cancel" too.
 
+### Moving the rig
+
+Every path and host above is this workstation's, and every one is a default
+rather than a constant: `PAYCROSS_E2E_ADB`, `PAYCROSS_E2E_STAGING_DIR` and
+`PAYCROSS_E2E_WINDOWS_STAGING` on Android, `PAYCROSS_E2E_SSH_HOST` and
+`PAYCROSS_E2E_MAC_ENV` on iOS. Set any of them to run on a second machine
+without editing a driver. An empty value counts as unset.
+
 ### Deliberate asymmetries between the drivers
 
 These look like drift and are not. Each one is a difference in the platform, not
@@ -334,14 +358,16 @@ in the code's ambitions.
 | PAN read-back | `type_card(card, *, verify_pan=True)` reads the field back after typing | none — `type_card(card)` |
 | Keyboard | dropped with a back key inside `type_card` | `dismiss_keyboard` is iOS-only, and on this simulator **nothing dismisses the CVV pad** |
 | Amount matching | exact node-text match; `launch()` asserts `en-US` | no locale assertion; the `.`/`,` separator may be swapped, end-anchored |
-| WDA session | none | owns one; deletes whatever is open |
+| WDA session | none | owns one; created with no `bundleId`, deletes whatever is open |
 | Console capture | none (logcat is pulled per window) | owns one, truncated per launch |
+| Screenshots | captured, but black (`FLAG_SECURE`) | **none at all** — the guard refuses every frame |
 
-The PAN read-back is the regression path for the 0.3.2 caret bug: it reports
-what the field actually reads rather than blaming a cause, because a caret bug
-and a mistyped tap look identical from there. Typing is paced at 0.4 s per
-digit so a formatter that merely cannot keep up does not present as the caret
-bug returning — a false finding against the SDK is the expensive direction to be
+The PAN read-back is the regression path for the 0.3.1 caret bug, which 0.3.2
+fixed and which the read-back proves 0.3.3 still holds against. It reports what
+the field actually reads rather than blaming a cause, because a caret bug and a
+mistyped tap look identical from there. Typing is paced at 0.4 s per digit so a
+formatter that merely cannot keep up does not present as the caret bug
+returning — a false finding against the SDK is the expensive direction to be
 wrong in.
 
 The iOS keypad is `payment-ios-sdk#16`: it is numeric, has no Done or Return
@@ -364,7 +390,9 @@ accepts the swap and then end-anchors, so `Pay €10,000.00` no longer satisfies
 <evidence-root>/<YYYYMMDD-HHMMSS>-<platform>/
   progress.jsonl                    one line per cell, appended and fsynced as it happens
   <cell>/NN-<action>.uix            accessibility dump after every action
-  <cell>/NN-<action>.png            screenshot, sheet-foreground steps only
+  <cell>/NN-<action>.png            screenshot, sheet-foreground steps only --
+                                    black on Android, and never written on iOS
+                                    (see Redaction)
   <cell>/NN-<action>-failed.uix     the tree at the moment a step failed
   <cell>/merchant.json              the session resource, scrubbed
   <cell>/logs.txt                   device log for the cell's window
@@ -397,6 +425,16 @@ through untouched by design. So a frame is captured only during `type_card`,
 agrees that the sheet is still foreground. If the payment resolved during that
 dump, the frame would be the example's own screen, token field and all, and a
 `grep` over the evidence tree cannot see into a compressed PNG.
+
+**In practice that means no `.png` files on iOS at all, and black ones on
+Android.** WebDriverAgent's `/source` returns the whole application tree, and
+the example's token field is in it on every screen — so the guard's
+"does this dump show the example?" test is true for every step, and every frame
+is refused. The canonical runs bear this out: 16 screenshots on Android against
+30 dumps, and **0** on iOS against the same 30. On Android the frames that do
+get written are black, because `PaymentActivity` sets `FLAG_SECURE`. So on both
+platforms the `.uix` dump is the real visual evidence, and the screenshot path
+is currently costing more than it returns.
 
 ### Scan before you share
 
@@ -481,8 +519,12 @@ Known gaps, tracked for the next phase:
 * The run's exit code is printed, not written to disk; there is no run-level
   `report.json`.
 * The token-refresh paths (the 401 retry and the `exp`-scheduled refetch) have
-  not been exercised by a live run — a full matrix is ~6 minutes and the refresh
-  lands ~23–39 minutes out.
+  not been exercised by a live run. No run has happened to cross one, but that
+  is luck rather than arithmetic: the refresh is scheduled from the token's own
+  `exp`, and the gateway cache hands out tokens already most of the way through
+  their life. At the documented numbers — 3600 s lifetime, 3300 s cache TTL,
+  240 s margin — `_refresh_after` bottoms out around **60 s**, and its floor is
+  0. A six-minute matrix **can** cross a refresh; none yet has.
 * `no_succeeded_txn: false` is a no-op, and `no_succeeded_txn` checks only
   `succeeded` — `authorized` and `captured` also mean money moved.
 * `session.options` is a shallow merge, which is not enough for a "same
@@ -490,6 +532,10 @@ Known gaps, tracked for the next phase:
 * `threeds` inner keys are not validated at load, so a typo there reads as a
   finding mid-run.
 * iOS has no locale guard in `launch()` to match Android's.
+* **Screenshots are effectively dead weight.** iOS writes none — WDA's
+  `/source` always contains the example's token field, so the redaction guard
+  refuses every frame — and Android's are black under `FLAG_SECURE`. Either
+  drop the screenshot path or give it something it can actually capture.
 
 ## Publishing
 

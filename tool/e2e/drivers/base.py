@@ -13,6 +13,7 @@ the first thing to drive both, and one waiting rule is one place to be wrong.
 
 from __future__ import annotations
 
+import os
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -21,6 +22,21 @@ from typing import Callable
 
 from .. import tree
 from ..cells import Card
+
+
+def rig_path(name: str, default: str) -> str:
+    """A rig constant, overridable from the environment.
+
+    Every path and host below this line is one workstation's: an adb that
+    lives in a Windows SDK directory, an ssh alias out of one ~/.ssh/config,
+    a Homebrew prefix. The defaults are this rig's and stay the documented
+    ones, but a second machine -- the nightly in #5, someone else's laptop --
+    must be able to move them without forking the driver.
+
+    Empty is treated as unset: an exported-but-blank variable is a shell
+    accident, and honouring it would swap a working path for nothing.
+    """
+    return os.environ.get(name) or default
 
 
 class DriverError(RuntimeError):
@@ -47,6 +63,29 @@ class Driver(ABC):
         """
 
     # -- waiting -------------------------------------------------------------
+
+    def no_label_error(self, timeout: float) -> DriverError:
+        """Why no contract label arrived -- the wrong build, or genuinely none.
+
+        Worth one extra dump. A build made without
+        `--dart-define=PAYCROSS_E2E=true` renders the example's
+        human-readable outcome instead of the contract label, so the runner
+        spends the cell's whole `wait_result` and then reports "no contract
+        label" -- which reads as an SDK hang when the screen was showing the
+        answer the entire time.
+
+        The legacy string itself is not quoted: driver messages reach stdout
+        and `problems`, and the rule here is that they never carry device text.
+        """
+        if tree.label_from_tree(
+            self._nodes(tolerate=True), tree.LEGACY_LABEL_PREFIXES
+        ):
+            return DriverError(
+                f"no contract label within {timeout}s, but the app is showing "
+                "its human-readable outcome: this build is missing "
+                "--dart-define=PAYCROSS_E2E=true"
+            )
+        return DriverError(f"no contract label within {timeout}s")
 
     def _nodes(self, tolerate: bool = False) -> list[tree.Node]:
         """The current tree, or `[]` if `tolerate` and the device would not dump.
@@ -189,7 +228,7 @@ class Driver(ABC):
         raise NotImplementedError("rotate is a D3 action; Phase 0 does not use it")
 
     def airplane(self, on: bool) -> None:
-        raise NotImplementedError("airplane is a D2 action; Phase 0 does not use it")
+        raise NotImplementedError("airplane is a D3 action; Phase 0 does not use it")
 
     def kill_activity(self) -> None:
         raise NotImplementedError("kill_activity is a D3 action; Phase 0 does not use it")

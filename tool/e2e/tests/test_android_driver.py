@@ -1,3 +1,4 @@
+import importlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -670,3 +671,49 @@ def test_the_d3_actions_are_declared_and_refuse_rather_than_no_op():
     for call in (lambda: d.background(5), d.rotate, lambda: d.airplane(True), d.kill_activity):
         with pytest.raises(NotImplementedError):
             call()
+
+
+def test_a_wait_that_times_out_on_a_legacy_label_names_the_missing_define():
+    # The expensive failure this replaces: a build made without
+    # --dart-define=PAYCROSS_E2E=true renders "Paid 1000 EUR - ..." instead of
+    # "result:success:<txn>", so wait_result spends its whole 180 s and then
+    # reports "no contract label", which reads as an SDK hang. The screen was
+    # showing the answer the entire time.
+    shell = FakeShell(tree=(FIXTURES / "android-result.uix").read_text())
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).wait_label(timeout=0, interval=0)
+
+    assert "PAYCROSS_E2E" in str(excinfo.value)
+
+
+def test_a_wait_that_times_out_on_nothing_at_all_does_not_blame_the_build():
+    # The diagnosis has to be earned: an empty screen is not a wrong build.
+    shell = FakeShell(tree="<hierarchy></hierarchy>")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).wait_label(timeout=0, interval=0)
+
+    assert "PAYCROSS_E2E" not in str(excinfo.value)
+
+
+def test_the_rig_paths_are_overridable_from_the_environment(monkeypatch):
+    # Every constant here is one workstation's. A second rig -- a nightly
+    # runner, another laptop -- must not need a fork of this file.
+    monkeypatch.setenv("PAYCROSS_E2E_ADB", "/opt/android/adb")
+    monkeypatch.setenv("PAYCROSS_E2E_STAGING_DIR", "/mnt/d/stage")
+    monkeypatch.setenv("PAYCROSS_E2E_WINDOWS_STAGING", r"D:\stage")
+    try:
+        importlib.reload(android)
+        assert android.ADB == "/opt/android/adb"
+        assert android.STAGING_DIR == "/mnt/d/stage"
+        assert android.WINDOWS_STAGING == r"D:\stage"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(android)
+
+
+def test_the_rig_paths_fall_back_to_this_workstation():
+    assert android.ADB.endswith("adb.exe")
+    assert android.STAGING_DIR == "/mnt/c/dev/tmp"
+    assert android.WINDOWS_STAGING == r"C:\dev\tmp"

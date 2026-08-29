@@ -39,18 +39,23 @@ from xml.etree import ElementTree as ET
 
 from .. import tree
 from ..cells import Card
-from .base import Driver, DriverError
+from .base import Driver, DriverError, rig_path
 
-SSH_HOST = "mac"
+#: The ssh alias for the Mac, overridable with PAYCROSS_E2E_SSH_HOST.
+SSH_HOST = rig_path("PAYCROSS_E2E_SSH_HOST", "mac")
 UDID = "C311AFDC-25FA-44A2-A800-10EB5A1039E3"
 BUNDLE = "com.paycross.paycrossFlutterExample"
 WDA = "http://127.0.0.1:8100"
 
 #: An ssh session gets launchd's minimal PATH, so every remote command sets
-#: these up front or xcrun, curl and flutter are all simply missing.
-MAC_ENV = (
+#: these up front or xcrun, curl and flutter are all simply missing. The
+#: prefixes are this Mac's; PAYCROSS_E2E_MAC_ENV replaces the whole preamble,
+#: and an override must keep the trailing `; ` because it is concatenated
+#: directly onto the command.
+MAC_ENV = rig_path(
+    "PAYCROSS_E2E_MAC_ENV",
     "export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer "
-    "PATH=/opt/homebrew/bin:$HOME/development/flutter/bin:$PATH; "
+    "PATH=/opt/homebrew/bin:$HOME/development/flutter/bin:$PATH; ",
 )
 
 #: Longer than the ceiling every curl below carries, so a WDA call that times
@@ -923,7 +928,7 @@ class IosDriver(Driver):
             lambda nodes: tree.label_from_tree(nodes, prefixes), timeout, interval
         )
         if label is None:
-            raise DriverError(f"no contract label within {timeout}s")
+            raise self.no_label_error(timeout)
         return label
 
     def acs(
@@ -946,10 +951,10 @@ class IosDriver(Driver):
         self._tap_node(self.scroll_to(outcome, max_swipes=max_swipes, settle=settle))
 
     def cancel_challenge(self) -> None:
-        # 0.1.1's installCancelBar() -- ThreeDSWebViewController.swift:71-84 in
-        # the v0.1.1 source, NOT the 0.1.0 tree under .e2e-3ds/ios/sdk-src,
-        # which has no such thing. 0.1.0 had no affordance at all here and
-        # held the shopper to the 480-second poll deadline.
+        # installCancelBar() in PayCross v0.1.1,
+        # Sources/PayCross/UI/ThreeDSWebViewController.swift. Read that
+        # version and no earlier: 0.1.0 has no such thing, no affordance at
+        # all here, and held the shopper to the 480-second poll deadline.
         self.tap_identifier(THREE_DS_CANCEL, timeout=120, identifier_only=True)
         self._sleep(ALERT_SETTLE_SECONDS)
         self.tap_identifier(CANCEL_CONFIRM, timeout=30)

@@ -2,8 +2,8 @@
 
     python -m tool.e2e.runner --platform android \\
         --cells tool/e2e/cells/d0 \\
-        --evidence-root ~/projects/payments/.e2e-3ds/campaign/evidence \\
-        --env-file ~/projects/payments/payment_testing_go/.env.staging \\
+        --evidence-root ~/e2e-evidence/d0-debug \\
+        --env-file ~/.paycross/.env.staging \\
         [--all] [--app PATH] [--only control]
 
 Two rules here are worth their code. A failed cell triggers an interleaved
@@ -18,8 +18,9 @@ Exit codes, which a nightly reads rather than the output:
     0  every cell passed, or every cell was skipped as already passed
     1  a cell failed, or the run itself had a problem
     2  a setup or cell-authoring mistake; nothing ran
-    3  the run aborted on consecutive control failures -- the rig or the
-       backend is broken, and no finding above it should be believed
+    3  the run aborted: either two consecutive control failures, or an
+       `--app` that would not install. The rig or the backend is broken,
+       and no finding above it should be believed
 
 One evidence root per build. A resume trusts what earlier runs recorded, and
 `passed_cells` has no idea which build a pass came from, so pointing a new APK
@@ -556,10 +557,12 @@ def run_cell(
             indent=2,
         ).encode(),
     )
-    # Last, and with the token. This line is the ledger a resume reads, so it
-    # is appended only once the evidence it points at is on disk -- and its
-    # `label` is read off the device, which makes it the one field here that
-    # has not already been through _redacted.
+    # Last: this line is the ledger a resume reads, so it is appended only
+    # once the evidence it points at is on disk. Every field here has already
+    # been through _redacted, so the scrub is belt and braces -- but it takes
+    # the cell's whole secrets list rather than the minted token alone,
+    # because the merchant read adds one the runner never minted and a
+    # narrower list here would be the one place it is not covered.
     run.append_progress(
         {
             "cell": cell.id,
@@ -570,7 +573,7 @@ def run_cell(
             "control_check": is_control_check,
             "evidence": artifact_id,
         },
-        secrets=(token,),
+        secrets=tuple(secrets),
     )
     return result
 
@@ -749,8 +752,9 @@ def main(argv: list[str] | None = None) -> int:
             "  0  every cell passed, or was skipped as already passed\n"
             "  1  a cell failed, or the run itself had a problem\n"
             "  2  a setup or cell-authoring mistake; nothing ran\n"
-            "  3  aborted on consecutive control failures -- the rig or the\n"
-            "     backend is broken, and no finding above it is believable\n"
+            "  3  aborted, on consecutive control failures or an --app that\n"
+            "     would not install -- the rig or the backend is broken, and\n"
+            "     no finding above it is believable\n"
         ),
     )
     parser.add_argument("--platform", required=True, choices=("android", "ios"))

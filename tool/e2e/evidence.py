@@ -66,8 +66,9 @@ MIN_SECRET_CHARS = 8
 MIN_SECRET_PREFIX_CHARS = 48
 
 #: Keys whose value is a credential wherever they appear in a merchant
-#: resource. Wider than `sandbox._scrub`'s single key on purpose -- see there. A GET on an *open* session re-mints a `session_token` and hands it
-#: back, so the runner is given a live token it never minted and cannot name as
+#: resource. Wider than `sandbox._scrub`'s single key on purpose -- see there.
+#: A GET on an *open* session re-mints a `session_token` and hands it back, so
+#: the runner is given a live token it never minted and cannot name as
 #: a secret in advance -- which is how full tokens reached merchant.json in the
 #: first live iOS run. Dropped by key, so this holds however the value is
 #: shaped and whatever the shape rule can or cannot see.
