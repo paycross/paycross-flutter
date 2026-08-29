@@ -167,6 +167,12 @@ class Report:
     #: would not close, an app that would not install. Recorded beside the
     #: verdicts, never in place of them.
     problems: list[str] = field(default_factory=list)
+    #: Things the run noticed and carried on through -- today, a bearer
+    #: refresh that fell back to the field the gateway restates. Deliberately
+    #: not `problems`: these do not change the exit code, because a warning
+    #: that turns a green matrix red is a warning the next person learns to
+    #: silence.
+    warnings: list[str] = field(default_factory=list)
     aborted: bool = False
     abort_reason: str = ""
 
@@ -351,6 +357,11 @@ def run_cell(
     label: str | None = None
     rearmed: bool | None = None
     session: dict[str, str] = {}
+    #: Steps whose verb could have been photographed but whose dump said the
+    #: sheet had already gone. Filed by name, because a cell with no frames in
+    #: it is otherwise indistinguishable from a screenshot path that is
+    #: quietly broken -- which is a live question for the campaign report.
+    screenshots_skipped: list[str] = []
     reached_the_end = False
     authoring = False
 
@@ -433,6 +444,8 @@ def run_cell(
                         # A frame is the least of what a cell collects, and
                         # the cell still has a verdict to reach.
                         problems.append(f"screenshot: {error}")
+                elif verb in SHOT_VERBS:
+                    screenshots_skipped.append(step)
             reached_the_end = True
         except Exception as error:  # noqa: BLE001
             # DriverError is the expected shape, but subprocess.TimeoutExpired
@@ -461,6 +474,8 @@ def run_cell(
                         problems.append(
                             f"screenshot: none after the failure ({secondary})"
                         )
+                elif verb in SHOT_VERBS:
+                    screenshots_skipped.append(f"{step}-failed")
         finally:
             try:
                 shutil.rmtree(token_dir)
@@ -557,6 +572,7 @@ def run_cell(
                 "rearmed": rearmed,
                 "expected_label": expected.label,
                 "problems": problems,
+                "screenshots_skipped": screenshots_skipped,
                 "budget_seconds": budget,
                 "seconds": (datetime.now(timezone.utc) - started).total_seconds(),
             },
@@ -626,6 +642,8 @@ def run_cells(
     app_path: str | None = None,
     build_id: str | None = None,
 ) -> Report:
+    # Only run_cell had one, and report.json wants the whole run's window.
+    started = datetime.now(timezone.utc)
     # Checked again rather than taken on trust: run_cells is callable on its
     # own, and this is the last point before a session is minted.
     everything = check_cells(cell_dir, platform)
@@ -648,10 +666,56 @@ def run_cells(
     )
     todo = [c for c in chosen if c.id not in passed]
     report.skipped = [c.id for c in chosen if c.id in passed]
+
+    # Before the fully-skipped check rather than after it: a Run only makes a
+    # directory, and a run that skipped everything is exactly the one Task 10
+    # reads while assembling its tables. The directory it leaves holds nothing
+    # but a report.json, which cannot pollute a resume -- `passed_cells` globs
+    # `*/progress.jsonl` and there is none -- but it does mean an evidence
+    # root accumulates reports, so anything reading one reads the newest.
+    run = evidence.Run(Path(evidence_root), platform=platform)
+
+    def write_run_report() -> None:
+        # Drained here rather than raised: a warning that turns a green matrix
+        # red is a warning the next person learns to silence.
+        report.warnings = list(sandbox.warnings)
+        run.write_report(
+            {
+                "run_id": run.run_id,
+                "platform": platform,
+                "build": build_id,
+                "cells_dir": str(cell_dir),
+                "started": started.isoformat(),
+                "finished": datetime.now(timezone.utc).isoformat(),
+                "exit_code": report.exit_code,
+                "summary": _summary(report),
+                "aborted": report.aborted,
+                "abort_reason": report.abort_reason,
+                "problems": report.problems,
+                "warnings": report.warnings,
+                "skipped": report.skipped,
+                "cells": [
+                    {
+                        "cell": r.cell_id,
+                        "passed": r.passed,
+                        "control_check": r.is_control_check,
+                        "session_id": r.session_id,
+                        "label": r.label,
+                        "transaction_id": r.transaction_id,
+                        "problems": r.problems,
+                        "evidence": r.artifact_id,
+                    }
+                    for r in report.results
+                ],
+            }
+        )
+
     if not todo:
+        # No device is touched, so no driver.close() either: a fully-resumed
+        # run has nothing to release.
+        write_run_report()
         return report
 
-    run = evidence.Run(Path(evidence_root), platform=platform)
     # From every cell rather than from the chosen ones: --only says what to
     # run, not whether to believe the result.
     control = next((c for c in everything if c.id == CONTROL_CELL_ID), None)
@@ -725,6 +789,9 @@ def run_cells(
             run.append_progress(
                 {"cell": "-", "status": "run-problem", "problems": [problem]}
             )
+        # After close(), so a host that would not let go is in the report
+        # rather than only in the next reader's imagination.
+        write_run_report()
 
     return report
 
@@ -862,6 +929,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"     - {problem}")
     for problem in report.problems:
         print(f"RUN-PROBLEM {problem}")
+    for warning in report.warnings:
+        print(f"WARN {warning}")
     print(_summary(report))
     return report.exit_code
 

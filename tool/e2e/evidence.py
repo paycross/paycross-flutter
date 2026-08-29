@@ -242,6 +242,19 @@ class Run:
         path.write_bytes(redact(data, secrets))
         return path
 
+    def write_report(self, record: dict[str, Any]) -> Path:
+        """The run's own summary, so a finished run is readable off disk.
+
+        The exit code reaches stdout and nowhere else, and nothing downstream
+        -- the nightly, the campaign report -- can parse a 40-minute run's
+        output. Written through `redact()` like every other artifact: every
+        field the runner puts in here has already been through `_redacted`, so
+        this is belt and braces rather than the only guard.
+        """
+        path = self.dir / "report.json"
+        path.write_bytes(redact(json.dumps(record, indent=2).encode()))
+        return path
+
     def append_progress(
         self, record: dict[str, Any], *, secrets: Iterable[str | None] = ()
     ) -> None:

@@ -71,6 +71,9 @@ class FakeSandbox:
         self.minted = []
         self.sessions = sessions or {}
         self.token = token
+        # The real Sandbox carries these; the runner drains them into the
+        # run report rather than into its problems.
+        self.warnings = []
 
     def mint(self, amount, currency, options):
         session_id = f"sess-{len(self.minted)}"
@@ -1669,3 +1672,158 @@ def test_the_build_id_is_recorded_in_result_json(cell_dir, tmp_path):
 
     written = next((tmp_path / "evidence").glob("*/control/result.json"))
     assert json.loads(written.read_text())["build"] == "android-0.3.3-release-r8"
+
+
+# --- Plan B: the run-level report ----------------------------------------
+
+
+def report_json(tmp_path):
+    """The newest report.json under the evidence root.
+
+    Newest, because a fully-skipped run leaves a directory holding nothing
+    else, so a root accumulates them.
+    """
+    written = sorted((tmp_path / "evidence").glob("*/report.json"))
+    return json.loads(written[-1].read_text())
+
+
+def test_a_finished_run_is_readable_without_parsing_stdout(cell_dir, tmp_path):
+    # The exit code was printed and nowhere else, so nothing downstream --
+    # the nightly, the campaign report -- could read a finished run.
+    report = run(cell_dir, tmp_path, FakeDriver())
+
+    written = report_json(tmp_path)
+    assert written["exit_code"] == report.exit_code == 0
+    assert written["platform"] == "android"
+    assert written["cells_dir"] == str(cell_dir)
+    assert [c["cell"] for c in written["cells"]] == ["control", "frictionless"]
+    assert all(c["passed"] for c in written["cells"])
+    assert written["started"] <= written["finished"]
+
+
+def test_a_report_is_written_when_the_run_aborts(cell_dir, tmp_path):
+    # Every label wrong, so the control fails and so does its check: two in a
+    # row, which is the rig-fault rule.
+    driver = FakeDriver(labels=["result:cancelled"] * 20)
+
+    report = run(cell_dir, tmp_path, driver)
+
+    written = report_json(tmp_path)
+    assert written["aborted"] is True
+    assert written["abort_reason"] == report.abort_reason
+    assert written["exit_code"] == report.exit_code == runner.EXIT_ABORTED
+
+
+def test_a_report_is_written_even_when_every_cell_was_skipped(cell_dir, tmp_path):
+    # A fully-resumed run is exactly what Task 10 reads while assembling its
+    # tables, and it used to return before the Run was ever constructed.
+    run(cell_dir, tmp_path, FakeDriver())
+
+    second = run(cell_dir, tmp_path, FakeDriver(), run_all=False)
+
+    assert second.results == []
+    assert second.skipped == ["control", "frictionless"]
+    written = report_json(tmp_path)
+    assert written["cells"] == []
+    assert written["skipped"] == ["control", "frictionless"]
+    assert written["exit_code"] == second.exit_code == 0
+
+
+def test_a_skipped_runs_directory_cannot_satisfy_a_later_resume(cell_dir, tmp_path):
+    run(cell_dir, tmp_path, FakeDriver(), only=["control"])
+    run(cell_dir, tmp_path, FakeDriver(), only=["control"], run_all=False)
+
+    # The skipped run left a directory with no progress.jsonl in it, which is
+    # what passed_cells globs for.
+    assert evidence.passed_cells(tmp_path / "evidence", "android") == {"control"}
+
+
+def test_a_fully_skipped_run_touches_no_device(cell_dir, tmp_path):
+    run(cell_dir, tmp_path, FakeDriver())
+    driver = FakeDriver()
+
+    run(cell_dir, tmp_path, driver, run_all=False)
+
+    assert driver.actions == []
+
+
+def test_a_token_spliced_into_a_problem_does_not_survive_into_the_report(
+    cell_dir, tmp_path
+):
+    driver = FakeDriver()
+    driver.type_card = raises(DriverError(f"the form said {JWT}"))
+
+    run(cell_dir, tmp_path, driver, sandbox=FakeSandbox(token=JWT), only=["control"])
+
+    raw = next((tmp_path / "evidence").glob("*/report.json")).read_bytes()
+    assert b"eyJ" not in raw
+    assert b"[REDACTED-SESSION-TOKEN]" in raw
+
+
+def test_a_sandbox_warning_is_recorded_beside_the_verdicts_not_among_them(
+    cell_dir, tmp_path
+):
+    # A warning must not turn a green matrix red, or the next person to see
+    # one learns to silence it.
+    sandbox = FakeSandbox()
+    sandbox.warnings.append("the access token is a JWT but its 'exp' is a str")
+
+    report = run(cell_dir, tmp_path, FakeDriver(), sandbox=sandbox)
+
+    assert report.exit_code == 0
+    assert report.problems == []
+    assert report.warnings == sandbox.warnings
+    assert report_json(tmp_path)["warnings"] == sandbox.warnings
+
+
+def test_a_warning_is_printed_but_does_not_change_the_exit_code(
+    cell_dir, tmp_path, capsys, monkeypatch
+):
+    sandbox = FakeSandbox()
+    sandbox.warnings.append("the access token's exp is 5400s in the past")
+    monkeypatch.setattr(runner, "_build_driver", lambda platform: FakeDriver())
+    monkeypatch.setattr(runner.Sandbox, "from_env_file", classmethod(
+        lambda cls, path, transport=None: sandbox
+    ))
+    env = tmp_path / ".env"
+    env.write_text("x=1\n", encoding="utf-8")
+
+    code = runner.main(
+        [
+            "--platform", "android",
+            "--cells", str(cell_dir),
+            "--evidence-root", str(tmp_path / "evidence"),
+            "--env-file", str(env),
+            "--all",
+        ]
+    )
+
+    assert code == 0
+    assert "WARN the access token's exp is 5400s in the past" in capsys.readouterr().out
+
+
+# --- Plan B: the guard's refusals are evidence too ------------------------
+
+
+def test_the_frames_the_screenshot_guard_refused_are_named(cell_dir, tmp_path):
+    # "0 screenshots on iOS" was invisible in the evidence rather than
+    # explained by it.
+    driver = FakeDriver()
+    driver.dump_tree = lambda: f'<hierarchy><node text="{TOKEN}"/></hierarchy>'.encode()
+
+    run(cell_dir, tmp_path, driver, only=["control"])
+
+    written = json.loads(
+        next((tmp_path / "evidence").glob("*/control/result.json")).read_text()
+    )
+    assert written["screenshots_skipped"] == ["02-type_card", "03-tap_pay"]
+    assert not list((tmp_path / "evidence").glob("*/control/*.png"))
+
+
+def test_a_run_that_took_every_frame_it_could_names_none(cell_dir, tmp_path):
+    run(cell_dir, tmp_path, FakeDriver(), only=["control"])
+
+    written = json.loads(
+        next((tmp_path / "evidence").glob("*/control/result.json")).read_text()
+    )
+    assert written["screenshots_skipped"] == []
