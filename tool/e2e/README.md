@@ -309,10 +309,22 @@ the merchant check (transaction `failed`, session still `open`).
   is an HTTP 4xx with a JSON body rather than a transport error, so the wrapper
   checks `value.error` and raises — truncating the message, because the
   envelope's traceback runs to ~10 KB.
-* `launch()` deletes whatever session `/status` reports open, without checking
-  whose it is: WDA has exactly one, and a foreign session would break this run
-  just as thoroughly. That makes **one run per WebDriverAgent** the standing
-  rule, the way one run per emulator is on Android.
+* **The WDA session is created without a `bundleId`, deliberately.** WDA reads
+  one as "launch this", and for `XCUIApplication` launching means
+  terminate-*then*-launch — which kills the app `launch()` started a moment
+  earlier and takes its `--console-pty` capture with it, so criterion 3 then has
+  an empty log to pass on. `forceAppLaunch: false` is a literal in the 16.2.2
+  binary and does **not** stop it: measured on the rig 2026-08-29, where it
+  failed every cell in `_check_console` (commit `ae3e460`). A session naming no
+  bundle launches nothing and attaches to whatever is foreground, which is
+  enough — everything asked of a session here is coordinate- or device-level and
+  `/source` is unscoped. The full reasoning is in the capabilities comment in
+  `drivers/ios.py`.
+* `launch()` also deletes whatever session `/status` reports open, without
+  checking whose it is: WDA has exactly one, and a foreign session would break
+  this run just as thoroughly — a session bound to a bundle terminates its app
+  when a new one displaces it. That makes **one run per WebDriverAgent** the
+  standing rule, the way one run per emulator is on Android.
 * The SDK emits no `os_log`, so the crash markers criterion 3 looks for reach the
   app's stdout and stderr and nowhere else. They are captured by launching
   through `simctl launch --console-pty` into a log file on the Mac. **That log is
@@ -337,11 +349,12 @@ in the code's ambitions.
 | WDA session | none | owns one; deletes whatever is open |
 | Console capture | none (logcat is pulled per window) | owns one, truncated per launch |
 
-The PAN read-back is the regression path for the 0.3.2 caret bug: it reports
-what the field actually reads rather than blaming a cause, because a caret bug
-and a mistyped tap look identical from there. Typing is paced at 0.4 s per
-digit so a formatter that merely cannot keep up does not present as the caret
-bug returning — a false finding against the SDK is the expensive direction to be
+The PAN read-back is the regression path for the 0.3.1 caret bug, which 0.3.2
+fixed and which the read-back proves 0.3.3 still holds against. It reports what
+the field actually reads rather than blaming a cause, because a caret bug and a
+mistyped tap look identical from there. Typing is paced at 0.4 s per digit so a
+formatter that merely cannot keep up does not present as the caret bug
+returning — a false finding against the SDK is the expensive direction to be
 wrong in.
 
 The iOS keypad is `payment-ios-sdk#16`: it is numeric, has no Done or Return

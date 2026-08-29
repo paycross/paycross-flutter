@@ -48,11 +48,11 @@ _LAUNCHER = "android.intent.category.LAUNCHER"
 #: `input text` splits its argument on spaces; %s is its escape.
 _SPACE = "%s"
 
-#: The gap fill-card-raw.sh left after every keyevent, and therefore the
-#: timing the 0.3.2 caret fix was proven under on this emulator. Typing flat
-#: out would let a formatter that merely cannot keep up present as the caret
-#: bug returning -- a false finding against the SDK, which is the expensive
-#: direction to be wrong in.
+#: The gap fill-card-raw.sh left after every keyevent, and therefore the timing
+#: the 0.3.1 caret bug's fix, shipped in 0.3.2, was proven under on this
+#: emulator. Typing flat out would let a formatter that merely cannot keep up
+#: present as the caret bug returning -- a false finding against the SDK, which
+#: is the expensive direction to be wrong in.
 DIGIT_PACING_SECONDS = 0.4
 
 #: What the seed scripts waited after a tap, an entry or a cold start. Kept
@@ -194,7 +194,7 @@ class AndroidDriver(Driver):
 
         Bulk `input text` bypasses the formatter, which is precisely the code
         path a card form has to survive -- typing raw is what caught the 0.3.1
-        caret bug and what proves 0.3.3 fixed it.
+        caret bug, which 0.3.2 fixed, and what proves 0.3.3 still holds.
         """
         for digit in digits:
             self._key(_KEYCODE_ZERO + int(digit))
