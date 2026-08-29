@@ -60,10 +60,12 @@ def test_every_non_success_cell_asserts_no_succeeded_transaction(platform):
         assert expected.merchant.get("no_succeeded_txn") is True, cell.id
 
 
-def test_the_rearm_cell_carries_a_per_platform_recovery_expectation():
+def test_the_rearm_cell_expects_one_recovery_on_both_platforms():
+    # Observed on both: the 2026-08-29 Android run returned
+    # failure.recovery = change_method, same as iOS.
     cell = cells.load_cell(D0 / "challenge_authentication_failed_rearm.yaml")
 
-    assert cell.expected_for("android").merchant["failure_recovery"] is None
+    assert cell.expected_for("android").merchant["failure_recovery"] == "change_method"
     assert cell.expected_for("ios").merchant["failure_recovery"] == "change_method"
     assert cell.expected_for("android").rearmed is True
 

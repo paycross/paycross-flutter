@@ -9,11 +9,16 @@
 # banner string is identical after any non-cancel submit failure, so on its
 # own it cannot tell a retryable decline from a submit that simply failed.
 #
-# The two platforms reach the re-arm by different routes and the merchant API
-# says so. For the same ACS outcome the sandbox returned no recovery on
-# Android (Recovery.fromString(null) -> RETRY) and change_method on iOS. Both
-# are retryable, so the observable behaviour matches; only failure.recovery
-# differs, hence the per-platform overrides.
+# Both platforms get the same answer from the sandbox for this ACS outcome:
+# failure.recovery = change_method, which is retryable, which is why the
+# sheet re-arms rather than resolving.
+#
+# This cell used to carry a per-platform override saying Android returned no
+# recovery at all. It does not. That reading came from the 2026-08-26 verify
+# script, which looked for the field somewhere other than
+# transactions[].failure.recovery and found nothing there; the live run on
+# 2026-08-29 read change_method on Android from the merchant API directly.
+# One expectation, both platforms.
 #
 # Sub-project #2 (re-arm fixes, ios#14 / android#23) is expected to make the
 # sheet resolve terminally here. Updating this file is part of that work's
@@ -44,9 +49,4 @@ expected:
     txn_count: 1
     txn_status: failed
     no_succeeded_txn: true
-expected.android:
-  merchant:
-    failure_recovery: null
-expected.ios:
-  merchant:
     failure_recovery: change_method
