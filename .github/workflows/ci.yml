@@ -135,6 +135,34 @@ jobs:
           fi
           echo "ok"
 
+  # The E2E matrix runner's own tests. Deliberately device-free: every driver
+  # call is faked, so what this proves is the parsing, the redaction, the label
+  # matching and the merchant verification -- the parts where a silent mistake
+  # would be read as an SDK finding rather than as a bug in the tool. The
+  # shipped cell files are validated here too, so a YAML typo fails in seconds
+  # instead of twenty minutes into an emulator run.
+  #
+  # The example app's own tests are not repeated here; the linux job above
+  # already runs them, and the label contract only needs proving once.
+  e2e-unit:
+    name: E2E runner unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The runner targets the WSL rig's interpreter, which is 3.10. Pinned
+      # rather than floating so a syntax feature that only lands later cannot
+      # pass CI and then fail on the machine that drives the devices.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install runner dependencies
+        run: pip install -r tool/e2e/requirements.txt pytest
+
+      - name: Test the runner
+        run: python -m pytest tool/e2e/tests -q
+
   # macOS only proves the thing Linux cannot: that the generated Swift and the
   # hand-written iOS implementation actually agree. PR-only, because that
   # mismatch can only be introduced by a source change, and macOS minutes bill
