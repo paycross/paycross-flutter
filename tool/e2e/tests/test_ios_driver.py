@@ -1221,6 +1221,60 @@ def test_paste_token_long_presses_where_the_field_is_now(tmp_path):
     ]
 
 
+#: The token field while it is focused and still empty -- the one state whose
+#: accessible name is not "Session token". Flutter merges a focused, empty
+#: field's hint into its semantics label, and the example's hint is a sample
+#: JWT prefix (example/lib/main.dart:124), so the name reads
+#: "Session token\neyJhbGciOi…". Measured on the rig 2026-08-29 against
+#: Flutter 3.47.0 / iOS 26.5, where it failed the live run's first paste.
+#: Moved as well as renamed, exactly as MOVED_XML is: the tap raises the
+#: keyboard and the field scrolls, so the coordinates say which node the long
+#: press was aimed from rather than merely that one was found.
+HINTED_XML = SOURCE_XML.replace(
+    'name="Session token" label="Session token" value="[REDACTED-SESSION-TOKEN]" '
+    'enabled="true" visible="true" x="20" y="190"',
+    'name="Session token&#10;eyJhbGciOi…" label="Session token&#10;eyJhbGciOi…" '
+    'value="" enabled="true" visible="true" x="20" y="90"',
+)
+assert HINTED_XML != SOURCE_XML, "the fixture's token field changed shape"
+
+
+class HintedFieldFakeSsh(FakeSsh):
+    """Serves the field plain, then hinted once the tap has focused it."""
+
+    def __init__(self):
+        super().__init__()
+        self.tapped = False
+        self.held = False
+
+    def __call__(self, command, *, stdin=None):
+        if "/wda/tap" in command:
+            self.tapped = True
+        if "touchAndHold" in command:
+            self.held = True
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            hinted = self.tapped and not self.held
+            return source_response(HINTED_XML if hinted else SOURCE_XML)
+        return super().__call__(command, stdin=stdin)
+
+
+def test_paste_token_re_resolves_the_field_while_its_hint_is_in_its_name(tmp_path):
+    # The tap focuses the field, and a focused empty field carries the hint in
+    # its accessibility label. An exact match on "Session token" finds nothing
+    # in exactly the state the long press has to be aimed from.
+    ssh = HintedFieldFakeSsh()
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.paste_token(token_file(tmp_path))
+
+    assert payloads_for(ssh, "/wda/touchAndHold") == [
+        {"x": 201.0, "y": 166.0, "duration": 1.2}
+    ]
+
+
 def test_paste_token_hands_off_to_the_sheet_once_the_field_has_taken_it(tmp_path):
     ssh = FakeSsh()
     d = driver(ssh)

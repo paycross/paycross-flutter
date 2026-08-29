@@ -33,6 +33,7 @@ import shlex
 import subprocess
 import time
 from datetime import datetime, timezone
+from collections.abc import Callable
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -143,6 +144,25 @@ _DEVICE_STATE = re.compile(r"\(([^()]+)\)\s*$")
 #: other half: a mint that answered with an error document would otherwise be
 #: pasted as though it were a credential and come back as an instant 401.
 _JWT = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
+
+
+def _is_token_field(node: tree.Node) -> bool:
+    """The example's token field, in both shapes its accessible name takes.
+
+    Unfocused, and once it holds anything, the name is just "Session token"
+    and the content is in `value`. Focused and still empty it is
+    "Session token\neyJhbGciOi…": Flutter merges an empty field's hint into
+    its semantics label, and the example's hint is a sample JWT prefix
+    (example/lib/main.dart:124). That is exactly the state the long press has
+    to be aimed from, so an exact match finds nothing at the one moment it is
+    asked to -- measured on the rig 2026-08-29 against Flutter 3.47.0 and
+    iOS 26.5, where it failed the first live paste.
+
+    A prefix rather than either literal, so the hint can be reworded without
+    this following it. Untagged, so `name` is WDA's fallback to the label.
+    """
+    name = node.identifier or node.content_desc
+    return name == TOKEN_FIELD or name.startswith(TOKEN_FIELD + "\n")
 
 
 def _text(raw: bytes) -> str:
@@ -541,14 +561,19 @@ class IosDriver(Driver):
         return node.visible and 0 <= x <= width and 0 <= y <= height
 
     def _matches_in(
-        self, nodes: list[tree.Node], name: str, identifier_only: bool
+        self,
+        nodes: list[tree.Node],
+        name: str,
+        identifier_only: bool,
+        match: Callable[[tree.Node], bool] | None = None,
     ) -> list[tree.Node]:
-        def match(node):
+        def by_name(node):
             if node.identifier == name:
                 return True
             return not identifier_only and node.content_desc == name
 
-        return [n for n in nodes if match(n)]
+        chosen = match or by_name
+        return [n for n in nodes if chosen(n)]
 
     def _matches(self, name: str, *, identifier_only: bool = False) -> list[tree.Node]:
         return self._matches_in(self._nodes(), name, identifier_only)
@@ -559,9 +584,10 @@ class IosDriver(Driver):
         name: str,
         identifier_only: bool,
         require_on_screen: bool,
+        match: Callable[[tree.Node], bool] | None = None,
     ) -> tree.Node | None:
         """The best match in one tree: on screen if there is one."""
-        hits = self._matches_in(nodes, name, identifier_only)
+        hits = self._matches_in(nodes, name, identifier_only, match)
         if not hits:
             return None
         for node in hits:
@@ -591,6 +617,7 @@ class IosDriver(Driver):
         interval: float = POLL_INTERVAL_SECONDS,
         identifier_only: bool = False,
         require_on_screen: bool = False,
+        match: Callable[[tree.Node], bool] | None = None,
     ) -> tree.Node:
         """Matches `name`, which is the identifier when one is set.
 
@@ -600,6 +627,10 @@ class IosDriver(Driver):
         what wda.py's by_name did. `identifier_only` turns the label half off,
         which is how `cancel_form` avoids the challenge bar's Cancel item: that
         one is *labelled* "Cancel" while its identifier is "threeDSCancel".
+
+        `match` replaces the comparison for the one element whose name is not
+        stable -- see `_is_token_field`. `name` is still what a failure is
+        reported as, so the message names the field rather than a lambda.
         """
         if not name:
             # Every untagged element carries name="" and label="", which is most
@@ -608,7 +639,9 @@ class IosDriver(Driver):
             # caller a later phase adds.
             raise DriverError("refusing to match on an empty name")
         found = self._poll(
-            lambda nodes: self._pick(nodes, name, identifier_only, require_on_screen),
+            lambda nodes: self._pick(
+                nodes, name, identifier_only, require_on_screen, match
+            ),
             timeout,
             interval,
         )
@@ -782,7 +815,9 @@ class IosDriver(Driver):
         token_path = Path(token_path)
         text = self._read_token(token_path)
 
-        field = self._find(TOKEN_FIELD, timeout=SCREEN_TIMEOUT_SECONDS)
+        field = self._find(
+            TOKEN_FIELD, timeout=SCREEN_TIMEOUT_SECONDS, match=_is_token_field
+        )
         try:
             self._remote(
                 f"xcrun simctl pbcopy {self._quoted_udid}", stdin=text.encode("utf-8")
@@ -791,7 +826,9 @@ class IosDriver(Driver):
             self._sleep(PASTE_SETTLE_SECONDS)
             # Re-resolved: the tap raised the keyboard, which on a short screen
             # scrolls the field out from under the coordinates it had before.
-            x, y = self._find(TOKEN_FIELD, timeout=15).centre
+            x, y = self._find(
+                TOKEN_FIELD, timeout=15, match=_is_token_field
+            ).centre
             self._wda(
                 "POST",
                 self._session("/wda/touchAndHold"),
@@ -805,7 +842,7 @@ class IosDriver(Driver):
         self._sleep(SETTLE_SECONDS)
 
         def took(nodes):
-            for node in self._matches_in(nodes, TOKEN_FIELD, False):
+            for node in self._matches_in(nodes, TOKEN_FIELD, False, _is_token_field):
                 if node.value:
                     return True
             return None
