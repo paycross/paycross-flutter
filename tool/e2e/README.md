@@ -557,7 +557,7 @@ trailing it means a rule ran in the wrong order.
 pytest tool/e2e/tests -q
 ```
 
-563 tests, no device needed: every driver call is faked, so this covers the
+564 tests, no device needed: every driver call is faked, so this covers the
 parsing, the redaction, the label matching and the merchant verification — the
 places where a silent mistake would be read as an SDK finding. The shipped cell
 files are validated here too. CI runs this on Linux on every PR, in its own job,
