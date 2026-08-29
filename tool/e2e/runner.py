@@ -273,7 +273,6 @@ def run_cell(
     amount_text = tree.format_amount_en_us(cell.session.amount, cell.session.currency)
     budget = budget_for(cell)
     started = datetime.now(timezone.utc)
-    clock = time.monotonic()
 
     problems: list[str] = []
     label: str | None = None
@@ -310,6 +309,9 @@ def run_cell(
             token_path.write_text(token, encoding="utf-8")
             os.chmod(token_path, 0o600)
 
+            # From here rather than from the mint: budget_for sums a launch
+            # and the actions, and the merchant API bounds its own calls.
+            clock = time.monotonic()
             driver.launch()
             for index, action in enumerate(cell.actions, start=1):
                 step, verb = f"{index:02d}-{action.verb}", action.verb
@@ -449,6 +451,9 @@ def run_cells(
     app_path: str | None = None,
 ) -> Report:
     everything = load_cells(Path(cell_dir), platform)
+    if not everything:
+        # Running nothing and exiting 0 reads as "everything passed".
+        raise CellError(f"{cell_dir}: no cell in it runs on {platform}")
     chosen = everything
     if only:
         unknown = sorted(set(only) - {c.id for c in everything})
@@ -589,20 +594,22 @@ def main(argv: list[str] | None = None) -> int:
         # line rather than a traceback halfway through a matrix.
         load_cells(args.cells, args.platform)
         sandbox = Sandbox.from_env_file(args.env_file)
+        report = run_cells(
+            platform=args.platform,
+            cell_dir=args.cells,
+            evidence_root=args.evidence_root,
+            driver=_build_driver(args.platform),
+            sandbox=sandbox,
+            run_all=args.all,
+            only=args.only,
+            app_path=args.app,
+        )
     except (CellError, SandboxError, OSError) as error:
+        # An unusable selection or an evidence root that cannot be written is
+        # a mistake to explain, not a stack to read. Whatever a run did manage
+        # is already on disk: progress is appended and fsynced per cell.
         print(f"error: {error}", file=sys.stderr)
         return 2
-
-    report = run_cells(
-        platform=args.platform,
-        cell_dir=args.cells,
-        evidence_root=args.evidence_root,
-        driver=_build_driver(args.platform),
-        sandbox=sandbox,
-        run_all=args.all,
-        only=args.only,
-        app_path=args.app,
-    )
 
     for cell_id in report.skipped:
         print(f"SKIP {cell_id} (passed in an earlier run; --all to rerun)")

@@ -870,6 +870,23 @@ def test_a_cell_that_does_not_run_on_this_platform_is_not_run(tmp_path):
     assert [r.cell_id for r in report.results] == ["frictionless"]
 
 
+def test_a_directory_with_nothing_for_this_platform_is_refused(tmp_path):
+    # Running nothing and exiting 0 reads as "everything passed".
+    directory = tmp_path / "d0"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")).replace(
+            "platforms: [android, ios]", "platforms: [ios]"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CellError) as error:
+        run(directory, tmp_path, FakeDriver())
+
+    assert "android" in str(error.value)
+
+
 def test_an_install_failure_aborts_the_run_before_any_cell(cell_dir, tmp_path):
     driver = FakeDriver()
     driver.install = raises(DriverError("adb install did not report Success"))
@@ -1031,3 +1048,33 @@ def test_main_skips_what_already_passed_unless_all_is_given(
     assert code == 0
     assert "SKIP control" in out
     assert "SKIP frictionless" in out
+
+
+def test_main_reports_an_unknown_only_id_in_one_line(
+    cell_dir, tmp_path, capsys, monkeypatch
+):
+    class StubSandbox:
+        @staticmethod
+        def from_env_file(path):
+            return FakeSandbox()
+
+    monkeypatch.setattr(runner, "Sandbox", StubSandbox)
+    monkeypatch.setattr(runner, "_build_driver", lambda platform: FakeDriver())
+
+    code = runner.main(
+        [
+            "--platform",
+            "android",
+            "--cells",
+            str(cell_dir),
+            "--evidence-root",
+            str(tmp_path / "evidence"),
+            "--env-file",
+            str(tmp_path / "never-opened.env"),
+            "--only",
+            "contrl",
+        ]
+    )
+
+    assert code != 0
+    assert "contrl" in capsys.readouterr().err
