@@ -2064,6 +2064,39 @@ def test_expect_no_result_reports_the_label_that_should_not_exist(tmp_path):
     assert runner._observe(step_for(FakeDriver()), "no_result") == (True, None)
 
 
+def test_a_result_that_should_not_exist_is_named_and_scrubbed(tmp_path):
+    # `expect no_result` is the Android process-kill cell's whole assertion:
+    # the pending Dart call dies with the isolate and nothing is delivered BY
+    # DESIGN. When something is, the failure has to say what -- through the
+    # same scrub as every other problem, because a label carries the
+    # transaction id and a driver message can carry more.
+    # TOKEN is deliberately not JWT_RE-shaped, so what keeps it out of the
+    # problem line is the literal-secret scrub rather than `redact()`'s shape
+    # rule -- the one that has already been shown to miss a token twice.
+    driver = FakeDriver(stray_label=f"result:success:{TOKEN}")
+    directory = tmp_path / "d3"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")), encoding="utf-8"
+    )
+    (directory / "killed.yaml").write_text(
+        textwrap.dedent(CELL.format(id="killed"))
+        .replace('  label: "result:success:<txn>"', '  label: "<none>"')
+        .replace("  - wait_result 60\n", "  - expect no_result\n"),
+        encoding="utf-8",
+    )
+
+    report = run(directory, tmp_path, driver, only=["killed"])
+
+    problem = next(p for p in report.results[0].problems if p.startswith("expect:"))
+    assert "'no_result'" in problem
+    assert f"{runner.NO_RESULT_TIMEOUT_SECONDS}s" in problem
+    assert "saw" in problem
+    # The label named the token, and the token does not reach a problem line.
+    assert TOKEN not in problem
+    assert "REDACTED" in problem
+
+
 def test_an_expectation_with_no_deadline_is_not_a_key_error():
     # A direct lookup would raise KeyError, and KeyError is exactly the
     # miscategorised error this design is about: `run_cell` reads DriverError

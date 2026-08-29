@@ -95,7 +95,12 @@ SAVED_CARD_TIMEOUT_SECONDS = 30
 #: The drivers keep their own literal defaults for these -- `runner` imports
 #: `drivers`, so a driver cannot import back -- and `_observe` always passes
 #: `timeout=` explicitly, which makes this table the value that is really used
-#: and the driver defaults only a courtesy to a direct caller.
+#: and the driver defaults only a courtesy to a direct caller. Keep the pairs
+#: equal; a test asserts it, over the predicates that carry a literal default
+#: on the CONCRETE drivers. `Driver`'s declarations deliberately have none --
+#: they raise before a timeout could matter -- and `wait_rearmed` and
+#: `wait_no_label` take the deadline without a default by design, so a sweep
+#: over all six would read `Parameter.empty` and fail on three of them.
 #:
 #: `no_google_pay` is the odd one and deliberately short: it waits an absence
 #: OUT rather than waiting for something, so its number is how long a late
