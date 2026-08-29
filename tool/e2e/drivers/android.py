@@ -142,7 +142,22 @@ class AndroidDriver(Driver):
     # -- primitives ----------------------------------------------------------
 
     def getprop(self, name: str) -> str:
-        return self._shell(["shell", "getprop", name]).strip()
+        """One property, or a DriverError quoting what adb said instead.
+
+        `getprop` answers with a bare value or with nothing at all, while
+        every way the connection can fail puts a sentence on the wire --
+        `no devices/emulators found`, `error: device offline`, `error:
+        closed` -- which `_run` now appends rather than discards. Whitespace
+        is the tell, and the text is quoted back rather than matched against
+        a catalogue of adb's wording. Without this the boot check reads a
+        dead connection as "still booting" and the locale check reports
+        adb's sentence as though it were a locale. An empty answer is left
+        alone: that is a real device with the property not set yet.
+        """
+        answer = self._shell(["shell", "getprop", name]).strip()
+        if any(character.isspace() for character in answer):
+            raise DriverError(f"adb could not read {name}: {answer!r}")
+        return answer
 
     def _tap(self, point: tuple[int, int]) -> None:
         self._shell(["shell", "input", "tap", str(point[0]), str(point[1])])
@@ -192,6 +207,10 @@ class AndroidDriver(Driver):
         as an empty tree while the deadline is live and raises once it is not,
         so a device that will not dump is reported as itself rather than as
         whatever happened to be waited for.
+
+        The deadline is real time while the interval is not: with a no-op
+        sleep injected this busy-waits, so a test that means to reach the
+        deadline passes `timeout=0` or patches the constant that supplies it.
         """
         deadline = time.monotonic() + timeout
         while True:

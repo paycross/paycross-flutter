@@ -223,6 +223,43 @@ def test_launch_refuses_a_device_that_is_not_en_us():
     assert "de-DE" in str(excinfo.value)
 
 
+def test_launch_quotes_adb_when_the_boot_check_cannot_be_read():
+    # With no device attached, getprop's "answer" is adb's own complaint.
+    # Reading that as "not 1" reported an emulator part-way through booting
+    # when the truth was that there was no emulator to talk to.
+    shell = FakeShell("adb: no devices/emulators found\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).launch()
+
+    message = str(excinfo.value)
+    assert "no devices/emulators found" in message
+    assert "booting" not in message
+
+
+def test_launch_quotes_adb_when_the_locale_cannot_be_read():
+    shell = FakeShell("1\n", "error: device offline\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).launch()
+
+    message = str(excinfo.value)
+    assert "device offline" in message
+    # And not dressed up as though adb's sentence were a locale.
+    assert "expected 'en-US'" not in message
+
+
+def test_launch_still_says_booting_when_the_property_is_merely_unset():
+    # A device that is up but mid-boot answers with nothing at all, which is
+    # a different thing from adb being unable to ask.
+    shell = FakeShell("\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).launch()
+
+    assert "booting" in str(excinfo.value)
+
+
 def test_launch_force_stops_before_starting():
     shell = FakeShell("1\n", "en-US\n", "", "")
     naps = []
@@ -367,6 +404,26 @@ def test_paste_token_sends_the_token_on_stdin_never_in_an_argv(tmp_path):
     carried = [(argv, s) for argv, s in zip(shell.calls, shell.stdins) if s]
     assert len(carried) == 1
     assert carried[0] == (["shell"], f"input text {TOKEN}\n")
+
+
+def test_paste_token_chunks_a_long_token_and_loses_nothing(tmp_path):
+    # The real token is ~1011 characters, well past what one `input text`
+    # delivers. Chunking is only safe if the pieces reassemble exactly, and
+    # nothing downstream would notice a dropped character except as a 401.
+    long_token = ".".join("x" * 70 for _ in range(3))
+    assert len(long_token) > android.TOKEN_CHUNK_CHARS
+    path = tmp_path / "token"
+    path.write_text(long_token)
+    shell = FakeShell(tree=screen(long_token))
+
+    driver(shell).paste_token(path)
+
+    script = next(s for s in shell.stdins if s)
+    lines = script.splitlines()
+    wanted = -(-len(long_token) // android.TOKEN_CHUNK_CHARS)
+    assert len(lines) == wanted == 3
+    assert all(line.startswith("input text ") for line in lines)
+    assert "".join(ln.removeprefix("input text ") for ln in lines) == long_token
 
 
 def test_paste_token_waits_for_the_field_to_agree_with_the_file(tmp_path):
