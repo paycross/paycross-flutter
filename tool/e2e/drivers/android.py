@@ -90,6 +90,10 @@ EXAMPLE_PAY = "Pay"
 #: a cell that submits into a half-cut network measures neither state.
 AIRPLANE_SETTLE_SECONDS = 8
 
+#: How much raw device text a driver message may carry. These reach stdout and
+#: the cell's `problems`, and a wedged adb answers with a screenful.
+QUOTED_DEVICE_TEXT_CHARS = 80
+
 CARD_NUMBER = "Card number input"
 EXPIRY = "Expiry date input"
 CVV = "CVV input"
@@ -265,6 +269,13 @@ class AndroidDriver(Driver):
                 f"device locale is {locale!r}, expected 'en-US': the sheet's Pay "
                 "button text would not match"
             )
+        # Fails OPEN, and the read-back in `airplane()` fails closed. The
+        # asymmetry is deliberate: a device that has never had this setting
+        # written answers `null`, and refusing to launch on that would break
+        # every rig where nothing has ever touched it -- whereas `null` from
+        # the read-back means the write we just asked for did nothing. `null`
+        # cannot reach `airplane('off')`, because `cell_rules` only lets a
+        # cell turn it off after turning it on, which writes it.
         airplane = self._shell(["shell", "settings get global airplane_mode_on"])
         if airplane.strip() == "1":
             # A cell that failed between `airplane on` and `airplane off` left
@@ -387,15 +398,22 @@ class AndroidDriver(Driver):
         reaches this.
         """
         want = "1" if on else "0"
-        self._shell(
+        said = self._shell(
             ["shell", f"cmd connectivity airplane-mode {'enable' if on else 'disable'}"]
         )
         self._sleep(AIRPLANE_SETTLE_SECONDS)
         got = self._shell(["shell", "settings get global airplane_mode_on"]).strip()
         if got != want:
+            # The toggle's own answer as well as the read-back. Below API 30
+            # the service is not there and `cmd` says exactly that, while the
+            # read-back reports a perfectly ordinary '0' -- so without this
+            # the message describes the symptom and hides the cause. Both are
+            # bounded: they are raw device text on their way to stdout.
             raise DriverError(
-                f"airplane mode reads {got!r} after asking for {want!r}: the cut "
-                "did not take, so anything this cell measured is meaningless"
+                f"airplane mode reads {got[:QUOTED_DEVICE_TEXT_CHARS]!r} after "
+                f"asking for {want!r}: the cut did not take, so anything this "
+                "cell measured is meaningless. The toggle said "
+                f"{said.strip()[:QUOTED_DEVICE_TEXT_CHARS]!r}"
             )
 
     def type_card(self, card: Card, *, verify_pan: bool = True) -> None:

@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from tool.e2e import cells
 from tool.e2e.cells import Card
 from tool.e2e.drivers import ios
 from tool.e2e.drivers.base import DriverError
@@ -1976,15 +1975,3 @@ def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
 
     with pytest.raises(NotImplementedError):
         getattr(d, name)(*args)
-
-
-def test_every_expectation_reaches_a_driver_attribute():
-    # `EXPECTATIONS` is what a cell author may write and this is what the
-    # runner will call, so the two cannot be allowed to drift: an expectation
-    # with no method behind it raises AttributeError, which the runner reads
-    # as a broken device rather than as the authoring mistake it is.
-    for expectation in cells.EXPECTATIONS:
-        method = (
-            "wait_no_label" if expectation == "no_result" else f"wait_{expectation}"
-        )
-        assert hasattr(driver(FakeSsh()), method), expectation

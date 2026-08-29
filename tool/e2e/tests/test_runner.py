@@ -2019,6 +2019,16 @@ def test_an_expectation_a_later_dimension_owns_is_an_authoring_fault_too(arg):
         runner._perform(step_for(FakeDriver()), cells.Action("expect", arg))
 
 
+@pytest.mark.parametrize("verb", ["airplane", "dont_keep_activities"])
+@pytest.mark.parametrize("arg", ["ON", "true", "", None])
+def test_an_on_off_verb_refuses_an_argument_that_is_neither(verb, arg):
+    # These branches match on the verb alone, so `arg == "on"` quietly
+    # performed everything else as `off` -- and a cell built by hand asking
+    # for "ON" would have measured the opposite of what it asked for.
+    with pytest.raises(DriverError, match="'on' or 'off'"):
+        runner._perform(step_for(FakeDriver()), cells.Action(verb, arg))
+
+
 def test_a_verb_the_grammar_does_not_know_is_still_a_driver_error():
     # Not reachable from a cell file -- load_cell refuses it -- but run_cell
     # takes an Action, so this is the honest answer for one built by hand.
@@ -2073,6 +2083,16 @@ def test_every_expectation_has_a_deadline_and_a_predicate(what):
     # only job is to look. So a new expectation is one line in `_observe` and
     # one in the table, and this fails the suite if it is neither.
     assert what in runner.EXPECT_TIMEOUT_SECONDS
+
+    # First against a driver that stubs nothing, so the predicate this
+    # expectation names has to exist -- as a real method or as the `Driver`
+    # declaration that raises. A missing one is an AttributeError, which
+    # `run_cell` reads as a broken device rather than as the cell-file mistake
+    # it is, and two of those abort the run.
+    try:
+        runner._observe(step_for(FakeDriver()), what)
+    except NotImplementedError:
+        pass
 
     driver = FakeDriver()
     # Whichever predicate this expectation reaches, it answers "no".
@@ -2292,7 +2312,9 @@ def test_every_verb_in_the_grammar_reaches_a_branch_or_a_declaration(monkeypatch
         "enter_token": "abc",
         "expect": "rearmed",
         "wait": "1",
-        "wait_expired": "1",
+        # Not "1": `_wait_expired` checks a real monotonic deadline, so a
+        # whole second of this sweep would be spent busy-waiting for it.
+        "wait_expired": "0.001",
         "wait_result": "1",
     }
     card = cells.Card("4111111111111111", "12/28", "123")

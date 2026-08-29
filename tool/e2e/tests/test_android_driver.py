@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from tool.e2e import cells
 from tool.e2e.cells import Card
 from tool.e2e.drivers import android, base
 from tool.e2e.drivers.base import DriverError
@@ -1026,6 +1025,32 @@ def test_airplane_off_asks_for_disable_and_expects_zero():
     ]
 
 
+def test_airplane_quotes_what_the_toggle_itself_said():
+    # On API < 30 the service is not there and `cmd` says so, while the
+    # read-back then reports a perfectly ordinary '0'. Without the toggle's own
+    # answer the message describes the symptom and hides the cause.
+    shell = FakeShell("cmd: Can't find service: connectivity\n", "0\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).airplane(True)
+
+    assert "Can't find service: connectivity" in str(excinfo.value)
+
+
+def test_airplane_bounds_the_device_text_it_quotes():
+    # Driver messages reach stdout and `problems`; a wedged adb answering with
+    # a screenful must not become the failure line.
+    shell = FakeShell("x" * 4000, "y" * 4000)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).airplane(True)
+
+    message = str(excinfo.value)
+    assert "x" * android.QUOTED_DEVICE_TEXT_CHARS in message
+    assert "x" * (android.QUOTED_DEVICE_TEXT_CHARS + 1) not in message
+    assert "y" * (android.QUOTED_DEVICE_TEXT_CHARS + 1) not in message
+
+
 def test_airplane_refuses_a_cut_that_did_not_take():
     # `cmd connectivity` rather than `settings put` plus a broadcast: that
     # broadcast needs a system permission, and without it the setting flips
@@ -1109,15 +1134,3 @@ def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
 
     with pytest.raises(NotImplementedError):
         getattr(d, name)(*args)
-
-
-def test_every_expectation_reaches_a_driver_attribute():
-    # `EXPECTATIONS` is what a cell author may write and this is what the
-    # runner will call, so the two cannot be allowed to drift: an expectation
-    # with no method behind it raises AttributeError, which the runner reads
-    # as a broken device rather than as the authoring mistake it is.
-    for expectation in cells.EXPECTATIONS:
-        method = (
-            "wait_no_label" if expectation == "no_result" else f"wait_{expectation}"
-        )
-        assert hasattr(driver(FakeShell()), method), expectation

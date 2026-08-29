@@ -416,6 +416,11 @@ def _wait_expired(step: Step, seconds: float, *, sleep=None) -> None:
     and past `expires_at` (`ExpirePaymentSessions.php:29-31`) -- it does not
     look at transactions at all, so a session holding a failed one expires
     exactly like an empty one.
+
+    May overshoot `seconds` by up to SESSION_POLL_SECONDS plus one read: the
+    deadline is checked before the sleep, so a poll that starts just inside it
+    still sleeps and reads once more. `budget_for` covers that -- a timed verb
+    gets its own argument plus WAIT_SLACK_SECONDS, which is twice the poll.
     """
     # Resolved here rather than as a default, so patching `time.sleep` reaches
     # this from a whole-cell test as well as from a direct one.
@@ -489,6 +494,23 @@ def _observe(step: Step, what: str) -> tuple[bool, str | None]:
     raise DriverError(f"the runner cannot observe {what!r}: no predicate")
 
 
+def _on_or_off(verb: str, arg: str | None) -> bool:
+    """`on` or `off`, with nothing else quietly read as `off`.
+
+    `load_cell` refuses any other argument, so no cell file reaches here. But
+    the branches below match on the **verb** alone, so a hand-built `Action`
+    carrying "ON" would have been performed as `off` -- and the cell would
+    have measured the opposite of what it asked for and passed or failed on
+    it. Every other malformed argument in `_perform` is a DriverError; so is
+    this one.
+    """
+    if arg == "on":
+        return True
+    if arg == "off":
+        return False
+    raise DriverError(f"{verb} takes 'on' or 'off', not {arg!r}")
+
+
 def _perform(step: Step, action: Action):
     """Executes one action and returns whatever it answers with.
 
@@ -496,6 +518,7 @@ def _perform(step: Step, action: Action):
     pair. Everything else answers with None.
     """
     driver, verb, arg = step.driver, action.verb, action.arg
+    # -- the example app's own screen ---------------------------------------
     if verb == "paste_token":
         driver.paste_token(step.token_path)
     elif verb == "present_token":
@@ -504,6 +527,7 @@ def _perform(step: Step, action: Action):
         driver.tap_example_pay()
     elif verb == "enter_token":
         driver.enter_token(arg)
+    # -- the SDK's sheet ------------------------------------------------------
     elif verb == "type_card":
         driver.type_card(step.card)
     elif verb == "type_cvv":
@@ -522,6 +546,7 @@ def _perform(step: Step, action: Action):
         driver.cancel_challenge()
     elif verb == "cancel_form":
         driver.cancel_form()
+    # -- looking, and spending time -------------------------------------------
     elif verb == "expect":
         return _observe(step, arg)
     elif verb == "wait_result":
@@ -530,6 +555,7 @@ def _perform(step: Step, action: Action):
         time.sleep(float(arg))
     elif verb == "wait_expired":
         _wait_expired(step, float(arg))
+    # -- the app process and the device ---------------------------------------
     elif verb == "relaunch":
         driver.relaunch()
     elif verb == "background":
@@ -537,9 +563,9 @@ def _perform(step: Step, action: Action):
     elif verb == "rotate":
         driver.rotate()
     elif verb == "airplane":
-        driver.airplane(arg == "on")
+        driver.airplane(_on_or_off(verb, arg))
     elif verb == "dont_keep_activities":
-        driver.dont_keep_activities(arg == "on")
+        driver.dont_keep_activities(_on_or_off(verb, arg))
     elif verb == "kill_activity":
         driver.kill_activity()
     elif _grammar_accepts(verb, arg):
