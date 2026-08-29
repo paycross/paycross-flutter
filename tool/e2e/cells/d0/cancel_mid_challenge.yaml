@@ -1,0 +1,35 @@
+# The shopper abandons the payment while the bank's challenge is on screen.
+# The transaction is left at threeds_challenge_requested and must never
+# become an authorization -- no_succeeded_txn is the assertion this cell
+# exists for.
+#
+# On iOS this only works from PayCross 0.1.1: 0.1.0's challenge web view
+# covered the sheet's only Cancel affordance, and the 2026-08-26 run held a
+# shopper 487 s with no way out. 0.1.1's ThreeDSWebViewController installs a
+# navigation bar with a Cancel item tagged threeDSCancel (installCancelBar, at
+# ThreeDSWebViewController.swift:71-84 in the v0.1.1 source -- the 0.1.0 tree
+# under .e2e-3ds/ios/sdk-src has neither), which is what the
+# driver taps. On Android the back handler is unconditional and raises the
+# same "Cancel Payment?" dialog from either screen.
+id: cancel_mid_challenge
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - cancel_challenge
+  - wait_result 120
+expected:
+  label: "result:cancelled"
+  merchant:
+    session_status: open
+    txn_count: 1
+    txn_status: threeds_challenge_requested
+    no_succeeded_txn: true

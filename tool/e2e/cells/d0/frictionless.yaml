@@ -1,0 +1,29 @@
+# 3-D Secure resolves without ever showing the shopper a challenge: the SDK
+# runs the fingerprint web view hidden and the issuer authenticates on the
+# data alone. Distinguished from the control only by threeds_result, which is
+# why this cell asserts it.
+id: frictionless
+platforms: [android, ios]
+card:
+  pan: "4111111111153063"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    no_succeeded_txn: false
+    threeds:
+      outcome: authenticated
+      flow: frictionless
+      liability_shifted: true

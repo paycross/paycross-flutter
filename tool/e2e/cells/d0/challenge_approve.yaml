@@ -1,0 +1,29 @@
+# The full challenge flow. On the sandbox ACS page the outcome is chosen by
+# which button is tapped, not by the PAN -- so every challenge cell in the
+# matrix uses this same card and differs only in the acs: action.
+id: challenge_approve
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - acs:approve
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    no_succeeded_txn: false
+    threeds:
+      outcome: authenticated
+      flow: challenge
+      liability_shifted: true

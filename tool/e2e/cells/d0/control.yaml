@@ -1,0 +1,24 @@
+# Instant approve, no 3-D Secure at all. The baseline every other cell is
+# measured against, and the cell the runner re-runs to check the rig when
+# something else fails.
+id: control
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    no_succeeded_txn: false

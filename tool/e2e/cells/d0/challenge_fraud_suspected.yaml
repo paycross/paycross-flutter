@@ -1,0 +1,41 @@
+# A terminal decline: the server sends recovery=do_not_retry, which is not
+# retryable, so the sheet resolves instead of re-arming and Dart gets a
+# PayCrossFailure.
+#
+# This is the one D0 cell that has never been observed on Android -- the
+# 2026-08-26/28 runs covered it on iOS only (ios/progress.md N4c, F4). The
+# code says it should hold: Recovery.kt maps do_not_retry -> DO_NOT_RETRY with
+# isRetryable false. If it does not, that is a real finding rather than a rig
+# fault, and the interleaved control will say which.
+#
+# Caveat for the recovery assertion: Android's Recovery.fromString fails
+# closed to DO_NOT_RETRY for any token it does not know, so a do_not_retry
+# label there is weaker evidence than the same label on iOS. The merchant
+# API's failure.recovery, asserted below, is the real check.
+id: challenge_fraud_suspected
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - acs:fraud_suspected
+  - wait_result 180
+expected:
+  label: "result:failure:do_not_retry:<txn>"
+  merchant:
+    session_status: open
+    txn_count: 1
+    txn_status: failed
+    no_succeeded_txn: true
+    failure_recovery: do_not_retry
+    threeds:
+      outcome: not_authenticated
+      flow: challenge
+      liability_shifted: false

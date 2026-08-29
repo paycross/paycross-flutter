@@ -1,0 +1,52 @@
+# A retryable decline. The sheet does NOT resolve: it re-arms the card form
+# with "Payment failed. Please try again." and waits, so Dart gets no result
+# at all until the shopper does something else. That non-result is the whole
+# point of this cell -- it is the only D0 cell that exercises the contract's
+# sheet_rearmed predicate, and it exists so that observation is proven before
+# Phase 0 merges rather than discovered in Phase 1.
+#
+# A rearmed verdict needs the predicate AND the merchant state below: the
+# banner string is identical after any non-cancel submit failure, so on its
+# own it cannot tell a retryable decline from a submit that simply failed.
+#
+# The two platforms reach the re-arm by different routes and the merchant API
+# says so. For the same ACS outcome the sandbox returned no recovery on
+# Android (Recovery.fromString(null) -> RETRY) and change_method on iOS. Both
+# are retryable, so the observable behaviour matches; only failure.recovery
+# differs, hence the per-platform overrides.
+#
+# Sub-project #2 (re-arm fixes, ios#14 / android#23) is expected to make the
+# sheet resolve terminally here. Updating this file is part of that work's
+# definition of done, not a campaign failure. The sheet_rearmed predicate
+# survives as a negative assertion.
+id: challenge_authentication_failed_rearm
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - acs:authentication_failed
+  - expect rearmed
+  - cancel_form
+  - wait_result 120
+expected:
+  label: "result:cancelled"
+  rearmed: true
+  merchant:
+    session_status: open
+    txn_count: 1
+    txn_status: failed
+    no_succeeded_txn: true
+expected.android:
+  merchant:
+    failure_recovery: null
+expected.ios:
+  merchant:
+    failure_recovery: change_method
