@@ -142,6 +142,9 @@ def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
 class AndroidDriver(Driver):
     package = PACKAGE
 
+    #: `uiautomator dump` on this side of the fence; base._nodes calls it.
+    _parse_dump = staticmethod(tree.parse_uiautomator)
+
     def __init__(
         self,
         shell=_run,
@@ -197,48 +200,6 @@ class AndroidDriver(Driver):
             self._key(_KEYCODE_ZERO + int(digit))
             # After each digit, last one included, as the seed script did.
             self._sleep(DIGIT_PACING_SECONDS)
-
-    def _nodes(self, tolerate: bool = False):
-        """The current tree, or `[]` if `tolerate` and the device would not dump.
-
-        `uiautomator` refuses while the UI animates, which is precisely what it
-        is doing through the waits that matter -- the 120 s ACS wait, the 60 s
-        wait for the sheet. A polling caller has its own deadline and should
-        spend it, so it tolerates a refusal and looks again. A one-shot read
-        has no second chance and must not silently see an empty screen: the
-        PAN check would call it a formatter bug and the token check a truncated
-        paste, when the truth is that nothing was read at all.
-        """
-        try:
-            return tree.parse_uiautomator(self.dump_tree())
-        except DriverError:
-            if not tolerate:
-                raise
-            return []
-
-    def _poll(self, look, timeout: float, interval: float):
-        """Runs `look` over the tree until it answers, or the deadline passes.
-
-        `look` returns what it found, or None for "not yet"; `_poll` hands back
-        the same, so each caller decides whether nothing is an error. The one
-        rule that lives here rather than in three copies: a refused dump reads
-        as an empty tree while the deadline is live and raises once it is not,
-        so a device that will not dump is reported as itself rather than as
-        whatever happened to be waited for.
-
-        The deadline is real time while the interval is not: with a no-op
-        sleep injected this busy-waits, so a test that means to reach the
-        deadline passes `timeout=0` or patches the constant that supplies it.
-        """
-        deadline = time.monotonic() + timeout
-        while True:
-            live = time.monotonic() < deadline
-            found = look(self._nodes(tolerate=live))
-            if found is not None:
-                return found
-            if not live:
-                return None
-            self._sleep(interval)
 
     def _find(
         self, finder, needle: str, what: str, *, timeout: float = 30, interval: float = 2

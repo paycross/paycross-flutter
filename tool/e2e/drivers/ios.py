@@ -191,6 +191,10 @@ def _ssh(command: str, *, stdin: bytes | None = None) -> str:
 class IosDriver(Driver):
     package = BUNDLE
 
+    #: WebDriverAgent's `/source` on this side of the fence; base._nodes
+    #: calls it.
+    _parse_dump = staticmethod(tree.parse_wda)
+
     def __init__(
         self, ssh=_ssh, udid: str = UDID, bundle: str = BUNDLE, sleep=time.sleep
     ):
@@ -462,50 +466,6 @@ class IosDriver(Driver):
         self._check_console()
 
     # -- finding and tapping -------------------------------------------------
-
-    def _nodes(self, tolerate: bool = False) -> list[tree.Node]:
-        """The current tree, or `[]` if `tolerate` and WDA would not answer.
-
-        A polling caller has its own deadline and should spend it rather than
-        end a cell on one bad round trip. A one-shot read has no second chance
-        and must not silently see an empty screen: it would be reported as the
-        node it was looking for having gone missing.
-        """
-        try:
-            return tree.parse_wda(self.dump_tree())
-        except DriverError:
-            if not tolerate:
-                raise
-            return []
-
-    def _poll(self, look, timeout: float, interval: float):
-        """Runs `look` over the tree until it answers, or the deadline passes.
-
-        `look` returns what it found, or None for "not yet"; `_poll` hands back
-        the same, so each caller decides whether nothing is an error. The one
-        rule that lives here rather than in four copies: a refused dump reads as
-        an empty tree while the deadline is live and raises once it is not, so
-        WebDriverAgent falling over is reported as itself rather than as
-        whatever happened to be waited for.
-
-        The deadline is real time while the interval is not: with a no-op sleep
-        injected this busy-waits, so a test that means to reach the deadline
-        passes `timeout=0`.
-
-        The deadline bounds when the next look *starts*, not how long one takes:
-        a look's own transport timeout is spent on top of it. That is why
-        WDA_TIMEOUT_SECONDS is 30 rather than the ssh ceiling -- a 120 s curl
-        would let a 10 s wait run for two minutes.
-        """
-        deadline = time.monotonic() + timeout
-        while True:
-            live = time.monotonic() < deadline
-            found = look(self._nodes(tolerate=live))
-            if found is not None:
-                return found
-            if not live:
-                return None
-            self._sleep(interval)
 
     def _window_size(self) -> tuple[int, int]:
         if self._window is None:
