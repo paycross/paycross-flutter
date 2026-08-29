@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from tool.e2e import cells, evidence, runner
-from tool.e2e.drivers import android
 from tool.e2e.cells import CellError
+from tool.e2e.drivers import android
 from tool.e2e.drivers.base import DriverError
 from tool.e2e.sandbox import SandboxError
 
@@ -71,6 +71,9 @@ class FakeSandbox:
         self.minted = []
         self.sessions = sessions or {}
         self.token = token
+        # The real Sandbox carries these; the runner drains them into the
+        # run report rather than into its problems.
+        self.warnings = []
 
     def mint(self, amount, currency, options):
         session_id = f"sess-{len(self.minted)}"
@@ -220,9 +223,7 @@ def test_the_token_file_is_destroyed_after_every_cell(cell_dir, tmp_path):
     assert not any(p.parent.exists() for p in driver.token_paths)
 
 
-def test_the_token_file_is_destroyed_even_when_the_cell_blows_up(
-    cell_dir, tmp_path
-):
+def test_the_token_file_is_destroyed_even_when_the_cell_blows_up(cell_dir, tmp_path):
     driver = FakeDriver()
     driver.type_card = raises(DriverError("the form never appeared"))
 
@@ -271,7 +272,13 @@ def test_a_wrong_label_fails_the_cell_and_says_what_it_wanted(cell_dir, tmp_path
 
 def test_a_merchant_mismatch_fails_the_cell(cell_dir, tmp_path):
     sandbox = FakeSandbox(
-        {"sess-0": {"id": "sess-0", "status": "open", "transactions": [{"id": "txn-1"}]}}
+        {
+            "sess-0": {
+                "id": "sess-0",
+                "status": "open",
+                "transactions": [{"id": "txn-1"}],
+            }
+        }
     )
 
     report = run(cell_dir, tmp_path, FakeDriver(), sandbox)
@@ -368,32 +375,24 @@ def test_a_rearm_cell_needs_both_the_predicate_and_the_merchant_state(tmp_path):
     assert any("rearm" in p for p in not_rearmed.results[0].problems)
 
 
-def test_a_cell_expecting_a_rearm_it_never_asks_for_says_so(tmp_path):
+def test_a_cell_expecting_a_rearm_it_never_asks_for_says_so():
     # `rearmed: true` with no `expect rearmed` action is a cell-authoring
     # mistake. Reporting it as "the sheet never re-armed" would send whoever
     # is triaging after an SDK bug that is not there.
-    directory = tmp_path / "d0"
-    directory.mkdir()
-    (directory / "control.yaml").write_text(
-        textwrap.dedent(CELL.format(id="control")).replace(
-            "expected:\n", "expected:\n  rearmed: true\n"
-        ),
-        encoding="utf-8",
-    )
-
-    report = run(directory, tmp_path, FakeDriver())
-
-    assert any(
-        "no 'expect rearmed' action" in p for p in report.results[0].problems
-    )
+    #
+    # `load_cell` now refuses that pairing outright, so no cell file can reach
+    # run_cell in this state. The branch stays because `run_cell` takes a
+    # `Cell`, not a path, and this is the honest message for one built by
+    # hand -- and because "the sheet never re-armed" is the wrong answer to
+    # give whichever way the shape arrived.
+    assert "no 'expect rearmed' action" in runner._rearm_problem(None)
+    assert "never re-armed" in runner._rearm_problem(False)
 
 
 # -- skepticism -------------------------------------------------------------
 
 
-def test_a_failure_interleaves_a_control_cell_before_it_is_recorded(
-    cell_dir, tmp_path
-):
+def test_a_failure_interleaves_a_control_cell_before_it_is_recorded(cell_dir, tmp_path):
     # control passes, frictionless fails, control is re-run to check the rig.
     driver = FakeDriver(
         labels=["result:success:txn-1", "result:cancelled", "result:success:txn-1"]
@@ -426,9 +425,7 @@ def test_a_control_check_keeps_its_evidence_out_of_the_control_cell_s(
     assert report.results[-1].artifact_id == "control-check-01"
 
 
-def test_the_control_check_runs_even_when_only_names_one_other_cell(
-    cell_dir, tmp_path
-):
+def test_the_control_check_runs_even_when_only_names_one_other_cell(cell_dir, tmp_path):
     # --only is about what to run, not about whether to believe the result.
     driver = FakeDriver(labels=["result:cancelled", "result:success:txn-1"])
 
@@ -514,16 +511,16 @@ def test_all_reruns_everything(cell_dir, tmp_path):
 # -- evidence ---------------------------------------------------------------
 
 
-def test_evidence_holds_a_tree_per_action_and_the_merchant_response(
-    cell_dir, tmp_path
-):
+def test_evidence_holds_a_tree_per_action_and_the_merchant_response(cell_dir, tmp_path):
     run(cell_dir, tmp_path, FakeDriver(), only=["control"])
 
     cell_files = names(tmp_path)
     assert "merchant.json" in cell_files
     assert "result.json" in cell_files
     assert "logs.txt" in cell_files
-    assert any(n.startswith("01-paste_token") and n.endswith(".uix") for n in cell_files)
+    assert any(
+        n.startswith("01-paste_token") and n.endswith(".uix") for n in cell_files
+    )
     # The sheet is still up in this dump, so the sheet-foreground step is shot.
     assert "03-tap_pay.png" in cell_files
 
@@ -581,9 +578,7 @@ def test_the_progress_record_is_scrubbed_with_the_token_too(cell_dir, tmp_path):
     assert TOKEN.encode() not in progress.read_bytes()
 
 
-def test_the_result_file_records_the_verdict_and_what_was_expected(
-    cell_dir, tmp_path
-):
+def test_the_result_file_records_the_verdict_and_what_was_expected(cell_dir, tmp_path):
     run(cell_dir, tmp_path, FakeDriver(), only=["control"])
 
     result = json.loads(
@@ -601,9 +596,7 @@ def test_the_result_file_records_the_verdict_and_what_was_expected(
 # -- a device that misbehaves ------------------------------------------------
 
 
-def test_a_hung_device_fails_the_cell_instead_of_killing_the_matrix(
-    cell_dir, tmp_path
-):
+def test_a_hung_device_fails_the_cell_instead_of_killing_the_matrix(cell_dir, tmp_path):
     # adb times out at 300 s and ssh at 900 s; a dead WebDriverAgent gives a
     # JSONDecodeError. None of those is a DriverError, and a 40-minute matrix
     # must not die on one of them.
@@ -703,9 +696,7 @@ def test_a_failure_during_expect_does_not_also_claim_no_rearm(tmp_path):
     assert not any(p.startswith("rearm:") for p in problems)
 
 
-def test_a_screenshot_failure_is_recorded_and_the_cell_carries_on(
-    cell_dir, tmp_path
-):
+def test_a_screenshot_failure_is_recorded_and_the_cell_carries_on(cell_dir, tmp_path):
     driver = FakeDriver()
     driver.screenshot = raises(DriverError("adb exec-out exited 1"))
 
@@ -804,15 +795,11 @@ def test_a_mint_failure_never_touches_the_device(cell_dir, tmp_path):
     assert "launch" not in verbs(driver)
 
 
-def test_a_merchant_read_failure_is_reported_as_the_cell_s_problem(
-    cell_dir, tmp_path
-):
+def test_a_merchant_read_failure_is_reported_as_the_cell_s_problem(cell_dir, tmp_path):
     sandbox = FakeSandbox()
     sandbox.read = raises(SandboxError("GET /sessions/sess-0 -> HTTP 500"))
 
-    report = run(
-        cell_dir, tmp_path, FakeDriver(), sandbox=sandbox, only=["control"]
-    )
+    report = run(cell_dir, tmp_path, FakeDriver(), sandbox=sandbox, only=["control"])
 
     assert not report.results[0].passed
     assert any("merchant: " in p for p in report.results[0].problems)
@@ -837,9 +824,7 @@ def test_a_driver_error_quoting_a_jwt_is_redacted_before_it_is_reported(
     assert any("REDACTED-SESSION-TOKEN" in p for p in report.results[0].problems)
 
 
-def test_a_driver_error_quoting_the_session_token_is_redacted_too(
-    cell_dir, tmp_path
-):
+def test_a_driver_error_quoting_the_session_token_is_redacted_too(cell_dir, tmp_path):
     driver = FakeDriver()
     driver.tap_pay = raises(DriverError(f"the field reads {TOKEN}"))
 
@@ -1620,3 +1605,346 @@ def test_the_summary_counts_what_a_resume_skipped(
     assert summary == (
         "0 cells, 0 passed, 0 failed, 2 skipped, 0 control checks, aborted: no"
     )
+
+
+# --- Plan B: the build fingerprint reaches the ledger ---------------------
+
+
+def test_the_build_id_is_written_into_every_progress_record(cell_dir, tmp_path):
+    runner.run_cells(
+        platform="android",
+        cell_dir=cell_dir,
+        evidence_root=tmp_path / "evidence",
+        driver=FakeDriver(),
+        sandbox=FakeSandbox(),
+        run_all=True,
+        build_id="android-0.3.3-release-r8",
+    )
+
+    records = [
+        json.loads(line)
+        for path in (tmp_path / "evidence").glob("*/progress.jsonl")
+        for line in path.read_text().splitlines()
+    ]
+    assert records
+    assert all(r["build"] == "android-0.3.3-release-r8" for r in records if "cell" in r)
+
+
+def test_a_pass_on_a_debug_build_does_not_skip_the_cell_on_a_release_one(
+    cell_dir, tmp_path
+):
+    common = dict(
+        platform="android",
+        cell_dir=cell_dir,
+        evidence_root=tmp_path / "evidence",
+        sandbox=FakeSandbox(),
+    )
+    runner.run_cells(driver=FakeDriver(), build_id="debug", **common)
+
+    second = runner.run_cells(driver=FakeDriver(), build_id="release", **common)
+
+    assert second.skipped == []
+    assert [r.cell_id for r in second.results]
+
+
+def test_the_build_id_is_recorded_in_result_json(cell_dir, tmp_path):
+    runner.run_cells(
+        platform="android",
+        cell_dir=cell_dir,
+        evidence_root=tmp_path / "evidence",
+        driver=FakeDriver(),
+        sandbox=FakeSandbox(),
+        run_all=True,
+        build_id="android-0.3.3-release-r8",
+    )
+
+    written = next((tmp_path / "evidence").glob("*/control/result.json"))
+    assert json.loads(written.read_text())["build"] == "android-0.3.3-release-r8"
+
+
+# --- Plan B: the run-level report ----------------------------------------
+
+
+@pytest.fixture
+def distinct_run_ids(monkeypatch):
+    """One evidence directory per run, even for two runs in the same second.
+
+    `Run`'s generated id is second-resolution, so without this two runs in one
+    test share a directory -- and a test about what a run leaves *on its own*
+    then reads the other one's files and passes for the wrong reason.
+    """
+    stamps = iter(f"20260829-1200{n:02d}" for n in range(20))
+    monkeypatch.setattr(evidence, "_stamp", lambda: next(stamps))
+
+
+def report_json(tmp_path):
+    """The newest report.json under the evidence root.
+
+    Newest, because a fully-skipped run leaves a directory holding nothing
+    else, so a root accumulates them.
+    """
+    written = sorted((tmp_path / "evidence").glob("*/report.json"))
+    return json.loads(written[-1].read_text())
+
+
+def test_a_finished_run_is_readable_without_parsing_stdout(cell_dir, tmp_path):
+    # The exit code was printed and nowhere else, so nothing downstream --
+    # the nightly, the campaign report -- could read a finished run.
+    report = run(cell_dir, tmp_path, FakeDriver())
+
+    written = report_json(tmp_path)
+    assert written["exit_code"] == report.exit_code == 0
+    assert written["platform"] == "android"
+    assert written["cells_dir"] == str(cell_dir)
+    assert [c["cell"] for c in written["cells"]] == ["control", "frictionless"]
+    assert all(c["passed"] for c in written["cells"])
+    assert written["started"] <= written["finished"]
+
+
+def test_a_report_is_written_when_the_run_aborts(cell_dir, tmp_path):
+    # Every label wrong, so the control fails and so does its check: two in a
+    # row, which is the rig-fault rule.
+    driver = FakeDriver(labels=["result:cancelled"] * 20)
+
+    report = run(cell_dir, tmp_path, driver)
+
+    written = report_json(tmp_path)
+    assert written["aborted"] is True
+    assert written["abort_reason"] == report.abort_reason
+    assert written["exit_code"] == report.exit_code == runner.EXIT_ABORTED
+
+
+def test_a_report_is_written_even_when_every_cell_was_skipped(
+    cell_dir, tmp_path, distinct_run_ids
+):
+    # A fully-resumed run is exactly what Task 10 reads while assembling its
+    # tables, and it used to return before the Run was ever constructed.
+    run(cell_dir, tmp_path, FakeDriver())
+
+    second = run(cell_dir, tmp_path, FakeDriver(), run_all=False)
+
+    assert second.results == []
+    assert second.skipped == ["control", "frictionless"]
+    # Its own directory, holding nothing but the report -- which is what the
+    # resume test below turns on.
+    latest = sorted((tmp_path / "evidence").iterdir())[-1]
+    assert [p.name for p in latest.iterdir()] == ["report.json"]
+    written = report_json(tmp_path)
+    assert written["cells"] == []
+    assert written["skipped"] == ["control", "frictionless"]
+    assert written["exit_code"] == second.exit_code == 0
+
+
+def test_a_skipped_runs_directory_cannot_satisfy_a_later_resume(
+    cell_dir, tmp_path, distinct_run_ids
+):
+    run(cell_dir, tmp_path, FakeDriver(), only=["control"])
+    run(cell_dir, tmp_path, FakeDriver(), only=["control"], run_all=False)
+
+    # Two directories, and the second really is the bare one: without distinct
+    # ids both runs share a directory and this passes for the wrong reason.
+    written = sorted((tmp_path / "evidence").iterdir())
+    assert len(written) == 2
+    assert not (written[-1] / "progress.jsonl").exists()
+    # And passed_cells globs `*/progress.jsonl`, so the bare one contributes
+    # nothing rather than being counted as a run that passed no cells.
+    assert evidence.passed_cells(tmp_path / "evidence", "android") == {"control"}
+
+
+def test_a_fully_skipped_run_touches_no_device(cell_dir, tmp_path, distinct_run_ids):
+    run(cell_dir, tmp_path, FakeDriver())
+    driver = FakeDriver()
+
+    run(cell_dir, tmp_path, driver, run_all=False)
+
+    assert driver.actions == []
+
+
+def test_a_token_spliced_into_a_problem_does_not_survive_into_the_report(
+    cell_dir, tmp_path
+):
+    driver = FakeDriver()
+    driver.type_card = raises(DriverError(f"the form said {JWT}"))
+
+    run(cell_dir, tmp_path, driver, sandbox=FakeSandbox(token=JWT), only=["control"])
+
+    raw = next((tmp_path / "evidence").glob("*/report.json")).read_bytes()
+    assert b"eyJ" not in raw
+    assert b"[REDACTED-SESSION-TOKEN]" in raw
+
+
+def test_a_sandbox_warning_is_recorded_beside_the_verdicts_not_among_them(
+    cell_dir, tmp_path
+):
+    # A warning must not turn a green matrix red, or the next person to see
+    # one learns to silence it.
+    sandbox = FakeSandbox()
+    sandbox.warnings.append("the access token is a JWT but its 'exp' is a str")
+
+    report = run(cell_dir, tmp_path, FakeDriver(), sandbox=sandbox)
+
+    assert report.exit_code == 0
+    assert report.problems == []
+    assert report.warnings == sandbox.warnings
+    assert report_json(tmp_path)["warnings"] == sandbox.warnings
+
+
+def test_a_warning_is_printed_but_does_not_change_the_exit_code(
+    cell_dir, tmp_path, capsys, monkeypatch
+):
+    sandbox = FakeSandbox()
+    sandbox.warnings.append("the access token's exp is 5400s in the past")
+    monkeypatch.setattr(runner, "_build_driver", lambda platform: FakeDriver())
+    monkeypatch.setattr(
+        runner.Sandbox,
+        "from_env_file",
+        classmethod(lambda cls, path, transport=None: sandbox),
+    )
+    env = tmp_path / ".env"
+    env.write_text("x=1\n", encoding="utf-8")
+
+    code = runner.main(
+        [
+            "--platform",
+            "android",
+            "--cells",
+            str(cell_dir),
+            "--evidence-root",
+            str(tmp_path / "evidence"),
+            "--env-file",
+            str(env),
+            "--all",
+        ]
+    )
+
+    assert code == 0
+    assert "WARN the access token's exp is 5400s in the past" in capsys.readouterr().out
+
+
+# --- Plan B: the guard's refusals are evidence too ------------------------
+
+
+def test_the_frames_the_screenshot_guard_refused_are_named(cell_dir, tmp_path):
+    # "0 screenshots on iOS" was invisible in the evidence rather than
+    # explained by it.
+    driver = FakeDriver()
+    driver.dump_tree = lambda: f'<hierarchy><node text="{TOKEN}"/></hierarchy>'.encode()
+
+    run(cell_dir, tmp_path, driver, only=["control"])
+
+    written = json.loads(
+        next((tmp_path / "evidence").glob("*/control/result.json")).read_text()
+    )
+    assert written["screenshots_skipped"] == ["02-type_card", "03-tap_pay"]
+    assert not list((tmp_path / "evidence").glob("*/control/*.png"))
+
+
+def test_a_run_that_took_every_frame_it_could_names_none(cell_dir, tmp_path):
+    run(cell_dir, tmp_path, FakeDriver(), only=["control"])
+
+    written = json.loads(
+        next((tmp_path / "evidence").glob("*/control/result.json")).read_text()
+    )
+    assert written["screenshots_skipped"] == []
+
+
+def test_a_dump_that_cannot_be_parsed_is_not_a_licence_to_photograph():
+    # A leaked frame cannot be un-leaked and a missing one costs nothing, so
+    # an unreadable dump counts as "the example's screen is showing".
+    assert runner._shows_the_example_screen(b"<not xml", "android", None) is True
+    assert runner._shows_the_example_screen(b"<not xml", "ios", None) is True
+    assert not runner._may_screenshot("tap_pay", b"<not xml", "android", None)
+
+
+def test_a_cell_whose_dumps_are_unreadable_files_no_frame(cell_dir, tmp_path):
+    driver = FakeDriver()
+    driver.dump_tree = lambda: b"<not xml"
+
+    run(cell_dir, tmp_path, driver, only=["control"])
+
+    assert not list((tmp_path / "evidence").glob("*/control/*.png"))
+
+
+def test_a_wait_expired_cell_is_budgeted_from_its_own_argument(tmp_path):
+    # D2's session_expired cells wait 16 and 30 minutes. On the default 120 s
+    # a cell would breach its budget mid-wait and report a hang, which is the
+    # false finding this whole file is arranged to avoid.
+    directory = tmp_path / "d2"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")).replace(
+            "  - wait_result 60\n", "  - wait_expired 960\n  - wait_result 60\n"
+        ),
+        encoding="utf-8",
+    )
+    cell = cells.load_cell(directory / "control.yaml")
+
+    assert runner.budget_for(cell) > 960
+
+
+# --- review: a verb with no branch is an authoring fault ------------------
+
+
+@pytest.mark.parametrize("verb", ["tap_google_pay", "select_saved_card", "relaunch"])
+def test_a_grammar_legal_verb_with_no_branch_is_an_authoring_fault(verb):
+    # The cell file is wrong, not the rig, so no control check is spent
+    # proving a rig that was never in doubt. `cells.py` accepts these verbs
+    # today; the dimension that owns each one adds its branch.
+    with pytest.raises(NotImplementedError, match=verb):
+        runner._perform(
+            FakeDriver(),
+            cells.Action(verb),
+            card=None,
+            token_path=None,
+            amount_text="€10.00",
+        )
+
+
+@pytest.mark.parametrize("arg", ["google_pay", "no_result", "saved_card"])
+def test_an_expectation_with_no_branch_is_an_authoring_fault_too(arg):
+    with pytest.raises(NotImplementedError, match="expect"):
+        runner._perform(
+            FakeDriver(),
+            cells.Action("expect", arg),
+            card=None,
+            token_path=None,
+            amount_text="€10.00",
+        )
+
+
+def test_a_verb_the_grammar_does_not_know_is_still_a_driver_error():
+    # Not reachable from a cell file -- load_cell refuses it -- but run_cell
+    # takes an Action, so this is the honest answer for one built by hand.
+    with pytest.raises(DriverError, match="invented"):
+        runner._perform(
+            FakeDriver(),
+            cells.Action("invented", "x"),
+            card=None,
+            token_path=None,
+            amount_text="€10.00",
+        )
+
+
+def test_an_authoring_fault_spends_no_control_check(cell_dir, tmp_path):
+    # The whole point of the classification: a driver refusing a verb says
+    # nothing about the rig, and a control cell costs a session and a minute.
+    directory = tmp_path / "d3"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")), encoding="utf-8"
+    )
+    (directory / "wallet.yaml").write_text(
+        textwrap.dedent(CELL.format(id="wallet")).replace(
+            "  - tap_pay\n", "  - tap_pay\n  - tap_google_pay\n"
+        ),
+        encoding="utf-8",
+    )
+
+    report = run(directory, tmp_path, FakeDriver())
+
+    wallet = next(r for r in report.results if r.cell_id == "wallet")
+    assert wallet.authoring is True
+    assert not wallet.passed
+    assert any("tap_google_pay" in p for p in wallet.problems)
+    # No interleaved control check was run for it.
+    assert [r.artifact_id for r in report.results if r.is_control_check] == []

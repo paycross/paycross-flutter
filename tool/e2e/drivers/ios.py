@@ -32,14 +32,14 @@ import re
 import shlex
 import subprocess
 import time
-from datetime import datetime, timezone
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .. import tree
 from ..cells import Card
-from .base import Driver, DriverError, rig_path
+from .base import Driver, DriverError, device_text, read_token, rig_path
 
 #: The ssh alias for the Mac, overridable with PAYCROSS_E2E_SSH_HOST.
 SSH_HOST = rig_path("PAYCROSS_E2E_SSH_HOST", "mac")
@@ -143,13 +143,6 @@ _EXCERPT = 200
 #: `xcrun simctl list devices` puts the state last: `iPhone 17 (UDID) (Booted)`.
 _DEVICE_STATE = re.compile(r"\(([^()]+)\)\s*$")
 
-#: base64url segments joined by dots. The Android driver checks the same shape
-#: for a stronger reason -- there the value reaches a device shell that
-#: re-splits it. Here it never touches a command line, so this is about the
-#: other half: a mint that answered with an error document would otherwise be
-#: pasted as though it were a credential and come back as an instant 401.
-_JWT = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
-
 
 def _is_token_field(node: tree.Node) -> bool:
     """The example's token field, in both shapes its accessible name takes.
@@ -168,12 +161,6 @@ def _is_token_field(node: tree.Node) -> bool:
     """
     name = node.identifier or node.content_desc
     return name == TOKEN_FIELD or name.startswith(TOKEN_FIELD + "\n")
-
-
-def _text(raw: bytes) -> str:
-    # `--console-pty` copies the app's output through a pty, so every line in
-    # the console log arrives with a CR in front of its LF.
-    return raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
 
 
 def _ssh(command: str, *, stdin: bytes | None = None) -> str:
@@ -207,15 +194,13 @@ def _ssh(command: str, *, stdin: bytes | None = None) -> str:
         ) from exc
     except OSError as exc:
         raise DriverError(f"could not run ssh for {what!r}: {exc}") from exc
-    out = _text(done.stdout)
+    out = device_text(done.stdout)
     if done.returncode != 0:
-        out += _text(done.stderr)
+        out += device_text(done.stderr)
     return out
 
 
 class IosDriver(Driver):
-    package = BUNDLE
-
     #: WebDriverAgent's `/source` on this side of the fence; base._nodes
     #: calls it.
     _parse_dump = staticmethod(tree.parse_wda)
@@ -223,6 +208,9 @@ class IosDriver(Driver):
     def __init__(
         self, ssh=_ssh, udid: str = UDID, bundle: str = BUNDLE, sleep=time.sleep
     ):
+        # `bundle`, not BUNDLE: a driver constructed against another build
+        # scopes its crash markers to that one.
+        super().__init__(package=bundle, sleep=sleep)
         self._ssh = ssh
         self._udid = udid
         #: Every interpolation into a remote command goes through this. A udid
@@ -237,9 +225,6 @@ class IosDriver(Driver):
         #: crash_lines and fail every later cell in the matrix.
         self._console_from: int | None = None
         self._console_pid: int | None = None
-        # Every wait goes through this. The durations are the rig's real ones
-        # and stay pinned by the tests asserting on what was recorded here.
-        self._sleep = sleep
 
     # -- transport -----------------------------------------------------------
 
@@ -400,7 +385,7 @@ class IosDriver(Driver):
                 "of them would interleave into one log"
             )
 
-    def _start_console(self) -> int:
+    def _start_console(self, *, truncate: bool = True) -> int | None:
         """Launches the app with its console captured, and returns the log mark.
 
         The SDK emits no os_log, so `log show` never sees the markers criterion
@@ -418,10 +403,15 @@ class IosDriver(Driver):
         byte length is still read afterwards and used as the offset, so a
         truncation that did not take is a smaller window rather than a previous
         cell's output.
+
+        `truncate=False` is a relaunch mid-cell: the log keeps what this cell
+        has already written and the existing mark stands, because honouring
+        the new one would start the cell's window halfway through itself.
         """
         said = self._remote(
-            f"mkdir -p {REMOTE_DIR} && : > {CONSOLE_LOG} && "
-            f"wc -c < {CONSOLE_LOG} && "
+            f"mkdir -p {REMOTE_DIR} && "
+            + (f": > {CONSOLE_LOG} && " if truncate else "")
+            + f"wc -c < {CONSOLE_LOG} && "
             f"( nohup xcrun simctl launch --console-pty {self._quoted_udid} "
             f"{self._bundle} "
             f">> {CONSOLE_LOG} 2>&1 < /dev/null & echo $! )"
@@ -432,7 +422,7 @@ class IosDriver(Driver):
                 f"could not start the console capture: {said.strip()[:400]!r}"
             )
         mark, self._console_pid = int(fields[0]), int(fields[1])
-        return mark
+        return mark if truncate else self._console_from
 
     def _check_console(self) -> None:
         """Asserts the console capture outlived the session request.
@@ -479,7 +469,7 @@ class IosDriver(Driver):
             if session_id:
                 self._wda("DELETE", f"/session/{session_id}")
 
-    def launch(self) -> None:
+    def launch(self, *, truncate_console: bool = True) -> None:
         """Cold-starts the example app with its console captured.
 
         **Contract with the runner: a cell's logs are collected before the next
@@ -488,16 +478,30 @@ class IosDriver(Driver):
         cell's console stops being readable. `logs_since` is therefore called
         once per cell, before the next `launch()`, and `close()` at the end of
         the run.
+
+        `truncate_console=False` is `relaunch()`, which is a cold start *in
+        the middle of* a cell: the window it has already written is its own
+        evidence and is kept.
         """
         # Before anything that can fail. The log is truncated by
         # _start_console and by nothing else, so a launch that gives up ahead
         # of it would leave the previous cell's window in place and readable,
         # and logs_since would hand that back as this cell's -- failing this
         # cell for the last one's crash, and the interleaved control after it.
-        self._console_from = None
+        # A relaunch keeps the mark for exactly the mirrored reason: that
+        # window belongs to the cell now running.
+        if truncate_console:
+            self._console_from = None
         state = self._device_state()
         if state != "Booted":
             raise DriverError(f"simulator {self._udid} is {state!r}, not booted")
+        locale = self._locale()
+        if locale and not locale.startswith("en"):
+            raise DriverError(
+                f"simulator locale is {locale!r}: the sheet's Pay button and the "
+                "re-arm banner are English strings, and the amount predicate "
+                "only absorbs a swapped decimal separator"
+            )
         # Before the terminate: the old capture still owns the app.
         self._stop_console()
         # Before the capture is started, so the termination a stale bundle-bound
@@ -507,7 +511,7 @@ class IosDriver(Driver):
             f"xcrun simctl terminate {self._quoted_udid} {self._bundle} "
             "2>/dev/null || true"
         )
-        self._console_from = self._start_console()
+        self._console_from = self._start_console(truncate=truncate_console)
         self._sleep(LAUNCH_SETTLE_SECONDS)
 
         raw = self._wda(
@@ -549,6 +553,33 @@ class IosDriver(Driver):
         # A new session can mean a new window; the cached size is not carried.
         self._window = None
         self._check_console()
+
+    def relaunch(self) -> None:
+        self.launch(truncate_console=False)
+
+    def _locale(self) -> str:
+        """The simulator's locale, or "" when it cannot be read.
+
+        Deliberately soft. The rig's simulator answers `en_US@rg=lvzzzz` and
+        the amount predicate absorbs that, so this is guarding the case the
+        predicate cannot: a non-English locale, where `Pay` is another word
+        entirely. A simulator that has never had the key written answers with
+        a complaint rather than a locale, and refusing on that would break a
+        rig for a cosmetic check -- so an unreadable locale passes.
+
+        Android refuses anything but `en-US` outright because its Pay-button
+        match is exact; this side tolerates more because it can.
+        """
+        said = self._remote(
+            f"xcrun simctl spawn {self._quoted_udid} defaults read -g AppleLocale "
+            "2>/dev/null"
+        ).strip()
+        # Wide enough to recognise every locale iOS actually writes, because
+        # a shape too narrow does not fail safe: an unrecognised answer is
+        # treated as unreadable and lets the simulator through. `zh_Hans_CN`
+        # has three subtags and `es-419` uses a hyphen and a UN M.49 region,
+        # and both were read as "cannot tell" by a `[a-z]{2}(_...)` shape.
+        return said if re.fullmatch(r"[a-z]{2,3}([_-][A-Za-z0-9@=_]+)?", said) else ""
 
     # -- finding and tapping -------------------------------------------------
 
@@ -815,27 +846,6 @@ class IosDriver(Driver):
 
     # -- actions -------------------------------------------------------------
 
-    def _read_token(self, token_path: Path) -> str:
-        """The token, checked before anything is allowed to paste it.
-
-        Neither failure prints the value. An empty file would be pasted as
-        nothing and present as an instant 401; a mint that answered with an
-        error document would be pasted as though it were a credential and do
-        the same. The Android driver checks the same shape for a second reason
-        that does not apply here -- there the value reaches a device shell that
-        re-splits it, while here it only ever travels on a pipe.
-        """
-        text = token_path.read_text(encoding="utf-8").strip()
-        if not text:
-            raise DriverError(f"{token_path} is empty: there is no token to paste")
-        if not _JWT.fullmatch(text):
-            raise DriverError(
-                f"{token_path} does not hold a JWT: {len(text)} characters in "
-                f"{text.count('.') + 1} dot-separated segments, and not all of "
-                "them are base64url. Refusing to paste it."
-            )
-        return text
-
     def paste_token(self, token_path: Path) -> None:
         """Copies the token in through the pasteboard, never a command line.
 
@@ -845,7 +855,7 @@ class IosDriver(Driver):
         the cell and anything on the simulator can read it.
         """
         token_path = Path(token_path)
-        text = self._read_token(token_path)
+        text = read_token(token_path, verb="paste")
 
         field = self._find(
             TOKEN_FIELD, timeout=SCREEN_TIMEOUT_SECONDS, match=_is_token_field
@@ -858,9 +868,7 @@ class IosDriver(Driver):
             self._sleep(PASTE_SETTLE_SECONDS)
             # Re-resolved: the tap raised the keyboard, which on a short screen
             # scrolls the field out from under the coordinates it had before.
-            x, y = self._find(
-                TOKEN_FIELD, timeout=15, match=_is_token_field
-            ).centre
+            x, y = self._find(TOKEN_FIELD, timeout=15, match=_is_token_field).centre
             self._wda(
                 "POST",
                 self._session("/wda/touchAndHold"),
@@ -1124,6 +1132,6 @@ class IosDriver(Driver):
         return (
             f"--- app console (simctl launch --console-pty), since this launch ---\n"
             f"{console}\n"
-            f"--- log show --last {seconds}s, predicate process == \"Runner\" ---\n"
+            f'--- log show --last {seconds}s, predicate process == "Runner" ---\n'
             f"{unified}"
         )

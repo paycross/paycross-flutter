@@ -14,6 +14,7 @@ the first thing to drive both, and one waiting rule is one place to be wrong.
 from __future__ import annotations
 
 import os
+import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -43,15 +44,56 @@ class DriverError(RuntimeError):
     """The device did not do what was asked. Names what was being looked for."""
 
 
-class Driver(ABC):
-    #: What `verify.crash_lines` matches `ANR in <package>` against. Log
-    #: capture does not use it -- it is deliberately device-wide, because
-    #: an ANR is logged by system_server rather than by the app.
-    package: str
+#: base64url segments joined by dots. Checked before a token is entered on
+#: either platform, for two different reasons that both want the same shape:
+#: on Android the value reaches a device shell that re-splits whatever it is
+#: given, and on both a mint that answered with an error document would
+#: otherwise be entered as though it were a credential and come back as an
+#: instant 401 that reads like an SDK bug.
+JWT_SHAPE = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
 
-    #: Every wait goes through this. The concrete drivers inject it so their
-    #: tests can pin the rig's real timings without spending them.
-    _sleep: Callable[[float], None]
+
+def read_token(token_path: Path, *, verb: str) -> str:
+    """The token, checked before anything is allowed to `verb` it.
+
+    Neither failure prints the value. `verb` is the transport's own word --
+    "type" on Android, "paste" on iOS -- so the message still says what was
+    about to happen.
+    """
+    text = Path(token_path).read_text(encoding="utf-8").strip()
+    if not text:
+        raise DriverError(f"{token_path} is empty: there is no token to {verb}")
+    if not JWT_SHAPE.fullmatch(text):
+        raise DriverError(
+            f"{token_path} does not hold a JWT: {len(text)} characters in "
+            f"{text.count('.') + 1} dot-separated segments, and not all of "
+            f"them are base64url. Refusing to {verb} it."
+        )
+    return text
+
+
+def device_text(raw: bytes) -> str:
+    """Whatever the host said, decoded and with its line endings normalised.
+
+    Two transports arrived at the same two lines for different reasons:
+    `adb shell` returns CRLF where `adb exec-out` does not, and iOS reads a
+    console log that `simctl launch --console-pty` copied through a pty, which
+    puts a CR in front of every LF. Decoding with replacement rather than
+    strictly, because an undecodable byte in a device log is not a reason to
+    lose the log.
+    """
+    return raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+class Driver(ABC):
+    def __init__(self, *, package: str, sleep: Callable[[float], None]):
+        #: What `verify.crash_lines` matches `ANR in <package>` against. Log
+        #: capture does not use it -- that is deliberately device-wide,
+        #: because an ANR is logged by system_server rather than by the app.
+        self.package = package
+        #: Every wait goes through this. The concrete drivers inject it so
+        #: their tests pin the rig's real timings without spending them.
+        self._sleep = sleep
 
     @staticmethod
     @abstractmethod
@@ -77,9 +119,7 @@ class Driver(ABC):
         The legacy string itself is not quoted: driver messages reach stdout
         and `problems`, and the rule here is that they never carry device text.
         """
-        if tree.label_from_tree(
-            self._nodes(tolerate=True), tree.LEGACY_LABEL_PREFIXES
-        ):
+        if tree.label_from_tree(self._nodes(tolerate=True), tree.LEGACY_LABEL_PREFIXES):
             return DriverError(
                 f"no contract label within {timeout}s, but the app is showing "
                 "its human-readable outcome: this build is missing "
@@ -186,6 +226,27 @@ class Driver(ABC):
     def wait_rearmed(self, amount_text: str, timeout: float) -> bool:
         """Blocks until the sheet re-arms after a retryable decline."""
 
+    def wait_no_label(self, timeout: float, *, interval: float = 2) -> str | None:
+        """Watches for `timeout` seconds and hands back a label if one came.
+
+        The inverse of `wait_label`, and the only way to assert a designed
+        non-result: after an Android process kill the pending Dart call dies
+        with the isolate and nothing is ever delivered. Returning the
+        offending label rather than a bool means the failure names what
+        appeared instead of only saying that something did.
+        """
+        return self._poll(tree.label_from_tree, timeout, interval)
+
+    def relaunch(self) -> None:
+        """Cold-starts the app again mid-cell, without losing the log window.
+
+        The default is `launch()`. iOS overrides it, because `launch()` also
+        truncates the console capture -- and a cell that relaunches halfway
+        through would throw away the first half of its own criterion-3
+        evidence.
+        """
+        self.launch()
+
     # -- evidence ------------------------------------------------------------
 
     @abstractmethod
@@ -205,7 +266,7 @@ class Driver(ABC):
     def logs_since(self, since: datetime) -> str:
         """Device log from `since` to now."""
 
-    def close(self) -> None:
+    def close(self) -> None:  # noqa: B027 - a default of "nothing to release"
         """Releases whatever this driver is holding on the host. Idempotent.
 
         Concrete rather than abstract because only iOS holds anything: its
@@ -231,4 +292,6 @@ class Driver(ABC):
         raise NotImplementedError("airplane is a D3 action; Phase 0 does not use it")
 
     def kill_activity(self) -> None:
-        raise NotImplementedError("kill_activity is a D3 action; Phase 0 does not use it")
+        raise NotImplementedError(
+            "kill_activity is a D3 action; Phase 0 does not use it"
+        )

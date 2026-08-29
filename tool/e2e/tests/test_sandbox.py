@@ -73,6 +73,7 @@ class FakeClock:
 
 def jwt_with(payload):
     """A syntactically real JWT carrying `payload`; the signature is a stub."""
+
     def segment(raw):
         return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
@@ -227,7 +228,9 @@ def test_two_mints_in_the_same_second_get_different_references():
     client.mint(amount=1000, currency="EUR", options={})
     client.mint(amount=1000, currency="EUR", options={})
 
-    references = [json.loads(call[3])["merchant_reference"] for call in transport.calls[1:]]
+    references = [
+        json.loads(call[3])["merchant_reference"] for call in transport.calls[1:]
+    ]
     assert references[0] != references[1]
     assert all(reference.startswith("ORDER-") for reference in references)
 
@@ -271,7 +274,11 @@ def test_a_token_response_without_expires_in_still_caches():
     )
 
     client.mint(amount=1000, currency="EUR", options={})
-    clock.now = sandbox.DEFAULT_TOKEN_LIFETIME_SECONDS - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
+    clock.now = (
+        sandbox.DEFAULT_TOKEN_LIFETIME_SECONDS
+        - sandbox.TOKEN_REFRESH_MARGIN_SECONDS
+        - 1
+    )
     client.mint(amount=1000, currency="EUR", options={})
 
     assert [c[1] for c in transport.calls].count(ENV["TOKEN_URL"]) == 1
@@ -284,7 +291,11 @@ def test_an_unusable_expires_in_falls_back_to_the_default_lifetime():
     )
 
     client.mint(amount=1000, currency="EUR", options={})
-    clock.now = sandbox.DEFAULT_TOKEN_LIFETIME_SECONDS - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
+    clock.now = (
+        sandbox.DEFAULT_TOKEN_LIFETIME_SECONDS
+        - sandbox.TOKEN_REFRESH_MARGIN_SECONDS
+        - 1
+    )
     client.mint(amount=1000, currency="EUR", options={})
 
     assert [c[1] for c in transport.calls].count(ENV["TOKEN_URL"]) == 1
@@ -354,9 +365,7 @@ def test_a_refusal_is_reported_with_its_status_and_reason():
 def test_an_error_body_never_echoes_a_session_token():
     # A GET on a session returns the whole resource, session_token included,
     # and a non-2xx body is exactly the thing that gets logged.
-    leaky = json.dumps(
-        {"id": "s", "session_token": TOKEN, "message": "gone"}
-    ).encode()
+    leaky = json.dumps({"id": "s", "session_token": TOKEN, "message": "gone"}).encode()
     client, _, _ = client_with(access_token_response(), (410, leaky))
 
     with pytest.raises(sandbox.SandboxError) as excinfo:
@@ -484,7 +493,9 @@ def test_the_refresh_is_scheduled_from_the_jwt_exp_not_from_expires_in():
     client, transport, _ = client_with(
         access_token_response(expires_in=3600, token=short_lived),
         MINTED,
-        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() + 4000})),
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() + 4000})
+        ),
         MINTED,
         clock=clock,
     )
@@ -533,7 +544,9 @@ def test_a_refresh_scheduled_from_exp_lands_after_the_cache_has_let_go():
 def test_a_token_whose_exp_has_not_come_near_is_still_reused():
     clock = FakeClock()
     client, transport, _ = client_with(
-        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})),
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})
+        ),
         MINTED,
         MINTED,
         clock=clock,
@@ -554,9 +567,13 @@ def test_a_token_handed_over_already_expired_is_not_reused():
     # with it; the 401 retry is what rescues that one.)
     clock = FakeClock()
     client, transport, _ = client_with(
-        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() - 1})),
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() - 1})
+        ),
         MINTED,
-        access_token_response(expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})),
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})
+        ),
         MINTED,
         clock=clock,
     )
@@ -612,7 +629,12 @@ def test_an_exp_that_is_not_a_number_falls_back_to_expires_in(exp):
 UNAUTHORIZED = (
     401,
     json.dumps(
-        {"error": {"type": "authentication_error", "message": "Invalid or expired access token"}}
+        {
+            "error": {
+                "type": "authentication_error",
+                "message": "Invalid or expired access token",
+            }
+        }
     ).encode(),
 )
 
@@ -777,3 +799,181 @@ def test_repr_survives_an_env_that_is_missing_the_api_url():
     client = sandbox.Sandbox({}, transport=FakeTransport())
 
     assert "?" in repr(client)
+
+
+# --- Plan B: session.options is merged all the way down -------------------
+
+
+def test_a_nested_override_keeps_the_rest_of_the_block():
+    # D5 pins customer.merchant_reference so two sessions resolve to one
+    # customer. A shallow merge would drop the email, the name and the
+    # billing address with it -- and the create schema requires them.
+    client, transport, _ = client_with(access_token_response(), MINTED)
+
+    client.mint(
+        amount=1000,
+        currency="EUR",
+        options={"customer": {"merchant_reference": "CUST-D5"}},
+    )
+
+    customer = json.loads(transport.calls[1][3])["customer"]
+    assert customer["merchant_reference"] == "CUST-D5"
+    assert customer["email"] == "john.doe@example.com"
+    assert customer["address"]["billing"]["country"] == "US"
+
+
+def test_a_top_level_scalar_override_still_wins():
+    client, transport, _ = client_with(access_token_response(), MINTED)
+
+    client.mint(amount=1000, currency="EUR", options={"transaction_type": "auth"})
+
+    assert json.loads(transport.calls[1][3])["transaction_type"] == "auth"
+
+
+def test_the_callers_options_are_not_mutated_by_a_mint():
+    # A cell's options mapping is loaded once and reused across a resume.
+    client, _, _ = client_with(access_token_response(), MINTED)
+    options = {"customer": {"merchant_reference": "CUST-D5"}}
+
+    client.mint(amount=1000, currency="EUR", options=options)
+
+    assert options == {"customer": {"merchant_reference": "CUST-D5"}}
+
+
+# --- Plan B: the fallback says when it has happened -----------------------
+
+
+def test_a_string_exp_warns_and_still_schedules_from_expires_in():
+    # The trap this closes: "1756468800" is not an int or a float, so _jwt_exp
+    # answers None and the code silently falls back to the very field it was
+    # written to distrust.
+    clock = FakeClock()
+    client, transport, _ = client_with(
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": str(int(clock.time() + 3600))})
+        ),
+        MINTED,
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+    clock.now = 3600 - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert len(_token_fetches(transport)) == 1
+    assert len(client.warnings) == 1
+    assert "cognito-m2m#1" in client.warnings[0]
+    assert "'exp'" in client.warnings[0]
+
+
+def test_an_exp_further_back_than_a_whole_lifetime_warns_and_falls_back():
+    # On this rig that means a suspended-WSL clock rather than a dead token.
+    clock = FakeClock()
+    stale = clock.time() - sandbox.IMPLAUSIBLE_EXP_AGE_SECONDS - 1800
+    client, transport, _ = client_with(
+        access_token_response(expires_in=3600, token=jwt_with({"exp": stale})),
+        MINTED,
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+    clock.now = 3600 - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
+    client.mint(amount=1000, currency="EUR", options={})
+
+    # Fell back rather than refetching on every call.
+    assert len(_token_fetches(transport)) == 1
+    assert len(client.warnings) == 1
+    assert "in the past" in client.warnings[0]
+    assert "clock" in client.warnings[0]
+
+
+@pytest.mark.parametrize("token", ["bearer-789", "not.a.jwt"])
+def test_a_token_that_is_not_a_jwt_falls_back_and_warns_about_nothing(token):
+    # A legitimate expires_in case. Warning about it would teach the next
+    # person to ignore the warning that matters.
+    client, _, _ = client_with(
+        access_token_response(expires_in=3600, token=token), MINTED
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert client.warnings == []
+
+
+def test_an_ordinary_token_warns_about_nothing():
+    clock = FakeClock()
+    client, _, _ = client_with(
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})
+        ),
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert client.warnings == []
+
+
+def test_a_token_expired_within_its_own_lifetime_is_a_dead_token_not_a_clock():
+    # The boundary: still scheduled from `exp` (a zero delay, so the next call
+    # refetches) and no warning, because a token that has just passed its own
+    # exp is exactly what a cached hand-over looks like.
+    clock = FakeClock()
+    client, transport, _ = client_with(
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() - 1})
+        ),
+        MINTED,
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": clock.time() + 3600})
+        ),
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert len(_token_fetches(transport)) == 2
+    assert client.warnings == []
+
+
+def test_a_warning_never_quotes_the_claim_it_read():
+    clock = FakeClock()
+    client, _, _ = client_with(
+        access_token_response(
+            expires_in=3600, token=jwt_with({"exp": "not-a-timestamp-1756468800"})
+        ),
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert "not-a-timestamp" not in client.warnings[0]
+
+
+def test_the_same_warning_is_recorded_once_however_often_it_recurs():
+    # A 40-minute matrix refreshes repeatedly. The same degradation restated
+    # forty times in a report reads as forty findings.
+    clock = FakeClock()
+    stale = jwt_with({"exp": "not-a-number"})
+    client, transport, _ = client_with(
+        access_token_response(expires_in=600, token=stale),
+        MINTED,
+        access_token_response(expires_in=600, token=stale),
+        MINTED,
+        access_token_response(expires_in=600, token=stale),
+        MINTED,
+        clock=clock,
+    )
+
+    for _ in range(3):
+        client.mint(amount=1000, currency="EUR", options={})
+        clock.now += 600
+
+    assert len(_token_fetches(transport)) == 3
+    assert len(client.warnings) == 1

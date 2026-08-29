@@ -129,8 +129,9 @@ def _replace_prefixes(data: bytes, secret: bytes) -> bytes:
     at = 0
     while (found := data.find(head, at)) >= 0:
         end = len(head)
-        while end < len(secret) and data[found + end : found + end + 1] == (
-            secret[end : end + 1]
+        while (
+            end < len(secret)
+            and data[found + end : found + end + 1] == (secret[end : end + 1])
         ):
             end += 1
         out += data[at:found] + REDACTED
@@ -166,6 +167,7 @@ def scrub_resource(value: Any) -> tuple[Any, list[str]]:
                     found.append(item)
                     out[key] = REDACTED.decode()
                 elif key.endswith("_url") and isinstance(item, str):
+
                     def take(match: "re.Match[str]") -> str:
                         found.append(match.group(0))
                         return REDACTED.decode()
@@ -242,6 +244,19 @@ class Run:
         path.write_bytes(redact(data, secrets))
         return path
 
+    def write_report(self, record: dict[str, Any]) -> Path:
+        """The run's own summary, so a finished run is readable off disk.
+
+        The exit code reaches stdout and nowhere else, and nothing downstream
+        -- the nightly, the campaign report -- can parse a 40-minute run's
+        output. Written through `redact()` like every other artifact: every
+        field the runner puts in here has already been through `_redacted`, so
+        this is belt and braces rather than the only guard.
+        """
+        path = self.dir / "report.json"
+        path.write_bytes(redact(json.dumps(record, indent=2).encode()))
+        return path
+
     def append_progress(
         self, record: dict[str, Any], *, secrets: Iterable[str | None] = ()
     ) -> None:
@@ -263,12 +278,18 @@ class Run:
             os.fsync(handle.fileno())
 
 
-def passed_cells(root: Path, platform: str) -> set[str]:
+def passed_cells(root: Path, platform: str, build_id: str | None = None) -> set[str]:
     """Cell ids that have passed on this platform in *any* previous run.
 
     Scanning the runs themselves rather than keeping a separate ledger: a
     second source of truth about what passed is a second thing that can be
     wrong, and these files are small.
+
+    A pass only counts when it was recorded against the same build. Hashing is
+    not an option -- the iOS `.app` is a directory on the Mac -- so the build
+    is *named*, not measured, and a run that names none matches records that
+    carry none. Every record written before this existed has no `build` key at
+    all, so an existing evidence root keeps resuming exactly as it did.
     """
     passed: set[str] = set()
     for path in sorted(Path(root).glob("*/progress.jsonl")):
@@ -288,6 +309,10 @@ def passed_cells(root: Path, platform: str) -> set[str]:
                 # A pass with no cell id is a runner bug. Same direction as
                 # above: drop the record rather than crash the next run.
                 and record.get("cell")
+                # Named, not measured -- see the docstring. `.get` rather than
+                # `record["build"]` so a legacy record reads as None and a run
+                # with no --build-id still resumes from it.
+                and record.get("build") == build_id
                 # An interleaved control check is a rig probe, not the control
                 # cell's own run. Counting it would let a resumed run skip
                 # `control` -- and then the next failure's skepticism check

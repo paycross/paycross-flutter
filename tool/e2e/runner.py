@@ -22,10 +22,14 @@ Exit codes, which a nightly reads rather than the output:
        `--app` that would not install. The rig or the backend is broken,
        and no finding above it should be believed
 
-One evidence root per build. A resume trusts what earlier runs recorded, and
-`passed_cells` has no idea which build a pass came from, so pointing a new APK
-or .app at an old root would report yesterday's result as today's. `--app`
-therefore implies `--all`.
+One evidence root per dimension, and `--build-id` for the build. A resume
+trusts what earlier runs in the root recorded, and `passed_cells` keys on the
+cell id -- so two dimensions sharing a root would let D0's `control` pass
+satisfy D2's. The build half is carried rather than disciplined: every
+progress record names the build under test and a resume only trusts a pass
+whose name matches, so pointing a release APK at a debug run's root reruns
+rather than reporting yesterday's result as today's. `--app` still implies
+`--all`, which is the same answer without having to name a build.
 
 Contains no credentials and no internal hostnames beyond the TEST API the env
 file names.
@@ -45,7 +49,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import evidence, tree, verify
-from .cells import Action, Card, Cell, CellError, load_cells
+from .cells import ARG_ACTIONS, BARE_ACTIONS, Action, Card, Cell, CellError, load_cells
 from .drivers.android import DIGIT_PACING_SECONDS
 from .drivers.base import DriverError
 from .sandbox import Sandbox, SandboxError
@@ -72,6 +76,21 @@ REARM_TIMEOUT_SECONDS = 30
 #: post-PAN tree the seed script dumped by hand, and the artifact a caret bug
 #: shows up in.
 SHOT_VERBS = ("type_card", "tap_pay", "acs", "expect")
+
+
+def _grammar_accepts(verb: str, arg: str | None) -> bool:
+    """Whether `load_cell` would have accepted this action.
+
+    The same two rules `cells.parse_action` applies, asked of an `Action` that
+    already exists. It is what separates the two ways `_perform` can fail to
+    execute one: a legal action whose dimension has not landed, and a
+    malformed one that no cell file could have carried in the first place.
+    """
+    if verb in BARE_ACTIONS:
+        return not arg
+    accepts = ARG_ACTIONS.get(verb)
+    return accepts is not None and bool(arg) and accepts[0](arg)
+
 
 #: Exit codes. Part of this module's interface: the nightly branches on them.
 EXIT_OK = 0
@@ -113,8 +132,11 @@ VERB_BUDGET_SECONDS = {
 }
 DEFAULT_VERB_SECONDS = 120
 
-#: Verbs whose argument already says how long they may take.
-TIMED_VERBS = ("wait_result", "background")
+#: Verbs whose argument already says how long they may take. `wait_expired` is
+#: here for the definition rather than for a cell that exists yet: D2 waits 16
+#: and 30 minutes for a session to pass its own expiry, and on the default
+#: budget such a cell would breach mid-wait and report a hang.
+TIMED_VERBS = ("wait_result", "wait_expired", "background")
 
 #: On top of such a verb's own deadline, because that deadline bounds when the
 #: next look starts, not how long one takes: a dump's transport timeout is
@@ -163,6 +185,12 @@ class Report:
     #: would not close, an app that would not install. Recorded beside the
     #: verdicts, never in place of them.
     problems: list[str] = field(default_factory=list)
+    #: Things the run noticed and carried on through -- today, a bearer
+    #: refresh that fell back to the field the gateway restates. Deliberately
+    #: not `problems`: these do not change the exit code, because a warning
+    #: that turns a green matrix red is a warning the next person learns to
+    #: silence.
+    warnings: list[str] = field(default_factory=list)
     aborted: bool = False
     abort_reason: str = ""
 
@@ -229,8 +257,10 @@ def _kind(error: BaseException) -> str:
     if isinstance(error, BudgetExceeded):
         return "budget"
     if isinstance(error, NotImplementedError):
-        # The driver saying the cell asked for a D2/D3 action. The cell file
-        # is wrong, not the rig.
+        # Either the driver saying the cell asked for an action it does not
+        # implement, or `_perform` saying the grammar accepts the verb but no
+        # branch executes it yet. Both mean the cell reached for a dimension
+        # that has not landed: the cell file is wrong, not the rig.
         return "authoring"
     return type(error).__name__
 
@@ -271,9 +301,7 @@ def _may_screenshot(verb: str, dump: bytes, platform: str, token: str | None) ->
     return verb in SHOT_VERBS and not _shows_the_example_screen(dump, platform, token)
 
 
-def _perform(
-    driver, action: Action, *, card: Card, token_path: Path, amount_text: str
-):
+def _perform(driver, action: Action, *, card: Card, token_path: Path, amount_text: str):
     """Executes one action and returns whatever it answers with.
 
     `wait_result` answers with a label and `expect rearmed` with a bool.
@@ -304,10 +332,29 @@ def _perform(
         driver.airplane(arg == "on")
     elif verb == "kill_activity":
         driver.kill_activity()
+    elif _grammar_accepts(verb, arg):
+        # A cell file really could carry this, and no branch above executes it
+        # -- so the cell has reached for a dimension that has not landed. That
+        # is a cell-authoring fault, and NotImplementedError is what `_kind`
+        # classifies as one, which is what stops a control check being spent
+        # proving a rig that was never in doubt. `expect <expectation>` lands
+        # here on the same reasoning: the grammar vets the argument too, so a
+        # legal one with no branch is "not landed yet" rather than malformed.
+        #
+        # The message says *branch* rather than driver method, because the two
+        # can be apart: `relaunch` is implemented on both drivers and is still
+        # unreachable until a branch calls it.
+        raise NotImplementedError(
+            f"{verb} is in the action grammar but the runner has no branch "
+            f"for it yet (arg {arg!r})"
+        )
     else:
-        # Reached only for an argument this function has no branch for --
-        # cells.py rejects those at load time -- so it is the argument that
-        # gets named, not the verb, which is supported and is not the problem.
+        # Malformed rather than unlanded: either the verb is not in the
+        # grammar or its argument is not one this verb takes. `load_cell`
+        # refuses both, so no cell file reaches here -- but `run_cell` takes an
+        # `Action`, and this is the honest answer for one built by hand. The
+        # argument is named because on a legal verb it is the half that is
+        # wrong.
         raise DriverError(f"the runner cannot perform {verb} with {arg!r}")
     return None
 
@@ -333,6 +380,7 @@ def run_cell(
     *,
     artifact_id: str | None = None,
     is_control_check: bool = False,
+    build_id: str | None = None,
 ) -> CellResult:
     """One cell, end to end: mint, drive, judge, file the proof."""
     artifact_id = artifact_id or cell.id
@@ -346,6 +394,11 @@ def run_cell(
     label: str | None = None
     rearmed: bool | None = None
     session: dict[str, str] = {}
+    #: Steps whose verb could have been photographed but whose dump said the
+    #: sheet had already gone. Filed by name, because a cell with no frames in
+    #: it is otherwise indistinguishable from a screenshot path that is
+    #: quietly broken -- which is a live question for the campaign report.
+    screenshots_skipped: list[str] = []
     reached_the_end = False
     authoring = False
 
@@ -410,7 +463,10 @@ def run_cell(
                     # match, the ledger, result.json and stdout all see the
                     # same value.
                     label = _redacted(answer, token)
-                elif action.verb == "expect":
+                elif action.verb == "expect" and action.arg == "rearmed":
+                    # Only this expectation answers with a re-arm. The others
+                    # observe something else entirely, and storing their answer
+                    # here would put it in front of the `rearmed` check.
                     rearmed = answer
 
                 # Unguarded, unlike the screenshot below and the log
@@ -428,6 +484,8 @@ def run_cell(
                         # A frame is the least of what a cell collects, and
                         # the cell still has a verdict to reach.
                         problems.append(f"screenshot: {error}")
+                elif verb in SHOT_VERBS:
+                    screenshots_skipped.append(step)
             reached_the_end = True
         except Exception as error:  # noqa: BLE001
             # DriverError is the expected shape, but subprocess.TimeoutExpired
@@ -456,6 +514,8 @@ def run_cell(
                         problems.append(
                             f"screenshot: none after the failure ({secondary})"
                         )
+                elif verb in SHOT_VERBS:
+                    screenshots_skipped.append(f"{step}-failed")
         finally:
             try:
                 shutil.rmtree(token_dir)
@@ -482,6 +542,9 @@ def run_cell(
     if session:
         try:
             resource = sandbox.read(session["id"])
+        # Beside the verdict, never in place of it: a merchant API that will
+        # not answer is a problem to record, and the label and the crash scan
+        # are still worth reaching.
         except Exception as error:  # noqa: BLE001
             problems.append(
                 f"merchant: could not read session {session['id']}: {error}"
@@ -503,9 +566,7 @@ def run_cell(
                 # short never reached the state it describes, so a mismatch
                 # here is the first failure's consequence, not a finding.
                 problems += verify.verify_merchant(resource, expected.merchant)
-                problems += verify.verify_label_transaction(
-                    resource, transaction_id
-                )
+                problems += verify.verify_label_transaction(resource, transaction_id)
 
         try:
             # Before the next cell's launch(), which is where the iOS console
@@ -543,6 +604,7 @@ def run_cell(
             {
                 "cell": cell.id,
                 "platform": platform,
+                "build": build_id,
                 "passed": result.passed,
                 "control_check": is_control_check,
                 "session_id": result.session_id,
@@ -551,6 +613,7 @@ def run_cell(
                 "rearmed": rearmed,
                 "expected_label": expected.label,
                 "problems": problems,
+                "screenshots_skipped": screenshots_skipped,
                 "budget_seconds": budget,
                 "seconds": (datetime.now(timezone.utc) - started).total_seconds(),
             },
@@ -567,6 +630,7 @@ def run_cell(
         {
             "cell": cell.id,
             "status": "pass" if result.passed else "fail",
+            "build": build_id,
             "session_id": result.session_id,
             "label": result.label,
             "problems": problems,
@@ -617,7 +681,10 @@ def run_cells(
     run_all: bool = False,
     only: list[str] | None = None,
     app_path: str | None = None,
+    build_id: str | None = None,
 ) -> Report:
+    # Only run_cell had one, and report.json wants the whole run's window.
+    started = datetime.now(timezone.utc)
     # Checked again rather than taken on trust: run_cells is callable on its
     # own, and this is the last point before a session is minted.
     everything = check_cells(cell_dir, platform)
@@ -633,13 +700,63 @@ def run_cells(
         chosen = [c for c in everything if c.id in only]
 
     report = Report()
-    passed = set() if run_all else evidence.passed_cells(Path(evidence_root), platform)
+    passed = (
+        set()
+        if run_all
+        else evidence.passed_cells(Path(evidence_root), platform, build_id)
+    )
     todo = [c for c in chosen if c.id not in passed]
     report.skipped = [c.id for c in chosen if c.id in passed]
+
+    # Before the fully-skipped check rather than after it: a Run only makes a
+    # directory, and a run that skipped everything is exactly the one Task 10
+    # reads while assembling its tables. The directory it leaves holds nothing
+    # but a report.json, which cannot pollute a resume -- `passed_cells` globs
+    # `*/progress.jsonl` and there is none -- but it does mean an evidence
+    # root accumulates reports, so anything reading one reads the newest.
+    run = evidence.Run(Path(evidence_root), platform=platform)
+
+    def write_run_report() -> None:
+        # Drained here rather than raised: a warning that turns a green matrix
+        # red is a warning the next person learns to silence.
+        report.warnings = list(sandbox.warnings)
+        run.write_report(
+            {
+                "run_id": run.run_id,
+                "platform": platform,
+                "build": build_id,
+                "cells_dir": str(cell_dir),
+                "started": started.isoformat(),
+                "finished": datetime.now(timezone.utc).isoformat(),
+                "exit_code": report.exit_code,
+                "summary": _summary(report),
+                "aborted": report.aborted,
+                "abort_reason": report.abort_reason,
+                "problems": report.problems,
+                "warnings": report.warnings,
+                "skipped": report.skipped,
+                "cells": [
+                    {
+                        "cell": r.cell_id,
+                        "passed": r.passed,
+                        "control_check": r.is_control_check,
+                        "session_id": r.session_id,
+                        "label": r.label,
+                        "transaction_id": r.transaction_id,
+                        "problems": r.problems,
+                        "evidence": r.artifact_id,
+                    }
+                    for r in report.results
+                ],
+            }
+        )
+
     if not todo:
+        # No device is touched, so no driver.close() either: a fully-resumed
+        # run has nothing to release.
+        write_run_report()
         return report
 
-    run = evidence.Run(Path(evidence_root), platform=platform)
     # From every cell rather than from the chosen ones: --only says what to
     # run, not whether to believe the result.
     control = next((c for c in everything if c.id == CONTROL_CELL_ID), None)
@@ -655,6 +772,11 @@ def run_cells(
         if app_path:
             try:
                 driver.install(app_path)
+            # Broad on purpose: adb and ssh fail in ways that are not
+            # DriverError -- a Windows mount that is not there, a Mac asleep --
+            # and every one of them means the same thing here. An install that
+            # did not happen makes every result below it a result for the
+            # previous build, so this aborts rather than failing a cell.
             except Exception as error:  # noqa: BLE001
                 stop(f"could not install {app_path}: {_redacted(str(error))}")
                 return report
@@ -662,7 +784,7 @@ def run_cells(
         for cell in todo:
             # run_cell appends its own progress line: it is the only scope
             # holding the session token the record has to be scrubbed against.
-            result = run_cell(cell, platform, driver, sandbox, run)
+            result = run_cell(cell, platform, driver, sandbox, run, build_id=build_id)
             report.results.append(result)
             report.problems += result.run_problems
 
@@ -672,9 +794,10 @@ def run_cells(
                 )
             elif not result.passed and not result.authoring:
                 # Skepticism: prove the rig before believing the finding. Not
-                # for an authoring fault, though -- the driver refusing a D3
-                # verb says nothing about the rig, and a control cell costs a
-                # session and a minute.
+                # for an authoring fault, though -- a verb the driver does not
+                # implement, or whose `_perform` branch has not landed, says
+                # nothing about the rig, and a control cell costs a session
+                # and a minute.
                 checks += 1
                 check = run_cell(
                     control,
@@ -684,6 +807,7 @@ def run_cells(
                     run,
                     artifact_id=f"{CONTROL_CELL_ID}-check-{checks:02d}",
                     is_control_check=True,
+                    build_id=build_id,
                 )
                 report.results.append(check)
                 report.problems += check.run_problems
@@ -712,6 +836,9 @@ def run_cells(
             run.append_progress(
                 {"cell": "-", "status": "run-problem", "problems": [problem]}
             )
+        # After close(), so a host that would not let go is in the report
+        # rather than only in the next reader's imagination.
+        write_run_report()
 
     return report
 
@@ -765,8 +892,9 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help=(
             "outside any git checkout; survives a WSL reboot. One root per "
-            "build: a resume trusts what earlier runs in it recorded, and a "
-            "pass carries no build fingerprint"
+            "dimension: a resume trusts what earlier runs in it recorded and "
+            "keys on the cell id alone, and every dimension has a 'control'. "
+            "Use --build-id for the build"
         ),
     )
     parser.add_argument("--env-file", required=True, type=Path)
@@ -779,6 +907,15 @@ def main(argv: list[str] | None = None) -> int:
             "APK (Android) or .app on the Mac (iOS) to install first; implies "
             "--all, because a pass recorded against another build is not this "
             "build's"
+        ),
+    )
+    parser.add_argument(
+        "--build-id",
+        help=(
+            "names the build under test, e.g. 'android-0.3.3-release-r8'. "
+            "Written into every progress record, and a resume only trusts a "
+            "pass whose build-id matches. Omit it and the behaviour is exactly "
+            "as before"
         ),
     )
     parser.add_argument(
@@ -801,6 +938,7 @@ def main(argv: list[str] | None = None) -> int:
             run_all=args.all or bool(args.app),
             only=args.only,
             app_path=args.app,
+            build_id=args.build_id,
         )
     except (CellError, SandboxError, OSError) as error:
         # An unusable selection or an evidence root that cannot be written is
@@ -838,6 +976,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"     - {problem}")
     for problem in report.problems:
         print(f"RUN-PROBLEM {problem}")
+    for warning in report.warnings:
+        print(f"WARN {warning}")
     print(_summary(report))
     return report.exit_code
 

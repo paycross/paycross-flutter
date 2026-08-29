@@ -291,7 +291,9 @@ def test_ssh_surfaces_the_stderr_of_a_failed_remote_command(monkeypatch):
     # Discarding it is how "no route to host" reads as an empty log, and an
     # empty log is how criterion 3 passes on nothing.
     _stub_subprocess(
-        monkeypatch, stdout=b"", stderr=b"ssh: connect to host mac port 22\r\n",
+        monkeypatch,
+        stdout=b"",
+        stderr=b"ssh: connect to host mac port 22\r\n",
         returncode=255,
     )
 
@@ -394,15 +396,33 @@ def test_wda_raises_when_the_answer_is_empty():
 NO_OPEN_SESSION = json.dumps({"value": {"ready": True}, "sessionId": None})
 
 
-def launch_outputs(session=None, alive="alive\n", status=NO_OPEN_SESSION):
+def launch_outputs(
+    session=None,
+    alive="alive\n",
+    status=NO_OPEN_SESSION,
+    *,
+    stopping=False,
+    mark=CONSOLE_MARK,
+    locale="en_US@rg=lvzzzz\n",
+):
+    """One launch's worth of remote answers, in the order launch() asks.
+
+    `stopping` is for a second launch on the same driver: the first one left a
+    capture behind, so `_stop_console` has a round trip of its own. `mark` is
+    what `wc -c` reports -- a relaunch measures a log that has grown. `locale`
+    is what `defaults read -g AppleLocale` answers; the default is what this
+    rig's simulator really says.
+    """
     stale = json.loads(status).get("sessionId")
     return (
         DEVICE_LINE,
+        locale,
+        *(["gone\n"] if stopping else []),
         status,
         # Only asked for when /status named one.
         *([json.dumps({"value": None})] if stale else []),
         "",
-        CONSOLE_STARTED,
+        f"    {mark}\n12345\n",
         session or json.dumps({"value": {"sessionId": "sess-9"}}),
         alive,
     )
@@ -464,8 +484,9 @@ def test_launch_kills_the_previous_capture_before_starting_another():
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
-    # The device check comes first, then the kill, then the terminate.
-    ssh.outputs = [DEVICE_LINE, "gone\n", *launch_outputs()[1:]]
+    # The device and locale checks come first, then the kill, then the
+    # terminate.
+    ssh.outputs = list(launch_outputs(stopping=True))
     ssh.calls.clear()
 
     d.launch()
@@ -480,7 +501,7 @@ def test_launch_reports_a_previous_capture_that_will_not_die():
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
-    ssh.outputs = [DEVICE_LINE, "alive\n"]
+    ssh.outputs = [DEVICE_LINE, "en_US\n", "alive\n"]
     ssh.calls.clear()
 
     with pytest.raises(DriverError) as excinfo:
@@ -668,7 +689,7 @@ def test_launch_checks_the_console_capture_after_the_session_not_before():
 
 def test_launch_reports_a_console_capture_that_would_not_start():
     ssh = FakeSsh(
-        DEVICE_LINE, NO_OPEN_SESSION, "", "sh: xcrun: command not found\n"
+        DEVICE_LINE, "en_US\n", NO_OPEN_SESSION, "", "sh: xcrun: command not found\n"
     )
 
     with pytest.raises(DriverError) as excinfo:
@@ -1163,6 +1184,9 @@ def test_paste_token_refuses_something_that_is_not_shaped_like_a_token(tmp_path)
 
     message = str(excinfo.value)
     assert "JWT" in message
+    # The shape check is shared with Android; the verb is this transport's own
+    # word, so the message still says what was about to happen.
+    assert "Refusing to paste it" in message
     # The value is never echoed, whatever it turned out to be.
     assert "unauthorized" not in message
     assert ssh.calls == []
@@ -1179,7 +1203,11 @@ def test_paste_token_never_puts_the_token_on_a_command_line(tmp_path):
     # either machine, and this one never lands on the Mac's disk at all.
     assert TOKEN not in ssh.joined()
     assert "eyJhbGciOiJSUzI1NiJ9" not in ssh.joined()
-    carried = [(c, sent) for c, sent in zip(ssh.calls, ssh.stdins) if sent is not None]
+    carried = [
+        (c, sent)
+        for c, sent in zip(ssh.calls, ssh.stdins, strict=True)
+        if sent is not None
+    ]
     assert len(carried) == 2
     assert "pbcopy" in carried[0][0]
     assert carried[0][1] == TOKEN.encode()
@@ -1424,7 +1452,7 @@ def test_screenshot_comes_back_base64_and_is_decoded():
 def test_screenshot_accepts_the_line_wrapping_base64_adds():
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 300
     encoded = base64.b64encode(png).decode()
-    wrapped = "\n".join(encoded[at:at + 76] for at in range(0, len(encoded), 76))
+    wrapped = "\n".join(encoded[at : at + 76] for at in range(0, len(encoded), 76))
     ssh = FakeSsh(shot_response(wrapped))
 
     assert driver(ssh).screenshot() == png
@@ -1654,3 +1682,125 @@ def test_the_rig_host_and_remote_env_are_overridable_from_the_environment(monkey
 def test_the_rig_host_and_remote_env_fall_back_to_this_workstation():
     assert ios.SSH_HOST == "mac"
     assert "DEVELOPER_DIR=/Applications/Xcode.app" in ios.MAC_ENV
+
+
+# --- Plan B: the Driver contract is enforced at construction --------------
+
+
+def test_the_ios_driver_scopes_its_crash_markers_to_the_bundle_it_was_given():
+    # `bundle`, not BUNDLE: a driver constructed against another build must
+    # not match `ANR in`/`Fatal error:` lines belonging to the default one.
+    made = ios.IosDriver(ssh=FakeSsh(), bundle="com.example.other")
+
+    assert made.package == "com.example.other"
+    assert ios.IosDriver(ssh=FakeSsh()).package == ios.BUNDLE
+
+
+def test_the_ios_driver_waits_through_the_sleep_it_was_given():
+    slept = []
+
+    ios.IosDriver(ssh=FakeSsh(), sleep=slept.append)._sleep(0.25)
+
+    assert slept == [0.25]
+
+
+# --- Plan B: relaunching without losing the log window --------------------
+
+
+def test_relaunch_does_not_truncate_the_console_log():
+    # A cell that relaunches halfway through would otherwise throw away the
+    # first half of its own criterion-3 evidence.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.calls.clear()
+    ssh.outputs.extend(launch_outputs(stopping=True))
+
+    d.relaunch()
+
+    started = next(c for c in ssh.calls if "--console-pty" in c)
+    assert f": > {ios.CONSOLE_LOG}" not in started
+
+
+def test_relaunch_leaves_the_console_mark_where_the_launch_put_it():
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    was = d._console_from
+    # A second, larger mark: the log has grown since the launch, and honouring
+    # it would start this cell's window halfway through itself.
+    ssh.outputs.extend(launch_outputs(stopping=True, mark=CONSOLE_MARK + 4096))
+
+    d.relaunch()
+
+    assert d._console_from == was
+
+
+def test_relaunch_still_replaces_the_capture_and_the_session():
+    # The old --console-pty is bound to the app instance being replaced.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.calls.clear()
+    ssh.outputs.extend(launch_outputs(stopping=True))
+
+    d.relaunch()
+
+    assert any("--console-pty" in c for c in ssh.calls)
+    assert any("terminate" in c for c in ssh.calls)
+
+
+# --- Plan B: the simulator's locale ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "locale", ["en_US\n", "en_US@rg=lvzzzz\n", "en_GB\n", "en\n", "en-US\n"]
+)
+def test_launch_accepts_an_english_locale(locale):
+    # This rig answers `en_US@rg=lvzzzz`, and the amount predicate absorbs the
+    # swapped decimal separator that comes with it.
+    ssh = FakeSsh(*launch_outputs(locale=locale))
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    assert any("AppleLocale" in c for c in ssh.calls)
+
+
+@pytest.mark.parametrize(
+    "locale",
+    [
+        "fr_FR\n",
+        # Three subtags, which the first shape only matched up to `zh`.
+        "zh_Hans_CN\n",
+        # A hyphen and a UN M.49 region, which iOS writes for Latin American
+        # Spanish. Neither is a `_` followed by letters.
+        "es-419\n",
+        "de\n",
+    ],
+)
+def test_launch_refuses_a_simulator_that_is_not_in_english(locale):
+    # The sheet's Pay button and the re-arm banner are English strings, which
+    # the amount predicate cannot absorb. A shape too narrow to recognise one
+    # of these reads it as unreadable and lets the rig through.
+    ssh = FakeSsh(*launch_outputs(locale=locale))
+
+    with pytest.raises(DriverError) as excinfo:
+        ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    message = str(excinfo.value)
+    assert locale.strip() in message
+    # Named as a locale, not as whatever failed next.
+    assert "locale" in message
+
+
+def test_an_unreadable_locale_is_not_a_reason_to_refuse_a_rig():
+    # A simulator that has never had the key written answers with a complaint
+    # rather than a locale, and refusing on that would break a working rig for
+    # a cosmetic check.
+    ssh = FakeSsh(
+        *launch_outputs(
+            locale="2026-08-29 defaults[1:2] \nThe domain/default pair does not exist\n"
+        )
+    )
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()

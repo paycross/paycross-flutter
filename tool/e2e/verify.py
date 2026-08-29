@@ -18,8 +18,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-#: Only ever appears last in a label, so `.*` cannot swallow a later field.
-TXN_PLACEHOLDER = "<txn>"
+#: `<txn>` only ever appears last in a label, so `.*` cannot swallow a later
+#: field. Owned by `cells` because `load_cell` is what refuses a template
+#: carrying two of them; imported here, and still readable as
+#: `verify.TXN_PLACEHOLDER`, because this is where the label rules live.
+#: Importing the other way round would be a cycle.
+from .cells import ANY_LABEL, LABEL_RE, NO_LABEL, TXN_PLACEHOLDER
 
 #: Faults whose own log line names the component it is about, and which are
 #: therefore matched only when that component is the app under test. `ANR in
@@ -54,6 +58,13 @@ _DART_FAULTS = ("Unhandled Exception:",)
 _FAULTS = _IOS_FAULTS + _DART_FAULTS
 
 
+#: Transaction statuses that mean money moved. `succeeded` is the ordinary
+#: `sale` terminal, but an `auth` session stops at `authorized` and an
+#: `auth_capture` at `captured` -- and a cancel/decline cell that only looked
+#: for `succeeded` would pass on either of those.
+MONEY_MOVED = frozenset({"succeeded", "authorized", "captured"})
+
+
 #: The merchant assertions `verify_merchant` implements. Kept equal to
 #: `cells.MERCHANT_KEYS` by a test rather than imported from it: a key a cell
 #: can declare but nothing here checks would pass vacuously, which is the one
@@ -65,6 +76,10 @@ MERCHANT_CHECKS = frozenset(
         "txn_status",
         "no_succeeded_txn",
         "failure_recovery",
+        "failure_code",
+        "network_decline_code",
+        "saved_card_saved",
+        "saved_card_used",
         "threeds",
     }
 )
@@ -73,12 +88,25 @@ MERCHANT_CHECKS = frozenset(
 def match_label(template: str, actual: str | None) -> tuple[bool, str | None]:
     """Compares a label against a cell's expectation.
 
-    `<txn>` is a capture, not a literal: a transaction id is minted by the
-    server, so a cell can never name one. The captured value is cross-checked
-    against the merchant API by `verify_label_transaction` instead.
+    Three shapes. `<none>` passes only when nothing was rendered. `<any>`
+    passes on any well-formed contract label and captures nothing -- it is a
+    discovery cell's expectation, and the label it measured is recorded in
+    result.json rather than compared. Anything else is a literal, in which
+    `<txn>` is a capture: a transaction id is minted by the server, so a cell
+    can never name one, and `verify_label_transaction` cross-checks the
+    captured value against the merchant API instead.
+
+    `LABEL_RE` is imported rather than restated -- unlike `MERCHANT_CHECKS`,
+    which is deliberately kept equal to `cells.MERCHANT_KEYS` by a test. Two
+    independent key lists whose equality is the thing under test is not the
+    same as one vocabulary with one meaning.
     """
+    if template == NO_LABEL:
+        return actual is None, None
     if actual is None:
         return False, None
+    if template == ANY_LABEL:
+        return bool(LABEL_RE.fullmatch(actual)), None
     if TXN_PLACEHOLDER not in template:
         return template == actual, None
     head, _, tail = template.partition(TXN_PLACEHOLDER)
@@ -94,6 +122,12 @@ def _transactions(resource: dict[str, Any]) -> list[dict[str, Any]]:
 def _latest(resource: dict[str, Any]) -> dict[str, Any] | None:
     txns = _transactions(resource)
     return txns[-1] if txns else None
+
+
+def _failure(latest: dict[str, Any] | None) -> dict[str, Any]:
+    # `or {}` on the inner get too: a succeeded transaction plausibly carries
+    # an explicit "failure": null.
+    return (latest or {}).get("failure") or {}
 
 
 def _threeds_problems(
@@ -157,27 +191,57 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
                 f"txn_status: expected {expected['txn_status']!r}, got {actual!r}"
             )
 
-    if expected.get("no_succeeded_txn"):
-        succeeded = [
-            t for t in _transactions(resource) if t.get("status") == "succeeded"
-        ]
-        if succeeded:
+    if "no_succeeded_txn" in expected:
+        moved = [t for t in _transactions(resource) if t.get("status") in MONEY_MOVED]
+        if expected["no_succeeded_txn"] and moved:
             problems.append(
                 "no_succeeded_txn: the session holds "
-                f"{len(succeeded)} succeeded transaction(s): "
-                f"{[t.get('id') for t in succeeded]}"
+                f"{len(moved)} transaction(s) that moved money: "
+                f"{[t.get('id') for t in moved]}"
+            )
+        elif not expected["no_succeeded_txn"] and not moved:
+            # `false` used to be a no-op that read like an assertion. It now
+            # means what a reader always thought it meant.
+            problems.append(
+                "no_succeeded_txn: expected a transaction that moved money, "
+                "the session holds none"
             )
 
-    if "failure_recovery" in expected:
-        # `or {}` on the inner get too: a succeeded transaction plausibly
-        # carries an explicit "failure": null, and `.get("failure", {})` would
-        # then hand back None and raise on the next call.
-        actual = ((latest or {}).get("failure") or {}).get("recovery")
-        if actual != expected["failure_recovery"]:
-            problems.append(
-                f"failure_recovery: expected {expected['failure_recovery']!r}, "
-                f"got {actual!r}"
-            )
+    for key, field in (
+        ("failure_recovery", "recovery"),
+        ("failure_code", "code"),
+        ("network_decline_code", "network_decline_code"),
+    ):
+        if key in expected:
+            actual = _failure(latest).get(field)
+            if actual != expected[key]:
+                problems.append(f"{key}: expected {expected[key]!r}, got {actual!r}")
+
+    for key, field in (
+        ("saved_card_saved", "saved_token"),
+        ("saved_card_used", "used_token"),
+    ):
+        if key in expected:
+            # Presence, never the value: `evidence.scrub_resource` drops both
+            # keys by name before this ever sees them, so what is left is the
+            # redaction marker for a card that was stored and `null` for one
+            # that was not -- which is exactly the distinction being asserted.
+            stored = (latest or {}).get("stored_credentials") or {}
+            if not isinstance(stored, dict):
+                # A shape fault, said as one. Without the guard `.get` raises
+                # AttributeError out of a pure function whose whole contract is
+                # to return problems.
+                problems.append(
+                    f"{key}: stored_credentials is a "
+                    f"{type(stored).__name__}, not an object"
+                )
+                continue
+            present = bool(stored.get(field))
+            if present != expected[key]:
+                problems.append(
+                    f"{key}: expected {expected[key]}, got {present} "
+                    f"(stored_credentials.{field})"
+                )
 
     if "threeds" in expected:
         problems.extend(_threeds_problems(latest, expected["threeds"]))

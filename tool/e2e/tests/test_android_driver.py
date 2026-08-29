@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from tool.e2e.cells import Card
-from tool.e2e.drivers import android
+from tool.e2e.drivers import android, base
 from tool.e2e.drivers.base import DriverError
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -418,6 +418,9 @@ def test_paste_token_refuses_something_that_is_not_shaped_like_a_token(tmp_path)
 
     message = str(excinfo.value)
     assert "JWT" in message
+    # The shape check is shared with iOS; the verb is this transport's own
+    # word, so the message still says what was about to happen.
+    assert "Refusing to type it" in message
     # The value is never echoed, whatever it turned out to be.
     assert "rm -rf" not in message
     assert shell.calls == []
@@ -432,7 +435,9 @@ def test_paste_token_sends_the_token_on_stdin_never_in_an_argv(tmp_path):
 
     # A command line is world-readable for as long as the process lives.
     assert not any(TOKEN in " ".join(argv) for argv in shell.calls)
-    carried = [(argv, s) for argv, s in zip(shell.calls, shell.stdins) if s]
+    carried = [
+        (argv, s) for argv, s in zip(shell.calls, shell.stdins, strict=True) if s
+    ]
     assert len(carried) == 1
     assert carried[0] == (["shell"], f"input text {TOKEN}\n")
 
@@ -461,9 +466,7 @@ def test_paste_token_waits_for_the_field_to_agree_with_the_file(tmp_path):
     path = tmp_path / "token"
     path.write_text(TOKEN)
     # The find, then a read that catches the field mid-entry, then agreement.
-    shell = FakeShell(
-        trees=[screen(TOKEN[:10]), screen(TOKEN[:10]), screen(TOKEN)]
-    )
+    shell = FakeShell(trees=[screen(TOKEN[:10]), screen(TOKEN[:10]), screen(TOKEN)])
 
     driver(shell).paste_token(path)  # a single early read would have raised
 
@@ -668,7 +671,12 @@ def test_close_is_a_no_op_for_a_driver_with_nothing_to_release():
 def test_the_d3_actions_are_declared_and_refuse_rather_than_no_op():
     d = driver(FakeShell())
 
-    for call in (lambda: d.background(5), d.rotate, lambda: d.airplane(True), d.kill_activity):
+    for call in (
+        lambda: d.background(5),
+        d.rotate,
+        lambda: d.airplane(True),
+        d.kill_activity,
+    ):
         with pytest.raises(NotImplementedError):
             call()
 
@@ -717,3 +725,163 @@ def test_the_rig_paths_fall_back_to_this_workstation():
     assert android.ADB.endswith("adb.exe")
     assert android.STAGING_DIR == "/mnt/c/dev/tmp"
     assert android.WINDOWS_STAGING == r"C:\dev\tmp"
+
+
+# --- Plan B: the Driver contract is enforced at construction --------------
+
+
+def test_a_driver_that_skips_super_init_has_no_package_at_all():
+    # Bare annotations let a driver forget one and fail mid-run instead.
+    class Forgetful(base.Driver):
+        _parse_dump = staticmethod(lambda dump: [])
+
+        def __init__(self):
+            pass
+
+        install = launch = paste_token = type_card = tap_pay = lambda *a, **k: None
+        wait_label = acs = cancel_challenge = cancel_form = lambda *a, **k: None
+        wait_rearmed = dump_tree = screenshot = logs_since = lambda *a, **k: None
+
+    with pytest.raises(AttributeError, match="package"):
+        # The access is the assertion: nothing set the attribute.
+        assert Forgetful().package
+
+
+def test_the_android_driver_exposes_what_it_was_constructed_with():
+    slept = []
+    made = android.AndroidDriver(shell=FakeShell(), sleep=slept.append)
+
+    assert made.package == android.PACKAGE
+    made._sleep(1.5)
+    assert slept == [1.5]
+
+
+# --- Plan B: watching for a label that must not arrive --------------------
+
+
+def test_wait_no_label_hands_back_the_label_that_appeared():
+    # Naming it means the failure says what showed up, not only that
+    # something did.
+    resolved = (
+        "<hierarchy>"
+        '<node class="android.view.View" text=""'
+        ' content-desc="result:success:txn-1" bounds="[0,0][100,50]"/>'
+        "</hierarchy>"
+    )
+    shell = FakeShell(tree=resolved)
+
+    assert driver(shell).wait_no_label(0) == "result:success:txn-1"
+
+
+def test_wait_no_label_answers_none_when_the_app_said_nothing():
+    # The Android process-kill cell's pass: the pending Dart call dies with
+    # the isolate and no result is delivered, by design.
+    shell = FakeShell(tree=screen())
+
+    assert driver(shell).wait_no_label(0) is None
+
+
+def test_relaunch_on_android_is_exactly_launch():
+    # Nothing on this side is truncated by a launch, so there is nothing for a
+    # relaunch to preserve. The base implementation is the whole answer.
+    # Two launches' worth: FakeShell pops one output per call, and a launch
+    # spends four -- boot, locale, force-stop, monkey.
+    shell = FakeShell("1\n", "en-US\n", "", "", "1\n", "en-US\n", "", "")
+    made = driver(shell)
+
+    made.launch()
+    launched = list(shell.calls)
+    shell.calls.clear()
+    made.relaunch()
+
+    assert shell.calls == launched
+
+
+# --- Plan B: the four actions with no unit coverage on this side ----------
+#
+# The iOS driver has the equivalents; the asymmetry was an accident, not a
+# decision. Each one asserts the exact `input tap X Y` argv, so a matcher that
+# starts finding the wrong node is caught here rather than on a device.
+
+
+def sheet(*rows: tuple[str, str, str]) -> str:
+    """A tree of `(text, content-desc, bounds)` nodes and nothing else."""
+    return (
+        "<hierarchy>"
+        + "".join(
+            f'<node class="android.view.View" text="{text}" content-desc="{desc}"'
+            f' bounds="{bounds}"/>'
+            for text, desc, bounds in rows
+        )
+        + "</hierarchy>"
+    )
+
+
+def taps(shell):
+    return [c for c in shell.argv_text() if c.startswith("shell input tap")]
+
+
+def test_tap_pay_taps_the_sheets_own_pay_button_and_not_the_examples():
+    # The example's own Pay is a content-desc; the sheet's is Compose `text`
+    # carrying the formatted amount. Matching the wrong one cost the
+    # 2026-08-26 run a false 270-second timeout.
+    shell = FakeShell(
+        tree=sheet(
+            ("€10.00", "", "[0,0][100,40]"),
+            ("Pay €10.00", "", "[0,60][100,100]"),
+            ("", "Pay", "[0,120][100,160]"),
+        )
+    )
+
+    driver(shell).tap_pay("€10.00")
+
+    assert taps(shell) == ["shell input tap 50 80"]
+
+
+def test_acs_waits_for_the_sandbox_page_before_it_taps_an_outcome():
+    shell = FakeShell(
+        tree=sheet(
+            (android.ACS_TITLE, "", "[0,0][100,40]"),
+            ("approve", "", "[0,200][100,240]"),
+            ("authentication_failed", "", "[0,260][100,300]"),
+        )
+    )
+
+    driver(shell).acs("authentication_failed")
+
+    # The outcome is chosen by which button is tapped, never by the PAN.
+    assert taps(shell) == ["shell input tap 50 280"]
+
+
+def test_cancel_challenge_backs_out_of_the_acs_page_then_confirms():
+    shell = FakeShell(
+        trees=[
+            sheet((android.ACS_TITLE, "", "[0,0][100,40]")),
+            sheet(
+                (android.CANCEL_TITLE, "", "[0,300][100,340]"),
+                (android.CANCEL_CONFIRM, "", "[0,400][100,440]"),
+            ),
+        ]
+    )
+
+    driver(shell).cancel_challenge()
+
+    assert "shell input keyevent 4" in shell.argv_text()
+    assert taps(shell) == ["shell input tap 50 420"]
+
+
+def test_cancel_form_confirms_without_waiting_for_the_acs_page():
+    # BackHandler is unconditional on both screens (PaymentActivity.kt), and
+    # the card form is not the ACS page -- so this one must not look for it.
+    shell = FakeShell(
+        tree=sheet(
+            (android.CANCEL_TITLE, "", "[0,300][100,340]"),
+            (android.CANCEL_CONFIRM, "", "[0,400][100,440]"),
+        )
+    )
+
+    driver(shell).cancel_form()
+
+    assert "shell input keyevent 4" in shell.argv_text()
+    assert taps(shell) == ["shell input tap 50 420"]
+    assert not any(android.ACS_TITLE in c for c in shell.argv_text())

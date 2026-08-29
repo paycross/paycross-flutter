@@ -29,14 +29,49 @@ PLATFORMS = ("android", "ios")
 BARE_ACTIONS = frozenset(
     {
         "paste_token",
+        # Enters the minted token and taps the example's Pay WITHOUT waiting
+        # for a sheet. For the cells where no sheet is the expected answer:
+        # on iOS a malformed or expired token is refused at
+        # PaymentSheet.swift:42-51, before `present` on line 65, so waiting
+        # for one costs a 60 s timeout and reports the wrong failure.
+        "present_token",
+        "tap_example_pay",
+        "relaunch",
         "type_card",
+        "type_cvv",
         "tap_pay",
+        "tap_google_pay",
+        "select_saved_card",
+        "save_card",
         "cancel_challenge",
         "cancel_form",
         "rotate",
         "kill_activity",
     }
 )
+
+#: What `expect` can be asked to observe. Every one of these is a
+#: *non-result*: something true of the screen or of the merchant state that
+#: Dart is never told about.
+EXPECTATIONS = frozenset(
+    {"rearmed", "no_result", "google_pay", "no_google_pay", "saved_card"}
+)
+
+#: A literal a cell may type into the token field. Two constraints, each for
+#: its own reason.
+#:
+#: The 200-character cap is far below the ~1011 of a real session token, so
+#: a live credential cannot be committed in a cell file even by accident.
+#:
+#: The character class is base64url plus a dot -- the alphabet a token would
+#: have been made of anyway -- because `AndroidDriver._input_text` hands this
+#: string to `input text` on a device shell that re-splits and expands
+#: whatever it is given. A `$`, a backtick, a quote or a pipe would be
+#: mangled rather than typed, and the cell would then be measuring a string
+#: it never sent. Narrowing the grammar beats quoting at the call site: the
+#: grammar is what a cell author reads, and a rejected literal is a better
+#: answer than a silently rewritten one.
+_LITERAL_TOKEN = re.compile(r"[A-Za-z0-9._~-]{1,200}")
 
 
 def _is_acs_outcome(arg: str) -> bool:
@@ -57,8 +92,12 @@ def _is_on_off(arg: str) -> bool:
     return arg in ("on", "off")
 
 
-def _is_rearmed(arg: str) -> bool:
-    return arg == "rearmed"
+def _is_expectation(arg: str) -> bool:
+    return arg in EXPECTATIONS
+
+
+def _is_literal_token(arg: str) -> bool:
+    return bool(_LITERAL_TOKEN.fullmatch(arg))
 
 
 #: Verbs that require one argument, written `verb:arg` or `verb arg`, each
@@ -70,7 +109,13 @@ ARG_ACTIONS = MappingProxyType(
         "acs": (_is_acs_outcome, "a lower-case ACS outcome token"),
         "airplane": (_is_on_off, "'on' or 'off'"),
         "background": (_is_positive_seconds, "a positive number of seconds"),
-        "expect": (_is_rearmed, "'rearmed'"),
+        "dont_keep_activities": (_is_on_off, "'on' or 'off'"),
+        "enter_token": (
+            _is_literal_token,
+            "at most 200 characters of A-Z a-z 0-9 . _ ~ -",
+        ),
+        "expect": (_is_expectation, f"one of {sorted(EXPECTATIONS)}"),
+        "wait_expired": (_is_positive_seconds, "a positive number of seconds"),
         "wait_result": (_is_positive_seconds, "a positive number of seconds"),
     }
 )
@@ -107,10 +152,25 @@ _MERCHANT_VALUES = {
     "txn_status": (_is_non_empty_str, "a non-empty string"),
     "no_succeeded_txn": (_is_bool, "true or false"),
     "failure_recovery": (_is_recovery, "a non-empty string or null"),
+    "failure_code": (_is_recovery, "a non-empty string or null"),
+    "network_decline_code": (_is_recovery, "a non-empty string or null"),
+    "saved_card_saved": (_is_bool, "true or false"),
+    "saved_card_used": (_is_bool, "true or false"),
     "threeds": (_is_mapping, "a mapping"),
 }
 
 MERCHANT_KEYS = frozenset(_MERCHANT_VALUES)
+
+#: The 3-D Secure fields a cell may assert. `eci` and `version` are
+#: deliberately absent: they are sandbox implementation detail, and a sandbox
+#: upgrade must not present as a finding.
+_THREEDS_VALUES = {
+    "outcome": (_is_non_empty_str, "a non-empty string"),
+    "flow": (_is_non_empty_str, "a non-empty string"),
+    "liability_shifted": (_is_bool, "true or false"),
+}
+
+THREEDS_KEYS = frozenset(_THREEDS_VALUES)
 
 #: The keys an `expected` or `expected.<platform>` block may carry.
 EXPECTED_KEYS = frozenset({"label", "rearmed", "merchant"})
@@ -124,7 +184,7 @@ _CURRENCY = re.compile(r"^[A-Z]{3}$")
 #: whole and never split on ':' -- an `unrecognized(<raw>)` token may itself
 #: contain colons. An empty `<txn>` is allowed; the app emits one when the
 #: session never reached a transaction.
-_LABEL = re.compile(
+LABEL_RE = re.compile(
     r"^(result:success:[^\s]*"
     r"|result:failure:"
     r"(retry|change_method|restart|do_not_retry|contact_support|unrecognized\(.*\))"
@@ -132,6 +192,27 @@ _LABEL = re.compile(
     r"|result:cancelled"
     r"|error:[A-Za-z]+)$"
 )
+
+#: Expectations that are not a literal label.
+#:
+#: `<any>` is a discovery cell's expectation: any well-formed contract label,
+#: whatever it turns out to be. It asserts the three things the spec asks of
+#: D2's (b)-(d) -- a terminal outcome, exactly once, no crash -- and nothing
+#: about which one. Phase 3 replaces it with the label the run measured, so
+#: the final matrix asserts rather than records.
+#:
+#: `<none>` is the opposite: no label may appear. It exists for the Android
+#: process-kill cell, where the pending Dart call dies with the isolate and
+#: no result is delivered BY DESIGN, so "the app said nothing" is the pass.
+ANY_LABEL = "<any>"
+NO_LABEL = "<none>"
+LABEL_SENTINELS = frozenset({ANY_LABEL, NO_LABEL})
+
+#: Only ever appears last in a label, so `.*` cannot swallow a later field.
+#: Lives here rather than in `verify` because `load_cell` refuses a template
+#: carrying two of them -- an ambiguous capture -- and `verify` already
+#: imports this module for `LABEL_RE`.
+TXN_PLACEHOLDER = "<txn>"
 
 
 class CellError(ValueError):
@@ -217,8 +298,14 @@ def parse_action(raw: Any, where: str) -> Action:
     if not isinstance(raw, str):
         raise CellError(f"{where}: action must be a string, got {raw!r}")
     text = raw.strip()
-    verb, _, arg = text.partition(":") if ":" in text else text.partition(" ")
-    verb, arg = verb.strip(), arg.strip()
+    # Whichever delimiter comes first, so `verb arg` and `verb:arg` are one
+    # grammar rather than two with a precedence rule between them. The old
+    # colon-first split misparsed `wait_result 1:20` as the verb
+    # `wait_result 1` and reported an unknown action -- a diagnosis that
+    # sends the reader after the wrong half of the line.
+    parts = re.split(r"[:\s]", text, maxsplit=1)
+    verb = parts[0].strip()
+    arg = parts[1].strip() if len(parts) == 2 else ""
 
     if verb in BARE_ACTIONS:
         if arg:
@@ -229,9 +316,7 @@ def parse_action(raw: Any, where: str) -> Action:
             raise CellError(f"{where}: action {verb!r} needs an argument")
         accepts, description = ARG_ACTIONS[verb]
         if not accepts(arg):
-            raise CellError(
-                f"{where}: action {text!r} argument must be {description}"
-            )
+            raise CellError(f"{where}: action {text!r} argument must be {description}")
         return Action(verb, arg)
     raise CellError(f"{where}: unknown action {text!r}")
 
@@ -245,8 +330,18 @@ def _require(mapping: Any, key: str, where: str) -> Any:
 def _check_label(label: Any, where: str) -> None:
     if not isinstance(label, str) or not label:
         raise CellError(f"{where}: label must be a non-empty string")
-    if not _LABEL.fullmatch(label):
+    if label in LABEL_SENTINELS:
+        return
+    if not LABEL_RE.fullmatch(label):
         raise CellError(f"{where}: label {label!r} is not in the frozen vocabulary")
+    # Here rather than beside the constructed `Expected`, so an override's
+    # label is held to it as well: `match_label`'s capture is exactly as
+    # ambiguous either way.
+    if label.count(TXN_PLACEHOLDER) > 1:
+        raise CellError(
+            f"{where}: label {label!r} has more than one '{TXN_PLACEHOLDER}'; "
+            "the capture would be ambiguous"
+        )
 
 
 def _check_merchant(raw: Any, where: str) -> dict[str, Any]:
@@ -261,6 +356,18 @@ def _check_merchant(raw: Any, where: str) -> dict[str, Any]:
             raise CellError(
                 f"{where}: merchant {key} must be {description}, got {value!r}"
             )
+
+    threeds = raw.get("threeds")
+    if isinstance(threeds, dict):
+        unknown = sorted(set(threeds) - THREEDS_KEYS)
+        if unknown:
+            raise CellError(f"{where}: unknown threeds key(s) {unknown}")
+        for key, value in threeds.items():
+            accepts, description = _THREEDS_VALUES[key]
+            if not accepts(value):
+                raise CellError(
+                    f"{where}: threeds {key} must be {description}, got {value!r}"
+                )
     return raw
 
 
@@ -298,6 +405,60 @@ def _expected(raw: Any, where: str) -> Expected:
     )
 
 
+def _check_cross_fields(cell: Cell, where: str) -> None:
+    """Rules that relate an expectation to the actions, per platform.
+
+    Over every platform the cell declares, never the unmerged base. A cell
+    whose base says `rearmed: false` and whose `expected.android` says true
+    would otherwise load cleanly and fail on a device twenty minutes later --
+    and `expected_for`'s own docstring says D2 is the override mechanism's
+    first real user, so this is the dimension that would find out.
+
+    The two directions are deliberately asymmetric, because **one action list
+    is shared by every platform the cell runs on**. Any platform expecting a
+    re-armed sheet needs the action. The action being present needs *every*
+    platform to expect one -- it runs unconditionally, so on a platform where
+    the sheet resolves terminally instead it answers falsy and fails the
+    cell.
+
+    That forecloses one shape on purpose: "Android re-arms, iOS resolves
+    terminally" cannot be one cell and must be split into two single-platform
+    ones. Such a pair differs in more than the expectation anyway -- the
+    terminal variant has no `cancel_form` to reach a label with -- and it is
+    exactly the shape sub-project #2 will produce as it fixes one platform
+    before the other.
+    """
+    verbs = [(a.verb, a.arg) for a in cell.actions]
+    seen = [(p, cell.expected_for(p)) for p in cell.platforms]
+
+    for action, holds, describe in (
+        (
+            ("expect", "rearmed"),
+            lambda e: e.rearmed,
+            "expects a re-armed sheet",
+        ),
+        (
+            ("expect", "no_result"),
+            lambda e: e.label == NO_LABEL,
+            f"expects label {NO_LABEL!r}",
+        ),
+    ):
+        wanting = [p for p, e in seen if holds(e)]
+        if wanting and action not in verbs:
+            raise CellError(
+                f"{where}: {wanting} {describe}, but the cell has no "
+                f"{action[0]} {action[1]!r} action, so nothing would ever look"
+            )
+        missing = [p for p, e in seen if not holds(e)]
+        if action in verbs and missing:
+            raise CellError(
+                f"{where}: the cell runs {action[0]} {action[1]!r} but "
+                f"{missing} {describe.replace('expects', 'does not expect')}. "
+                "The action list is shared by every platform, so it runs "
+                "there too and answers falsy"
+            )
+
+
 def load_cell(path: Path) -> Cell:
     path = Path(path)
     where = str(path)
@@ -309,10 +470,23 @@ def load_cell(path: Path) -> Cell:
     if cell_id != path.stem:
         raise CellError(f"{where}: id {cell_id!r} does not match the filename stem")
 
-    platforms = tuple(_require(raw, "platforms", where))
+    raw_platforms = _require(raw, "platforms", where)
+    if not isinstance(raw_platforms, list):
+        raise CellError(
+            f"{where}: platforms must be a list, got {type(raw_platforms).__name__}"
+            # A bare string iterates into characters, and every one of them is
+            # an unknown platform -- a message about 'a', 'n', 'd'.
+        )
+    platforms = tuple(raw_platforms)
     bad = [p for p in platforms if p not in PLATFORMS]
     if bad or not platforms:
         raise CellError(f"{where}: unknown platform(s) {bad or '<empty>'}")
+    repeated = sorted({p for p in platforms if platforms.count(p) > 1})
+    if repeated:
+        # The cell still runs once, but every per-platform loop counts it
+        # twice -- including the cross-field rules, which would then name the
+        # same platform twice in one message.
+        raise CellError(f"{where}: duplicate platform(s) {repeated}")
 
     raw_card = _require(raw, "card", where)
     card = Card(
@@ -348,12 +522,22 @@ def load_cell(path: Path) -> Cell:
     overrides = {}
     for platform in PLATFORMS:
         override = raw.get(f"expected.{platform}")
-        if override is not None:
-            overrides[platform] = _check_expectation(
-                override, where, f"expected.{platform}"
+        if override is None:
+            continue
+        if platform not in platforms:
+            # Silently dead otherwise: `expected_for` is only ever asked about
+            # a platform the cell declares, so this block would never be read
+            # and the cell would run asserting the base it was written to
+            # override.
+            raise CellError(
+                f"{where}: expected.{platform} but the cell does not run on "
+                f"{platform!r}; platforms are {list(platforms)}"
             )
+        overrides[platform] = _check_expectation(
+            override, where, f"expected.{platform}"
+        )
 
-    return Cell(
+    cell = Cell(
         id=cell_id,
         path=path,
         platforms=platforms,
@@ -363,6 +547,10 @@ def load_cell(path: Path) -> Cell:
         expected=expected,
         overrides=overrides,
     )
+    # After construction rather than inline above: these rules read
+    # `expected_for(platform)`, which needs the whole cell.
+    _check_cross_fields(cell, where)
+    return cell
 
 
 def load_cells(directory: Path, platform: str) -> list[Cell]:

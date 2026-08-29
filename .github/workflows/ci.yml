@@ -158,7 +158,12 @@ jobs:
           python-version: '3.10'
 
       - name: Install runner dependencies
-        run: pip install -r tool/e2e/requirements.txt pytest
+        run: pip install -r tool/e2e/requirements.txt -r tool/e2e/requirements-dev.txt
+
+      - name: Lint the runner
+        run: |
+          ruff check --config tool/e2e/ruff.toml tool/e2e
+          ruff format --check --config tool/e2e/ruff.toml tool/e2e
 
       - name: Test the runner
         run: python -m pytest tool/e2e/tests -q
