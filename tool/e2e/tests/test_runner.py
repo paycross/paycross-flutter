@@ -1855,3 +1855,71 @@ def test_a_wait_expired_cell_is_budgeted_from_its_own_argument(tmp_path):
     cell = cells.load_cell(directory / "control.yaml")
 
     assert runner.budget_for(cell) > 960
+
+
+# --- review: a verb with no branch is an authoring fault ------------------
+
+
+@pytest.mark.parametrize("verb", ["tap_google_pay", "select_saved_card", "relaunch"])
+def test_a_grammar_legal_verb_with_no_branch_is_an_authoring_fault(verb):
+    # The cell file is wrong, not the rig, so no control check is spent
+    # proving a rig that was never in doubt. `cells.py` accepts these verbs
+    # today; the dimension that owns each one adds its branch.
+    with pytest.raises(NotImplementedError, match=verb):
+        runner._perform(
+            FakeDriver(),
+            cells.Action(verb),
+            card=None,
+            token_path=None,
+            amount_text="€10.00",
+        )
+
+
+@pytest.mark.parametrize("arg", ["google_pay", "no_result", "saved_card"])
+def test_an_expectation_with_no_branch_is_an_authoring_fault_too(arg):
+    with pytest.raises(NotImplementedError, match="expect"):
+        runner._perform(
+            FakeDriver(),
+            cells.Action("expect", arg),
+            card=None,
+            token_path=None,
+            amount_text="€10.00",
+        )
+
+
+def test_a_verb_the_grammar_does_not_know_is_still_a_driver_error():
+    # Not reachable from a cell file -- load_cell refuses it -- but run_cell
+    # takes an Action, so this is the honest answer for one built by hand.
+    with pytest.raises(DriverError, match="invented"):
+        runner._perform(
+            FakeDriver(),
+            cells.Action("invented", "x"),
+            card=None,
+            token_path=None,
+            amount_text="€10.00",
+        )
+
+
+def test_an_authoring_fault_spends_no_control_check(cell_dir, tmp_path):
+    # The whole point of the classification: a driver refusing a verb says
+    # nothing about the rig, and a control cell costs a session and a minute.
+    directory = tmp_path / "d3"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")), encoding="utf-8"
+    )
+    (directory / "wallet.yaml").write_text(
+        textwrap.dedent(CELL.format(id="wallet")).replace(
+            "  - tap_pay\n", "  - tap_pay\n  - tap_google_pay\n"
+        ),
+        encoding="utf-8",
+    )
+
+    report = run(directory, tmp_path, FakeDriver())
+
+    wallet = next(r for r in report.results if r.cell_id == "wallet")
+    assert wallet.authoring is True
+    assert not wallet.passed
+    assert any("tap_google_pay" in p for p in wallet.problems)
+    # No interleaved control check was run for it.
+    assert [r.artifact_id for r in report.results if r.is_control_check] == []

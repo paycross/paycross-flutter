@@ -49,7 +49,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import evidence, tree, verify
-from .cells import Action, Card, Cell, CellError, load_cells
+from .cells import ARG_ACTIONS, BARE_ACTIONS, Action, Card, Cell, CellError, load_cells
 from .drivers.android import DIGIT_PACING_SECONDS
 from .drivers.base import DriverError
 from .sandbox import Sandbox, SandboxError
@@ -76,6 +76,21 @@ REARM_TIMEOUT_SECONDS = 30
 #: post-PAN tree the seed script dumped by hand, and the artifact a caret bug
 #: shows up in.
 SHOT_VERBS = ("type_card", "tap_pay", "acs", "expect")
+
+
+def _grammar_accepts(verb: str, arg: str | None) -> bool:
+    """Whether `load_cell` would have accepted this action.
+
+    The same two rules `cells.parse_action` applies, asked of an `Action` that
+    already exists. It is what separates the two ways `_perform` can fail to
+    execute one: a legal action whose dimension has not landed, and a
+    malformed one that no cell file could have carried in the first place.
+    """
+    if verb in BARE_ACTIONS:
+        return not arg
+    accepts = ARG_ACTIONS.get(verb)
+    return accepts is not None and bool(arg) and accepts[0](arg)
+
 
 #: Exit codes. Part of this module's interface: the nightly branches on them.
 EXIT_OK = 0
@@ -315,19 +330,29 @@ def _perform(driver, action: Action, *, card: Card, token_path: Path, amount_tex
         driver.airplane(arg == "on")
     elif verb == "kill_activity":
         driver.kill_activity()
-    else:
-        # Reached for anything the branches above do not cover, which since
-        # Plan B opened the grammar means two different things: an argument
-        # this function has no branch for, and a whole verb whose branch the
-        # dimension that owns it has yet to add. Both name the verb and the
-        # argument, because from here they are indistinguishable and the
-        # reader needs to see which half is unfamiliar.
+    elif _grammar_accepts(verb, arg):
+        # A cell file really could carry this, and no branch above executes it
+        # -- so the cell has reached for a dimension that has not landed. That
+        # is a cell-authoring fault, and NotImplementedError is what `_kind`
+        # classifies as one, which is what stops a control check being spent
+        # proving a rig that was never in doubt. `expect <expectation>` lands
+        # here on the same reasoning: the grammar vets the argument too, so a
+        # legal one with no branch is "not landed yet" rather than malformed.
         #
-        # A DriverError rather than NotImplementedError, so a cell reaching
-        # this does spend a control check. That is the wrong side of the
-        # authoring/device line for a missing branch: pair a new verb's
-        # branch with its driver method, and the driver's own
-        # NotImplementedError classifies it correctly.
+        # The message says *branch* rather than driver method, because the two
+        # can be apart: `relaunch` is implemented on both drivers and is still
+        # unreachable until a branch calls it.
+        raise NotImplementedError(
+            f"{verb} is in the action grammar but the runner has no branch "
+            f"for it yet (arg {arg!r})"
+        )
+    else:
+        # Malformed rather than unlanded: either the verb is not in the
+        # grammar or its argument is not one this verb takes. `load_cell`
+        # refuses both, so no cell file reaches here -- but `run_cell` takes an
+        # `Action`, and this is the honest answer for one built by hand. The
+        # argument is named because on a legal verb it is the half that is
+        # wrong.
         raise DriverError(f"the runner cannot perform {verb} with {arg!r}")
     return None
 
@@ -436,7 +461,10 @@ def run_cell(
                     # match, the ledger, result.json and stdout all see the
                     # same value.
                     label = _redacted(answer, token)
-                elif action.verb == "expect":
+                elif action.verb == "expect" and action.arg == "rearmed":
+                    # Only this expectation answers with a re-arm. The others
+                    # observe something else entirely, and storing their answer
+                    # here would put it in front of the `rearmed` check.
                     rearmed = answer
 
                 # Unguarded, unlike the screenshot below and the log

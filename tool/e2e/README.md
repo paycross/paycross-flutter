@@ -293,10 +293,20 @@ the expected answer: on iOS a malformed or expired token is refused before
 `present` is ever called, so waiting for a sheet costs a 60-second timeout and
 then reports the wrong failure.
 
-Everything in this table below `cancel_form` is **declared, not implemented**:
-the vocabulary is stable so cell files can be written against it, and a cell
-using one fails as an authoring mistake rather than as a device fault — so no
-control check is spent proving a rig that was never in doubt.
+Everything in this table below `cancel_form` is **in the grammar but not yet
+executable**: the vocabulary is opened a dimension at a time so cell files can
+be written against a stable list, and the dimension that owns a verb adds the
+runner branch and the driver method together. Until then a cell using one fails
+as an **authoring mistake** rather than a device fault, so no control check is
+spent proving a rig that was never in doubt.
+
+`relaunch` is the one that is only half missing: both drivers implement it, and
+only the runner branch is outstanding. `expect` behaves the same way per
+argument — `rearmed` executes, the other four do not yet.
+
+A verb outside the grammar, or an argument the verb does not take, is a
+different failure and stays a device-side `DriverError`: `load_cell` refuses
+both, so no cell file can produce one.
 
 An argument is written `verb:arg` or `verb arg`, and the two are
 interchangeable: the parser splits on whichever delimiter comes first, so
