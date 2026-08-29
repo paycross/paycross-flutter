@@ -235,6 +235,7 @@ def test_arg_actions_still_reads_as_a_set_of_verbs():
         "dont_keep_activities",
         "enter_token",
         "expect",
+        "wait",
         "wait_expired",
         "wait_result",
     }
@@ -466,6 +467,7 @@ def test_a_new_bare_verb_parses_and_takes_no_argument(verb):
     [
         ("dont_keep_activities on", "dont_keep_activities maybe"),
         ("enter_token not.a.real.token", "enter_token has spaces"),
+        ("wait 300", "wait soon"),
         ("wait_expired 960", "wait_expired soon"),
     ],
 )
@@ -482,6 +484,21 @@ def test_expect_takes_every_expectation_and_nothing_else(expectation):
     assert cells.parse_action(f"expect {expectation}", "w").arg == expectation
     with pytest.raises(cells.CellError, match="argument must be"):
         cells.parse_action("expect success", "w")
+
+
+@pytest.mark.parametrize("bad", ["wait 0", "wait -30", "wait inf"])
+def test_wait_refuses_a_duration_that_would_never_end(bad):
+    # A bare `wait` exists to spend the 300 s between a token's JWT `exp` and
+    # its session's `expires_at`. Zero spends nothing and `inf` parses as a
+    # float, so a cell carrying one would hang the run rather than time out.
+    with pytest.raises(cells.CellError, match="argument must be"):
+        cells.parse_action(bad, "w")
+
+
+def test_expect_acs_observes_the_page_without_answering_it():
+    # The network-cut-during-challenge cell has to see the sandbox ACS page
+    # and leave it alone; `acs:<outcome>` would tap a button.
+    assert cells.parse_action("expect acs", "w") == cells.Action("expect", "acs")
 
 
 def test_enter_token_refuses_a_token_long_enough_to_be_a_real_one():

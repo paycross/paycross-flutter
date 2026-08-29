@@ -54,7 +54,17 @@ BARE_ACTIONS = frozenset(
 #: *non-result*: something true of the screen or of the merchant state that
 #: Dart is never told about.
 EXPECTATIONS = frozenset(
-    {"rearmed", "no_result", "google_pay", "no_google_pay", "saved_card"}
+    {
+        "rearmed",
+        "no_result",
+        # Waits for the sandbox ACS page without tapping an outcome, which is
+        # what `acs:<outcome>` would do. The cell that cuts the network during
+        # a challenge has to observe the page and then leave it alone.
+        "acs",
+        "google_pay",
+        "no_google_pay",
+        "saved_card",
+    }
 )
 
 #: A literal a cell may type into the token field. Two constraints, each for
@@ -115,6 +125,14 @@ ARG_ACTIONS = MappingProxyType(
             "at most 200 characters of A-Z a-z 0-9 . _ ~ -",
         ),
         "expect": (_is_expectation, f"one of {sorted(EXPECTATIONS)}"),
+        # Spends time and nothing else. There is exactly one reason a cell
+        # needs this and it is not slowness: a session token's JWT `exp` is
+        # mint + 900 s while its session's `expires_at` is mint + 1200 s
+        # (session_ttl + session_grace_period, both env-overridable), so the
+        # only way to present a token that is expired while its session is
+        # still open is to wait out the difference. `cell_rules` refuses it
+        # anywhere else.
+        "wait": (_is_positive_seconds, "a positive number of seconds"),
         "wait_expired": (_is_positive_seconds, "a positive number of seconds"),
         "wait_result": (_is_positive_seconds, "a positive number of seconds"),
     }
