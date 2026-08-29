@@ -119,9 +119,12 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
     """Checks only the keys the cell actually asserts.
 
     A key that is absent is not asserted. A key present with a null value
-    asserts the field is absent -- which is the distinction the
-    authentication_failed cell needs, because the sandbox returns no recovery
-    on Android and `change_method` on iOS for the same ACS outcome.
+    asserts the field is absent. The two are genuinely different, and the
+    distinction is the reason `failure_recovery: null` is expressible at all
+    -- though no shipped cell needs it today. It was written for a reading of
+    authentication_failed that the live runs disproved: both platforms return
+    `change_method`. Kept because "this field must not be there" is an
+    assertion a decline cell will want, not because D0 makes it.
     """
     problems: list[str] = []
     latest = _latest(resource)

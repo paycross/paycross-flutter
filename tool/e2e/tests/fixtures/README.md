@@ -1,16 +1,15 @@
 # Tree fixtures
 
 Real dumps, checked in so the matchers in `tool/e2e/tree.py` can be tested
-without a device or a simulator. The Android files are byte-identical copies;
-their originals live outside this repo and are read-only. Every fixture here is
+without a device or a simulator. The Android files are byte-identical copies of
+artifacts from the campaign's own E2E runs; the originals are kept in the
+private campaign evidence tree, outside this repo. Every fixture here is
 token-redacted — see the last section before adding another.
 
 ## `android-rearmed.uix`
 
 `uiautomator dump` of the native SDK sheet after a declined submit, from the
-2026-08-26 Android run.
-
-Source: `/home/silvo/projects/payments/.e2e-3ds/android/shots/f04b-flutter-declined-after.uix`
+2026-08-26 Android run (private campaign evidence).
 
 It holds the whole re-armed screen, which is what makes it the fixture for the
 neighbouring-node test: the banner `text="Payment failed. Please try again."`,
@@ -24,9 +23,7 @@ app's token field is not in it.
 ## `android-result.uix`
 
 `uiautomator dump` of the example app's own result screen, from the 2026-08-28
-smoke run.
-
-Source: `/home/silvo/projects/payments/.e2e-3ds/android/smoke/shots/c1-control-result.uix`
+Android smoke run (private campaign evidence).
 
 It predates the frozen label contract, so its outcome string is the legacy
 `content-desc="Paid 1000 EUR — …"` rather than a `result:…` one — which is also

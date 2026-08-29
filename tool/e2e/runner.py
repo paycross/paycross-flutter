@@ -2,8 +2,8 @@
 
     python -m tool.e2e.runner --platform android \\
         --cells tool/e2e/cells/d0 \\
-        --evidence-root ~/projects/payments/.e2e-3ds/campaign/evidence \\
-        --env-file ~/projects/payments/payment_testing_go/.env.staging \\
+        --evidence-root ~/e2e-evidence/d0-debug \\
+        --env-file ~/.paycross/.env.staging \\
         [--all] [--app PATH] [--only control]
 
 Two rules here are worth their code. A failed cell triggers an interleaved

@@ -951,10 +951,10 @@ class IosDriver(Driver):
         self._tap_node(self.scroll_to(outcome, max_swipes=max_swipes, settle=settle))
 
     def cancel_challenge(self) -> None:
-        # 0.1.1's installCancelBar() -- ThreeDSWebViewController.swift:71-84 in
-        # the v0.1.1 source, NOT the 0.1.0 tree under .e2e-3ds/ios/sdk-src,
-        # which has no such thing. 0.1.0 had no affordance at all here and
-        # held the shopper to the 480-second poll deadline.
+        # installCancelBar() in PayCross v0.1.1,
+        # Sources/PayCross/UI/ThreeDSWebViewController.swift. Read that
+        # version and no earlier: 0.1.0 has no such thing, no affordance at
+        # all here, and held the shopper to the 480-second poll deadline.
         self.tap_identifier(THREE_DS_CANCEL, timeout=120, identifier_only=True)
         self._sleep(ALERT_SETTLE_SECONDS)
         self.tap_identifier(CANCEL_CONFIRM, timeout=30)
