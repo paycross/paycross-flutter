@@ -1827,3 +1827,20 @@ def test_a_run_that_took_every_frame_it_could_names_none(cell_dir, tmp_path):
         next((tmp_path / "evidence").glob("*/control/result.json")).read_text()
     )
     assert written["screenshots_skipped"] == []
+
+
+def test_a_dump_that_cannot_be_parsed_is_not_a_licence_to_photograph():
+    # A leaked frame cannot be un-leaked and a missing one costs nothing, so
+    # an unreadable dump counts as "the example's screen is showing".
+    assert runner._shows_the_example_screen(b"<not xml", "android", None) is True
+    assert runner._shows_the_example_screen(b"<not xml", "ios", None) is True
+    assert not runner._may_screenshot("tap_pay", b"<not xml", "android", None)
+
+
+def test_a_cell_whose_dumps_are_unreadable_files_no_frame(cell_dir, tmp_path):
+    driver = FakeDriver()
+    driver.dump_tree = lambda: b"<not xml"
+
+    run(cell_dir, tmp_path, driver, only=["control"])
+
+    assert not list((tmp_path / "evidence").glob("*/control/*.png"))

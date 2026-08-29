@@ -1,10 +1,13 @@
 import json
 import os
 import zlib
+from pathlib import Path
 
 import pytest
 
 from tool.e2e import evidence
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 JWT = (
     "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"
@@ -386,3 +389,34 @@ def test_a_record_written_before_build_ids_existed_still_resumes(tmp_path):
     run.append_progress({"cell": "control", "status": "pass"})
 
     assert evidence.passed_cells(tmp_path, "android") == {"control"}
+
+
+# --- Plan B: the two gaps a later phase would have tripped over -----------
+
+
+@pytest.mark.parametrize("path", sorted(FIXTURES.glob("*")))
+def test_a_committed_fixture_is_already_clean(path):
+    # Otherwise a test is asserting on a string the runner would have
+    # scrubbed, and the fixture is a live credential besides.
+    raw = path.read_bytes()
+
+    assert evidence.redact(raw) == raw, f"{path.name} holds token-shaped material"
+
+
+def test_a_token_sharing_a_long_head_with_a_known_secret_leaves_no_tail():
+    # The ordering regression that leaked twice. A GET on an open session
+    # re-mints a token sharing a 617-character head with the old one; running
+    # the literal rule first decapitates the new one, and the shape rule --
+    # anchored on the `eyJ` that head begins with -- can no longer see the
+    # tail it left behind.
+    head = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjoi" + "A" * 600
+    minted = head + "ORIGINAL.c2lnbmF0dXJlLWJ5dGVzLWhlcmU"
+    remined = head + "SECONDONE.c2lnbmF0dXJlLXR3by1oZXJl"
+    log = f"flutter: checkout_url=...?session={remined}\n".encode()
+
+    scrubbed = evidence.redact(log, secrets=[minted])
+
+    assert b"eyJ" not in scrubbed
+    # And no marker with the rest of a token still hanging off it.
+    assert b"SECONDONE" not in scrubbed
+    assert evidence.REDACTED in scrubbed

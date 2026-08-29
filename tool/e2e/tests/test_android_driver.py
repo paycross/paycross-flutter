@@ -789,3 +789,89 @@ def test_relaunch_on_android_is_exactly_launch():
     made.relaunch()
 
     assert shell.calls == launched
+
+
+# --- Plan B: the four actions with no unit coverage on this side ----------
+#
+# The iOS driver has the equivalents; the asymmetry was an accident, not a
+# decision. Each one asserts the exact `input tap X Y` argv, so a matcher that
+# starts finding the wrong node is caught here rather than on a device.
+
+
+def sheet(*rows: tuple[str, str, str]) -> str:
+    """A tree of `(text, content-desc, bounds)` nodes and nothing else."""
+    return "<hierarchy>" + "".join(
+        f'<node class="android.view.View" text="{text}" content-desc="{desc}"'
+        f' bounds="{bounds}"/>'
+        for text, desc, bounds in rows
+    ) + "</hierarchy>"
+
+
+def taps(shell):
+    return [c for c in shell.argv_text() if c.startswith("shell input tap")]
+
+
+def test_tap_pay_taps_the_sheets_own_pay_button_and_not_the_examples():
+    # The example's own Pay is a content-desc; the sheet's is Compose `text`
+    # carrying the formatted amount. Matching the wrong one cost the
+    # 2026-08-26 run a false 270-second timeout.
+    shell = FakeShell(
+        tree=sheet(
+            ("€10.00", "", "[0,0][100,40]"),
+            ("Pay €10.00", "", "[0,60][100,100]"),
+            ("", "Pay", "[0,120][100,160]"),
+        )
+    )
+
+    driver(shell).tap_pay("€10.00")
+
+    assert taps(shell) == ["shell input tap 50 80"]
+
+
+def test_acs_waits_for_the_sandbox_page_before_it_taps_an_outcome():
+    shell = FakeShell(
+        tree=sheet(
+            (android.ACS_TITLE, "", "[0,0][100,40]"),
+            ("approve", "", "[0,200][100,240]"),
+            ("authentication_failed", "", "[0,260][100,300]"),
+        )
+    )
+
+    driver(shell).acs("authentication_failed")
+
+    # The outcome is chosen by which button is tapped, never by the PAN.
+    assert taps(shell) == ["shell input tap 50 280"]
+
+
+def test_cancel_challenge_backs_out_of_the_acs_page_then_confirms():
+    shell = FakeShell(
+        trees=[
+            sheet((android.ACS_TITLE, "", "[0,0][100,40]")),
+            sheet(
+                (android.CANCEL_TITLE, "", "[0,300][100,340]"),
+                (android.CANCEL_CONFIRM, "", "[0,400][100,440]"),
+            ),
+        ]
+    )
+
+    driver(shell).cancel_challenge()
+
+    assert "shell input keyevent 4" in shell.argv_text()
+    assert taps(shell) == ["shell input tap 50 420"]
+
+
+def test_cancel_form_confirms_without_waiting_for_the_acs_page():
+    # BackHandler is unconditional on both screens (PaymentActivity.kt), and
+    # the card form is not the ACS page -- so this one must not look for it.
+    shell = FakeShell(
+        tree=sheet(
+            (android.CANCEL_TITLE, "", "[0,300][100,340]"),
+            (android.CANCEL_CONFIRM, "", "[0,400][100,440]"),
+        )
+    )
+
+    driver(shell).cancel_form()
+
+    assert "shell input keyevent 4" in shell.argv_text()
+    assert taps(shell) == ["shell input tap 50 420"]
+    assert not any(android.ACS_TITLE in c for c in shell.argv_text())
