@@ -22,10 +22,14 @@ Exit codes, which a nightly reads rather than the output:
        `--app` that would not install. The rig or the backend is broken,
        and no finding above it should be believed
 
-One evidence root per build. A resume trusts what earlier runs recorded, and
-`passed_cells` has no idea which build a pass came from, so pointing a new APK
-or .app at an old root would report yesterday's result as today's. `--app`
-therefore implies `--all`.
+One evidence root per dimension, and `--build-id` for the build. A resume
+trusts what earlier runs in the root recorded, and `passed_cells` keys on the
+cell id -- so two dimensions sharing a root would let D0's `control` pass
+satisfy D2's. The build half is carried rather than disciplined: every
+progress record names the build under test and a resume only trusts a pass
+whose name matches, so pointing a release APK at a debug run's root reruns
+rather than reporting yesterday's result as today's. `--app` still implies
+`--all`, which is the same answer without having to name a build.
 
 Contains no credentials and no internal hostnames beyond the TEST API the env
 file names.
@@ -333,6 +337,7 @@ def run_cell(
     *,
     artifact_id: str | None = None,
     is_control_check: bool = False,
+    build_id: str | None = None,
 ) -> CellResult:
     """One cell, end to end: mint, drive, judge, file the proof."""
     artifact_id = artifact_id or cell.id
@@ -543,6 +548,7 @@ def run_cell(
             {
                 "cell": cell.id,
                 "platform": platform,
+                "build": build_id,
                 "passed": result.passed,
                 "control_check": is_control_check,
                 "session_id": result.session_id,
@@ -567,6 +573,7 @@ def run_cell(
         {
             "cell": cell.id,
             "status": "pass" if result.passed else "fail",
+            "build": build_id,
             "session_id": result.session_id,
             "label": result.label,
             "problems": problems,
@@ -617,6 +624,7 @@ def run_cells(
     run_all: bool = False,
     only: list[str] | None = None,
     app_path: str | None = None,
+    build_id: str | None = None,
 ) -> Report:
     # Checked again rather than taken on trust: run_cells is callable on its
     # own, and this is the last point before a session is minted.
@@ -633,7 +641,11 @@ def run_cells(
         chosen = [c for c in everything if c.id in only]
 
     report = Report()
-    passed = set() if run_all else evidence.passed_cells(Path(evidence_root), platform)
+    passed = (
+        set()
+        if run_all
+        else evidence.passed_cells(Path(evidence_root), platform, build_id)
+    )
     todo = [c for c in chosen if c.id not in passed]
     report.skipped = [c.id for c in chosen if c.id in passed]
     if not todo:
@@ -662,7 +674,7 @@ def run_cells(
         for cell in todo:
             # run_cell appends its own progress line: it is the only scope
             # holding the session token the record has to be scrubbed against.
-            result = run_cell(cell, platform, driver, sandbox, run)
+            result = run_cell(cell, platform, driver, sandbox, run, build_id=build_id)
             report.results.append(result)
             report.problems += result.run_problems
 
@@ -684,6 +696,7 @@ def run_cells(
                     run,
                     artifact_id=f"{CONTROL_CELL_ID}-check-{checks:02d}",
                     is_control_check=True,
+                    build_id=build_id,
                 )
                 report.results.append(check)
                 report.problems += check.run_problems
@@ -765,8 +778,9 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help=(
             "outside any git checkout; survives a WSL reboot. One root per "
-            "build: a resume trusts what earlier runs in it recorded, and a "
-            "pass carries no build fingerprint"
+            "dimension: a resume trusts what earlier runs in it recorded and "
+            "keys on the cell id alone, and every dimension has a 'control'. "
+            "Use --build-id for the build"
         ),
     )
     parser.add_argument("--env-file", required=True, type=Path)
@@ -779,6 +793,15 @@ def main(argv: list[str] | None = None) -> int:
             "APK (Android) or .app on the Mac (iOS) to install first; implies "
             "--all, because a pass recorded against another build is not this "
             "build's"
+        ),
+    )
+    parser.add_argument(
+        "--build-id",
+        help=(
+            "names the build under test, e.g. 'android-0.3.3-release-r8'. "
+            "Written into every progress record, and a resume only trusts a "
+            "pass whose build-id matches. Omit it and the behaviour is exactly "
+            "as before"
         ),
     )
     parser.add_argument(
@@ -801,6 +824,7 @@ def main(argv: list[str] | None = None) -> int:
             run_all=args.all or bool(args.app),
             only=args.only,
             app_path=args.app,
+            build_id=args.build_id,
         )
     except (CellError, SandboxError, OSError) as error:
         # An unusable selection or an evidence root that cannot be written is

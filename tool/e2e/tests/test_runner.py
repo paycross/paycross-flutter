@@ -1614,3 +1614,58 @@ def test_the_summary_counts_what_a_resume_skipped(
     assert summary == (
         "0 cells, 0 passed, 0 failed, 2 skipped, 0 control checks, aborted: no"
     )
+
+
+# --- Plan B: the build fingerprint reaches the ledger ---------------------
+
+
+def test_the_build_id_is_written_into_every_progress_record(cell_dir, tmp_path):
+    runner.run_cells(
+        platform="android",
+        cell_dir=cell_dir,
+        evidence_root=tmp_path / "evidence",
+        driver=FakeDriver(),
+        sandbox=FakeSandbox(),
+        run_all=True,
+        build_id="android-0.3.3-release-r8",
+    )
+
+    records = [
+        json.loads(line)
+        for path in (tmp_path / "evidence").glob("*/progress.jsonl")
+        for line in path.read_text().splitlines()
+    ]
+    assert records
+    assert all(r["build"] == "android-0.3.3-release-r8" for r in records if "cell" in r)
+
+
+def test_a_pass_on_a_debug_build_does_not_skip_the_cell_on_a_release_one(
+    cell_dir, tmp_path
+):
+    common = dict(
+        platform="android",
+        cell_dir=cell_dir,
+        evidence_root=tmp_path / "evidence",
+        sandbox=FakeSandbox(),
+    )
+    runner.run_cells(driver=FakeDriver(), build_id="debug", **common)
+
+    second = runner.run_cells(driver=FakeDriver(), build_id="release", **common)
+
+    assert second.skipped == []
+    assert [r.cell_id for r in second.results]
+
+
+def test_the_build_id_is_recorded_in_result_json(cell_dir, tmp_path):
+    runner.run_cells(
+        platform="android",
+        cell_dir=cell_dir,
+        evidence_root=tmp_path / "evidence",
+        driver=FakeDriver(),
+        sandbox=FakeSandbox(),
+        run_all=True,
+        build_id="android-0.3.3-release-r8",
+    )
+
+    written = next((tmp_path / "evidence").glob("*/control/result.json"))
+    assert json.loads(written.read_text())["build"] == "android-0.3.3-release-r8"

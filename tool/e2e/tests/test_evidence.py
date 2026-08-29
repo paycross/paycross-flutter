@@ -356,3 +356,33 @@ def test_write_refuses_it_too_before_anything_touches_disk(tmp_path):
         run.write("../escape", "form.uix", b"x")
 
     assert not (tmp_path / "escape").exists()
+
+
+# --- Plan B: a pass carries the build that produced it --------------------
+
+
+def test_a_pass_recorded_under_one_build_does_not_satisfy_another(tmp_path):
+    # Pointing a release APK at a debug run's evidence root used to report
+    # yesterday's result as today's.
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+    run.append_progress({"cell": "control", "status": "pass", "build": "debug-1"})
+
+    assert evidence.passed_cells(tmp_path, "android", "debug-1") == {"control"}
+    assert evidence.passed_cells(tmp_path, "android", "release-2") == set()
+
+
+def test_a_run_with_no_build_id_matches_records_that_carry_none(tmp_path):
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+    run.append_progress({"cell": "control", "status": "pass", "build": None})
+
+    assert evidence.passed_cells(tmp_path, "android") == {"control"}
+    assert evidence.passed_cells(tmp_path, "android", "release-2") == set()
+
+
+def test_a_record_written_before_build_ids_existed_still_resumes(tmp_path):
+    # Every record in the two Phase 0 evidence roots has no `build` key at
+    # all, and an existing root must keep resuming exactly as it did.
+    run = evidence.Run(tmp_path, platform="android", run_id="r1")
+    run.append_progress({"cell": "control", "status": "pass"})
+
+    assert evidence.passed_cells(tmp_path, "android") == {"control"}

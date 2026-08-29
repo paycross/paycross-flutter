@@ -263,12 +263,18 @@ class Run:
             os.fsync(handle.fileno())
 
 
-def passed_cells(root: Path, platform: str) -> set[str]:
+def passed_cells(root: Path, platform: str, build_id: str | None = None) -> set[str]:
     """Cell ids that have passed on this platform in *any* previous run.
 
     Scanning the runs themselves rather than keeping a separate ledger: a
     second source of truth about what passed is a second thing that can be
     wrong, and these files are small.
+
+    A pass only counts when it was recorded against the same build. Hashing is
+    not an option -- the iOS `.app` is a directory on the Mac -- so the build
+    is *named*, not measured, and a run that names none matches records that
+    carry none. Every record written before this existed has no `build` key at
+    all, so an existing evidence root keeps resuming exactly as it did.
     """
     passed: set[str] = set()
     for path in sorted(Path(root).glob("*/progress.jsonl")):
@@ -288,6 +294,10 @@ def passed_cells(root: Path, platform: str) -> set[str]:
                 # A pass with no cell id is a runner bug. Same direction as
                 # above: drop the record rather than crash the next run.
                 and record.get("cell")
+                # Named, not measured -- see the docstring. `.get` rather than
+                # `record["build"]` so a legacy record reads as None and a run
+                # with no --build-id still resumes from it.
+                and record.get("build") == build_id
                 # An interleaved control check is a rig probe, not the control
                 # cell's own run. Counting it would let a resumed run skip
                 # `control` -- and then the next failure's skepticism check
