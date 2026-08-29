@@ -495,6 +495,13 @@ class IosDriver(Driver):
         state = self._device_state()
         if state != "Booted":
             raise DriverError(f"simulator {self._udid} is {state!r}, not booted")
+        locale = self._locale()
+        if locale and not locale.startswith("en"):
+            raise DriverError(
+                f"simulator locale is {locale!r}: the sheet's Pay button and the "
+                "re-arm banner are English strings, and the amount predicate "
+                "only absorbs a swapped decimal separator"
+            )
         # Before the terminate: the old capture still owns the app.
         self._stop_console()
         # Before the capture is started, so the termination a stale bundle-bound
@@ -549,6 +556,25 @@ class IosDriver(Driver):
 
     def relaunch(self) -> None:
         self.launch(truncate_console=False)
+
+    def _locale(self) -> str:
+        """The simulator's locale, or "" when it cannot be read.
+
+        Deliberately soft. The rig's simulator answers `en_US@rg=lvzzzz` and
+        the amount predicate absorbs that, so this is guarding the case the
+        predicate cannot: a non-English locale, where `Pay` is another word
+        entirely. A simulator that has never had the key written answers with
+        a complaint rather than a locale, and refusing on that would break a
+        rig for a cosmetic check -- so an unreadable locale passes.
+
+        Android refuses anything but `en-US` outright because its Pay-button
+        match is exact; this side tolerates more because it can.
+        """
+        said = self._remote(
+            f"xcrun simctl spawn {self._quoted_udid} defaults read -g AppleLocale "
+            "2>/dev/null"
+        ).strip()
+        return said if re.fullmatch(r"[a-z]{2}(_[A-Za-z0-9@=]+)?", said) else ""
 
     # -- finding and tapping -------------------------------------------------
 

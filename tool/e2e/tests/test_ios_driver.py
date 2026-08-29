@@ -401,16 +401,20 @@ def launch_outputs(
     *,
     stopping=False,
     mark=CONSOLE_MARK,
+    locale="en_US@rg=lvzzzz\n",
 ):
     """One launch's worth of remote answers, in the order launch() asks.
 
     `stopping` is for a second launch on the same driver: the first one left a
     capture behind, so `_stop_console` has a round trip of its own. `mark` is
-    what `wc -c` reports -- a relaunch measures a log that has grown.
+    what `wc -c` reports -- a relaunch measures a log that has grown. `locale`
+    is what `defaults read -g AppleLocale` answers; the default is what this
+    rig's simulator really says.
     """
     stale = json.loads(status).get("sessionId")
     return (
         DEVICE_LINE,
+        locale,
         *(["gone\n"] if stopping else []),
         status,
         # Only asked for when /status named one.
@@ -478,8 +482,9 @@ def test_launch_kills_the_previous_capture_before_starting_another():
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
-    # The device check comes first, then the kill, then the terminate.
-    ssh.outputs = [DEVICE_LINE, "gone\n", *launch_outputs()[1:]]
+    # The device and locale checks come first, then the kill, then the
+    # terminate.
+    ssh.outputs = list(launch_outputs(stopping=True))
     ssh.calls.clear()
 
     d.launch()
@@ -494,7 +499,7 @@ def test_launch_reports_a_previous_capture_that_will_not_die():
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
-    ssh.outputs = [DEVICE_LINE, "alive\n"]
+    ssh.outputs = [DEVICE_LINE, "en_US\n", "alive\n"]
     ssh.calls.clear()
 
     with pytest.raises(DriverError) as excinfo:
@@ -682,7 +687,7 @@ def test_launch_checks_the_console_capture_after_the_session_not_before():
 
 def test_launch_reports_a_console_capture_that_would_not_start():
     ssh = FakeSsh(
-        DEVICE_LINE, NO_OPEN_SESSION, "", "sh: xcrun: command not found\n"
+        DEVICE_LINE, "en_US\n", NO_OPEN_SESSION, "", "sh: xcrun: command not found\n"
     )
 
     with pytest.raises(DriverError) as excinfo:
@@ -1737,3 +1742,45 @@ def test_relaunch_still_replaces_the_capture_and_the_session():
 
     assert any("--console-pty" in c for c in ssh.calls)
     assert any("terminate" in c for c in ssh.calls)
+
+
+# --- Plan B: the simulator's locale ---------------------------------------
+
+
+@pytest.mark.parametrize("locale", ["en_US\n", "en_US@rg=lvzzzz\n", "en_GB\n"])
+def test_launch_accepts_an_english_locale(locale):
+    # This rig answers `en_US@rg=lvzzzz`, and the amount predicate absorbs the
+    # swapped decimal separator that comes with it.
+    ssh = FakeSsh(*launch_outputs(locale=locale))
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    assert any("AppleLocale" in c for c in ssh.calls)
+
+
+def test_launch_refuses_a_simulator_that_is_not_in_english():
+    # The sheet's Pay button and the re-arm banner are English strings, which
+    # the amount predicate cannot absorb.
+    ssh = FakeSsh(*launch_outputs(locale="fr_FR\n"))
+
+    with pytest.raises(DriverError) as excinfo:
+        ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    message = str(excinfo.value)
+    assert "fr_FR" in message
+    # Named as a locale, not as whatever failed next.
+    assert "locale" in message
+
+
+def test_an_unreadable_locale_is_not_a_reason_to_refuse_a_rig():
+    # A simulator that has never had the key written answers with a complaint
+    # rather than a locale, and refusing on that would break a working rig for
+    # a cosmetic check.
+    ssh = FakeSsh(
+        *launch_outputs(
+            locale="2026-08-29 defaults[1:2] \nThe domain/default pair does "
+            "not exist\n"
+        )
+    )
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
