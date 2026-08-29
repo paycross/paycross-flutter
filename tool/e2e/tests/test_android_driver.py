@@ -655,6 +655,15 @@ def test_tapping_an_empty_needle_is_refused_rather_than_matching_every_node():
     assert shell.calls == []
 
 
+def test_close_is_a_no_op_for_a_driver_with_nothing_to_release():
+    # Concrete on the ABC rather than abstract: only iOS holds anything across
+    # a cell, and Task 9 calls this in a finally for both.
+    shell = FakeShell()
+
+    assert driver(shell).close() is None
+    assert shell.calls == []
+
+
 def test_the_d3_actions_are_declared_and_refuse_rather_than_no_op():
     d = driver(FakeShell())
 

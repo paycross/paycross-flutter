@@ -95,6 +95,20 @@ class Driver(ABC):
     def logs_since(self, since: datetime) -> str:
         """Device log from `since` to now."""
 
+    def close(self) -> None:
+        """Releases whatever this driver is holding on the host. Idempotent.
+
+        Concrete rather than abstract because only iOS holds anything: its
+        console capture is a process on the Mac that outlives the app, and
+        launch() only ever clears the *previous* cell's, so the last one of a
+        run would outlive the run. There is no Android equivalent -- logcat is
+        read on demand -- so the default does nothing.
+
+        May raise DriverError when the thing it is releasing will not go. A
+        caller running this in a `finally` should take care not to let that
+        stand in for the failure it was already reporting.
+        """
+
     # -- D3, declared now so the vocabulary is stable -------------------------
 
     def background(self, seconds: float) -> None:

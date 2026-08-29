@@ -479,6 +479,59 @@ def test_launch_reports_a_previous_capture_that_will_not_die():
     assert "12345" in str(excinfo.value)
 
 
+def test_close_kills_the_capture_the_run_started():
+    # launch() clears the *previous* cell's capture, so without this the last
+    # one of a run outlives the run: a simctl still holding the app, and a log
+    # still being written to.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.outputs = ["gone\n"]
+    ssh.calls.clear()
+
+    d.close()
+
+    assert any("kill 12345" in c for c in ssh.calls)
+    assert d._console_pid is None
+
+
+def test_close_before_launch_does_nothing():
+    # Task 9 calls it in a finally, which runs whether or not launch() got far
+    # enough to start anything.
+    ssh = FakeSsh()
+
+    driver(ssh).close()
+
+    assert ssh.calls == []
+
+
+def test_close_is_safe_to_call_twice():
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.outputs = ["gone\n"]
+    d.close()
+    ssh.calls.clear()
+
+    d.close()
+
+    assert ssh.calls == []
+
+
+def test_close_surfaces_a_capture_that_will_not_die():
+    # Documented on the ABC, because a caller running close() in a finally has
+    # to decide whether to let this stand in for the failure it was reporting.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.outputs = ["alive\n"]
+
+    with pytest.raises(DriverError) as excinfo:
+        d.close()
+
+    assert "12345" in str(excinfo.value)
+
+
 def test_launch_truncates_the_console_log_so_it_cannot_grow_unbounded():
     # The runner reads a cell's logs before the next launch, so the previous
     # cell's console has already been collected by the time this happens.
@@ -1039,6 +1092,53 @@ def test_paste_token_reports_a_field_that_never_took_the_paste(tmp_path, monkeyp
     message = str(excinfo.value)
     assert "Session token" in message
     assert TOKEN not in message
+
+
+#: The token field one tap later. Tapping it raises the keyboard, which on a
+#: short screen scrolls the field up from under the coordinates it had.
+MOVED_XML = SOURCE_XML.replace(
+    'name="Session token" label="Session token" value="[REDACTED-SESSION-TOKEN]" '
+    'enabled="true" visible="true" x="20" y="190"',
+    'name="Session token" label="Session token" value="[REDACTED-SESSION-TOKEN]" '
+    'enabled="true" visible="true" x="20" y="90"',
+)
+assert MOVED_XML != SOURCE_XML, "the fixture's token field changed shape"
+
+
+class MovingFieldFakeSsh(FakeSsh):
+    """Serves the token field where it starts, then where the tap left it."""
+
+    def __init__(self):
+        super().__init__()
+        self.tapped = False
+
+    def __call__(self, command, *, stdin=None):
+        if "/wda/tap" in command:
+            self.tapped = True
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            return json.dumps({"value": None})
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            return source_response(MOVED_XML if self.tapped else SOURCE_XML)
+        return super().__call__(command, stdin=stdin)
+
+
+def test_paste_token_long_presses_where_the_field_is_now(tmp_path):
+    # The tap that precedes the long press raises the keyboard, and the field
+    # moves. Held at its old centre, the long press lands on whatever took its
+    # place and there is no Paste menu at all.
+    ssh = MovingFieldFakeSsh()
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.paste_token(token_file(tmp_path))
+
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 201.0, "y": 266.0}]
+    assert payloads_for(ssh, "/wda/touchAndHold") == [
+        {"x": 201.0, "y": 166.0, "duration": 1.2}
+    ]
 
 
 def test_paste_token_hands_off_to_the_sheet_once_the_field_has_taken_it(tmp_path):

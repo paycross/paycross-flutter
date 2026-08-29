@@ -17,7 +17,10 @@ Three things shape everything here:
   prints and `json.loads` accepts. Unchecked, a failed tap is silent.
 * The SDK emits no os_log, so the crash markers criterion 3 looks for reach the
   app's stdout and stderr and nowhere else. They are captured by launching
-  through `simctl launch --console-pty` into a log file on the Mac.
+  through `simctl launch --console-pty` into a log file on the Mac. That log is
+  truncated by each `launch()` and the capture is a process that outlives the
+  app, which puts two obligations on a runner: **collect a cell's logs before
+  the next launch**, and call `close()` when the run ends.
 """
 
 from __future__ import annotations
@@ -352,11 +355,10 @@ class IosDriver(Driver):
         backgrounded.
 
         The log is truncated first, so a 40-minute matrix cannot grow one
-        without bound. That rests on a contract with the runner: **a cell's
-        logs are collected before the next launch**, because this is where the
-        previous cell's console stops being readable. The byte length is still
-        read afterwards and used as the offset, so a truncation that did not
-        take is a smaller window rather than a previous cell's output.
+        without bound -- see `launch()` for the contract that rests on. The
+        byte length is still read afterwards and used as the offset, so a
+        truncation that did not take is a smaller window rather than a previous
+        cell's output.
         """
         said = self._remote(
             f"mkdir -p {REMOTE_DIR} && : > {CONSOLE_LOG} && "
@@ -398,7 +400,25 @@ class IosDriver(Driver):
                 f"on {SSH_HOST}"
             )
 
+    def close(self) -> None:
+        """Stops this run's console capture. Idempotent, and safe before launch.
+
+        launch() clears the *previous* cell's capture, so without this the last
+        one of a run outlives it: a simctl still holding the app, and a log
+        still being written to. Task 9 calls this in a `finally`.
+        """
+        self._stop_console()
+
     def launch(self) -> None:
+        """Cold-starts the example app with its console captured.
+
+        **Contract with the runner: a cell's logs are collected before the next
+        launch.** The console log is truncated here so a 40-minute matrix
+        cannot grow one without bound, which is also the moment the previous
+        cell's console stops being readable. `logs_since` is therefore called
+        once per cell, before the next `launch()`, and `close()` at the end of
+        the run.
+        """
         state = self._device_state()
         if state != "Booted":
             raise DriverError(f"simulator {self._udid} is {state!r}, not booted")
