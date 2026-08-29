@@ -54,10 +54,29 @@ RETRY_BACKOFF_SECONDS = 2.0
 
 DEFAULT_TOKEN_LIFETIME_SECONDS = 3600.0
 
-#: The M2M token lives 3600 s, behind an API-Gateway cache that holds for
-#: 3300 s. Refreshing 300 s early both avoids expiring mid-run and lands past
-#: that cache TTL, which is what makes the replacement actually fresh.
-TOKEN_REFRESH_MARGIN_SECONDS = 300.0
+#: What the TEST deployment does today: cognito-m2m issues a 3600 s token and
+#: the API-Gateway cache in front of it holds for 3300 s. Named because the
+#: margin below is only correct relative to these two numbers -- if the infra
+#: changes, this is the pair to re-measure.
+OBSERVED_TOKEN_LIFETIME_SECONDS = 3600.0
+OBSERVED_TOKEN_CACHE_TTL_SECONDS = 3300.0
+
+#: How early to replace a token, and the one constant here with a hard upper
+#: bound rather than a preference.
+#:
+#: A token minted at the origin at T0 expires at T0 + lifetime, but the cache
+#: keeps serving it until T0 + cacheTTL. The refresh fires at T0 + lifetime -
+#: margin, so it reaches the origin only when
+#:
+#:     margin < lifetime - cacheTTL        (3600 - 3300 = 300 s today)
+#:
+#: The failure mode of getting this wrong is not a stale token, it is a busy
+#: loop: a margin of 300 or more schedules the refresh inside the cache
+#: window, the gateway returns the very same token, its `exp` has not moved,
+#: so the client decides it needs refreshing again -- immediately, and every
+#: time. Smaller is safe; larger is not. 240 leaves a minute of headroom past
+#: the boundary and still replaces the token four minutes before it dies.
+TOKEN_REFRESH_MARGIN_SECONDS = 240.0
 
 #: Failures worth one more try. HTTPException covers the short reads and bad
 #: status lines that surface out of `response.read()`, after the status line
@@ -330,18 +349,20 @@ class Sandbox:
         merged.update(headers or {})
         status, payload = self._request(method, url, merged, body)
         if status == 401:
-            # The proactive refresh in `_bearer` trusts `expires_in`, and the
-            # token endpoint sits behind an API-Gateway cache: a Sandbox built
-            # partway through a token's life is handed the cached token with a
-            # full `expires_in: 3600` as if it had just been issued, and then
-            # believes it for the ~51 minutes the token has already spent. The
-            # 2026-08-29 Android matrix died exactly that way mid-run.
+            # The backstop for every expiry the clock cannot predict. The
+            # scheduled refresh reads the token's own `exp`, which covers the
+            # ordinary case, but it is silent when there is no claim to read
+            # (a token that is not a JWT, or one whose payload carries no
+            # usable `exp`, both of which fall back to the `expires_in` the
+            # gateway may have restated), and it cannot see a clock that
+            # disagrees with the issuer's or a token revoked before its time.
             #
-            # So a 401 is treated as the authoritative expiry notice the clock
-            # could not give: drop the token and replay once. That refetch
-            # always reaches the origin because the cache TTL (3300 s) is
-            # shorter than the token lifetime (3600 s) -- any token old enough
-            # to be refused has already outlived its cache entry.
+            # In all of those the API is the only thing that knows, and a 401
+            # is how it says so: drop the token and replay once.
+            #
+            # The refetch reaches the origin rather than the cache because a
+            # token old enough to be refused has outlived a cache entry
+            # shorter than its own lifetime.
             #
             # Once, never in a loop. A replay refused again means the
             # credentials or the environment are wrong, and `_decode` says so.

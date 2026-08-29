@@ -50,3 +50,7 @@ expected:
     txn_status: failed
     no_succeeded_txn: true
     failure_recovery: change_method
+    threeds:
+      outcome: not_authenticated
+      flow: challenge
+      liability_shifted: false

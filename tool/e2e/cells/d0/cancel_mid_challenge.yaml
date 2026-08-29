@@ -6,10 +6,12 @@
 # On iOS this only works from PayCross 0.1.1: 0.1.0's challenge web view
 # covered the sheet's only Cancel affordance, and the 2026-08-26 run held a
 # shopper 487 s with no way out. 0.1.1's ThreeDSWebViewController installs a
-# navigation bar with a Cancel item tagged threeDSCancel (installCancelBar, at
-# ThreeDSWebViewController.swift:71-84 in the v0.1.1 source -- the 0.1.0 tree
-# under .e2e-3ds/ios/sdk-src has neither), which is what the
-# driver taps. On Android the back handler is unconditional and raises the
+# navigation bar with a Cancel item tagged threeDSCancel, which is what the
+# driver taps. It is installed by installCancelBar at
+#   .e2e-3ds/ios/fix-clone/Sources/PayCross/UI/ThreeDSWebViewController.swift:71-84
+# and that is the tree to read: .e2e-3ds/ios/sdk-src is the 0.1.0 source,
+# where the file has neither installCancelBar nor any accessibilityIdentifier,
+# so grepping it reports that the identifier does not exist. On Android the back handler is unconditional and raises the
 # same "Cancel Payment?" dialog from either screen.
 id: cancel_mid_challenge
 platforms: [android, ios]

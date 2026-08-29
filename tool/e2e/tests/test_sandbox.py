@@ -490,11 +490,44 @@ def test_the_refresh_is_scheduled_from_the_jwt_exp_not_from_expires_in():
     )
 
     client.mint(amount=1000, currency="EUR", options={})
-    # Past exp - 300, and far short of the 3300 s expires_in would have bought.
-    clock.now = 400
+    # Past exp - margin, and far short of what expires_in would have bought.
+    clock.now = 600 - sandbox.TOKEN_REFRESH_MARGIN_SECONDS + 1
     client.mint(amount=1000, currency="EUR", options={})
 
     assert len(_token_fetches(transport)) == 2
+
+
+def test_the_refresh_margin_stays_under_the_cache_boundary():
+    # The bound, stated once: a margin at or above lifetime - cacheTTL puts
+    # the refresh inside the cache window, where the gateway returns the same
+    # token with the same exp and the client refetches forever.
+    headroom = (
+        sandbox.OBSERVED_TOKEN_LIFETIME_SECONDS
+        - sandbox.OBSERVED_TOKEN_CACHE_TTL_SECONDS
+    )
+
+    assert sandbox.TOKEN_REFRESH_MARGIN_SECONDS < headroom
+
+
+def test_a_refresh_scheduled_from_exp_lands_after_the_cache_has_let_go():
+    # The same bound as behaviour: at the cache boundary the token is still in
+    # use, so the refresh -- whenever it fires -- fires past it and reaches the
+    # origin. A margin of 300 would refresh exactly on the boundary; 3300 s in
+    # this test the client must still be holding its first token.
+    clock = FakeClock()
+    minted = jwt_with({"exp": clock.time() + sandbox.OBSERVED_TOKEN_LIFETIME_SECONDS})
+    client, transport, _ = client_with(
+        access_token_response(expires_in=3600, token=minted),
+        MINTED,
+        MINTED,
+        clock=clock,
+    )
+
+    client.mint(amount=1000, currency="EUR", options={})
+    clock.now = sandbox.OBSERVED_TOKEN_CACHE_TTL_SECONDS
+    client.mint(amount=1000, currency="EUR", options={})
+
+    assert len(_token_fetches(transport)) == 1
 
 
 def test_a_token_whose_exp_has_not_come_near_is_still_reused():

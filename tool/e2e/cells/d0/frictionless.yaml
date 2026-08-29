@@ -22,7 +22,6 @@ expected:
     session_status: completed
     txn_count: 1
     txn_status: succeeded
-    no_succeeded_txn: false
     threeds:
       outcome: authenticated
       flow: frictionless
