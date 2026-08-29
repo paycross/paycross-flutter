@@ -21,7 +21,9 @@ class DriverError(RuntimeError):
 
 
 class Driver(ABC):
-    #: Used by crash scanning and by log capture.
+    #: What `verify.crash_lines` matches `ANR in <package>` against. Log
+    #: capture does not use it -- it is deliberately device-wide, because
+    #: an ANR is logged by system_server rather than by the app.
     package: str
 
     # -- lifecycle -----------------------------------------------------------
@@ -40,8 +42,10 @@ class Driver(ABC):
     def paste_token(self, token_path: Path) -> None:
         """Enters the session token, taps the example's Pay, waits for the sheet.
 
-        Takes a path rather than the token itself so the credential never
-        becomes a command-line argument.
+        Takes a path rather than the token so the credential is never held by
+        the runner and never reaches its argv, nor adb's. It is still typed
+        into the device, where the shell that receives it can see it; that
+        exposure is unavoidable and lasts as long as the keystrokes do.
         """
 
     @abstractmethod
@@ -76,7 +80,12 @@ class Driver(ABC):
 
     @abstractmethod
     def dump_tree(self) -> bytes:
-        """The raw accessibility dump, as it came off the device."""
+        """The accessibility dump, as UTF-8.
+
+        Not byte-identical to what the device produced: the Android transport
+        decodes with replacement and re-encodes, so an undecodable byte
+        arrives here as U+FFFD.
+        """
 
     @abstractmethod
     def screenshot(self) -> bytes:

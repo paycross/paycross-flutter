@@ -51,6 +51,20 @@ _SPACE = "%s"
 #: direction to be wrong in.
 DIGIT_PACING_SECONDS = 0.4
 
+#: What the seed scripts waited after a tap, an entry or a cold start. Kept
+#: as named values because the unit tests assert them rather than spend them:
+#: the rig's timing stays pinned without the suite sleeping through it.
+SETTLE_SECONDS = 1
+LAUNCH_SETTLE_SECONDS = 6
+
+#: How long the token read-back is given to agree with the file. The field is
+#: filled by ~13 `input text` calls and the last of them is still landing when
+#: the first read happens.
+TOKEN_READBACK_SECONDS = 10
+
+#: `input text` does not reliably deliver much more than this at once.
+TOKEN_CHUNK_CHARS = 80
+
 #: KEYCODE_0. Digit n is _KEYCODE_ZERO + n.
 _KEYCODE_ZERO = 7
 _KEYCODE_DEL = 67
@@ -69,13 +83,42 @@ CANCEL_CONFIRM = "Yes, Cancel"
 #: unusable cutoff yields an empty log, which reads as "nothing crashed".
 _LOGCAT_CUTOFF = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$")
 
+#: base64url segments joined by dots. Checked before the value is sent to a
+#: device shell, which re-splits whatever it is given: a token that is not
+#: this shape is a command, not a credential. It also guarantees the value
+#: needs no quoting, which is what makes the stdin form below safe.
+_JWT = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
 
-def _run(argv: list[str], binary: bool = False):
-    """Invokes adb once. Text results have their CRLF stripped."""
-    done = subprocess.run([ADB, *argv], capture_output=True, timeout=300)
+
+def _text(raw: bytes) -> str:
+    return raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
+    """Invokes adb once, normalising CRLF and never discarding a failure.
+
+    A non-zero exit has its stderr appended to the text result rather than
+    raised: `uninstall` is expected to fail on a first install, and `install`
+    reads this text to report what actually went wrong. Binary results cannot
+    carry an explanation -- appending to a PNG would corrupt it -- so those
+    raise instead.
+    """
+    done = subprocess.run(
+        [ADB, *argv],
+        capture_output=True,
+        timeout=300,
+        input=stdin.encode("utf-8") if stdin is not None else None,
+    )
     if binary:
+        if done.returncode != 0:
+            raise DriverError(
+                f"adb {argv[0]} exited {done.returncode}: {_text(done.stderr).strip()}"
+            )
         return done.stdout
-    return done.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    out = _text(done.stdout)
+    if done.returncode != 0:
+        out += _text(done.stderr)
+    return out
 
 
 class AndroidDriver(Driver):
@@ -91,10 +134,9 @@ class AndroidDriver(Driver):
         self._shell = shell
         self._staging_dir = Path(staging_dir)
         self._windows_staging = windows_staging
-        # Only the *pacing* waits go through this -- the per-digit gap and the
-        # dump backoff -- so a unit test can stop paying for retries it is
-        # deliberately provoking. The UI-settling waits stay on `time.sleep`:
-        # they are the rig's real timing and Task 10 reads them as such.
+        # Every wait goes through this. The durations are the rig's real ones
+        # and stay pinned by the tests asserting on what was recorded here,
+        # which is cheaper than the suite sleeping through them.
         self._sleep = sleep
 
     # -- primitives ----------------------------------------------------------
@@ -112,7 +154,7 @@ class AndroidDriver(Driver):
         self._shell(["shell", "input", "text", text.replace(" ", _SPACE)])
 
     def _type_digits(self, digits: str) -> None:
-        """One real key event per digit.
+        """One real key event per digit, at the seed script's pace.
 
         Bulk `input text` bypasses the formatter, which is precisely the code
         path a card form has to survive -- typing raw is what caught the 0.3.1
@@ -141,20 +183,37 @@ class AndroidDriver(Driver):
                 raise
             return []
 
-    def _find(
-        self, finder, needle: str, what: str, timeout: float = 30, interval: float = 2
-    ):
+    def _poll(self, look, timeout: float, interval: float):
+        """Runs `look` over the tree until it answers, or the deadline passes.
+
+        `look` returns what it found, or None for "not yet"; `_poll` hands back
+        the same, so each caller decides whether nothing is an error. The one
+        rule that lives here rather than in three copies: a refused dump reads
+        as an empty tree while the deadline is live and raises once it is not,
+        so a device that will not dump is reported as itself rather than as
+        whatever happened to be waited for.
+        """
         deadline = time.monotonic() + timeout
         while True:
-            # Tolerate a refused dump only while there is deadline left to
-            # spend; on the last look the dump's own error is the honest one.
             live = time.monotonic() < deadline
-            hits = finder(self._nodes(tolerate=live), needle)
-            if hits:
-                return hits[0]
+            found = look(self._nodes(tolerate=live))
+            if found is not None:
+                return found
             if not live:
-                raise DriverError(f"{what} {needle!r} never appeared within {timeout}s")
-            time.sleep(interval)
+                return None
+            self._sleep(interval)
+
+    def _find(
+        self, finder, needle: str, what: str, *, timeout: float = 30, interval: float = 2
+    ):
+        found = self._poll(
+            lambda nodes: next(iter(finder(nodes, needle)), None), timeout, interval
+        )
+        if found is None:
+            # The token field is looked up by class, with no needle to name.
+            named = f"{what} {needle!r}" if needle else what
+            raise DriverError(f"{named} never appeared within {timeout}s")
+        return found
 
     def _tap_text(self, text: str, **kw) -> None:
         # An empty needle matches every node whose text is empty, which is
@@ -178,7 +237,11 @@ class AndroidDriver(Driver):
 
     def install(self, app_path: str) -> None:
         staged = self._staging_dir / STAGED_APK
-        shutil.copyfile(app_path, staged)
+        try:
+            self._staging_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(app_path, staged)
+        except OSError as exc:
+            raise DriverError(f"could not stage {app_path} at {staged}: {exc}") from exc
         self._shell(["uninstall", PACKAGE])  # first install has nothing to remove
         out = self._shell(["install", f"{self._windows_staging}\\{STAGED_APK}"])
         if "Success" not in out:
@@ -197,16 +260,46 @@ class AndroidDriver(Driver):
             )
         self._shell(["shell", "am", "force-stop", PACKAGE])
         self._shell(["shell", "monkey", "-p", PACKAGE, "-c", _LAUNCHER, "1"])
-        time.sleep(6)
+        self._sleep(LAUNCH_SETTLE_SECONDS)
 
     # -- actions -------------------------------------------------------------
 
+    def _read_token(self, token_path: Path) -> str:
+        """The token, checked before anything is allowed to type it.
+
+        Neither failure prints the value. An empty file would otherwise be
+        entered as nothing and present as an instant 401; a value that is not
+        base64url-and-dots would be handed to a device shell that re-splits
+        it, where it is a command rather than a credential.
+        """
+        text = token_path.read_text(encoding="utf-8").strip()
+        if not text:
+            raise DriverError(f"{token_path} is empty: there is no token to enter")
+        if not _JWT.fullmatch(text):
+            raise DriverError(
+                f"{token_path} does not hold a JWT: {len(text)} characters in "
+                f"{text.count('.') + 1} dot-separated segments, and not all of "
+                "them are base64url. Refusing to type it."
+            )
+        return text
+
+    def _type_token(self, text: str) -> None:
+        """Enters the token without it ever entering this process's argv.
+
+        A command line is world-readable for as long as the process lives, so
+        the chunks go to `adb shell` on stdin instead. The device's own shell
+        still sees them -- `input text` is the only channel there is -- but
+        that exposure lasts as long as the keystrokes do.
+        """
+        script = "".join(
+            f"input text {text[at:at + TOKEN_CHUNK_CHARS]}\n"
+            for at in range(0, len(text), TOKEN_CHUNK_CHARS)
+        )
+        self._shell(["shell"], stdin=script)
+
     def paste_token(self, token_path: Path) -> None:
         token_path = Path(token_path)
-        # Compared in characters against what the field shows, and stripped:
-        # a trailing newline in the minted file would otherwise be typed into
-        # the form and then read back as a one-character truncation.
-        text = token_path.read_text(encoding="utf-8").strip()
+        text = self._read_token(token_path)
         expected = len(text)
 
         field = self._find(
@@ -215,50 +308,56 @@ class AndroidDriver(Driver):
             "the token field",
         )
         self._tap(field.centre)
-        time.sleep(1)
+        self._sleep(SETTLE_SECONDS)
 
-        # ~1011 characters, well past what one `input text` reliably delivers.
-        for start in range(0, len(text), 80):
-            self._input_text(text[start : start + 80])
+        self._type_token(text)
 
         self._key(_KEYCODE_BACK)  # drop the IME
-        time.sleep(1)
+        self._sleep(SETTLE_SECONDS)
 
-        on_screen = max(
-            (len(n.text) for n in self._nodes() if n.type.endswith("EditText")), default=0
-        )
-        if on_screen != expected:
+        seen = 0
+
+        def agreed(nodes):
+            nonlocal seen
+            seen = max(
+                (len(n.text) for n in nodes if n.type.endswith("EditText")), default=0
+            )
+            return True if seen == expected else None
+
+        # Polled rather than read once: the last chunks are still arriving.
+        if self._poll(agreed, TOKEN_READBACK_SECONDS, SETTLE_SECONDS) is None:
             # A truncated paste shows up as an instant 401, which would read as
-            # an SDK bug. Fail here instead.
+            # an SDK bug. Fail here instead, without echoing the token.
             raise DriverError(
-                f"token entry was truncated: {on_screen} characters on screen, "
-                f"{expected} in the file"
+                f"token entry never agreed with the file: {seen} characters on "
+                f"screen, {expected} in {token_path}"
             )
 
         self._tap_desc("Pay")
         self._find(tree.find_content_desc, CARD_NUMBER, "the card form", timeout=60)
 
-    def type_card(self, card: Card, verify_pan: bool = True) -> None:
+    def type_card(self, card: Card, *, verify_pan: bool = True) -> None:
         for field in (CARD_NUMBER, CARDHOLDER):
             self._tap_desc(field)
-            time.sleep(1)
+            self._sleep(SETTLE_SECONDS)
             self._key(_KEYCODE_MOVE_END)
             for _ in range(24):
                 self._key(_KEYCODE_DEL)
 
         self._tap_desc(CARD_NUMBER)
-        time.sleep(1)
+        self._sleep(SETTLE_SECONDS)
         self._type_digits(card.pan)
-        time.sleep(1)
+        self._sleep(SETTLE_SECONDS)
 
         if verify_pan:
-            grouped = {
-                n.text for n in self._nodes() if n.text.replace(" ", "") == card.pan
-            }
-            if not grouped:
+            nodes = self._nodes()
+            if not any(n.text.replace(" ", "") == card.pan for n in nodes):
+                # What was seen, not what it is blamed on: a caret bug and a
+                # mistyped tap look identical from here.
+                field = tree.find_content_desc(nodes, CARD_NUMBER)
+                reads = field[0].text if field else None
                 raise DriverError(
-                    f"the card field does not hold {card.pan} after typing -- "
-                    "the formatter is corrupting input"
+                    f"after typing {card.pan} the card number field reads {reads!r}"
                 )
 
         for field, value in (
@@ -267,12 +366,12 @@ class AndroidDriver(Driver):
             (CARDHOLDER, card.holder),
         ):
             self._tap_desc(field)
-            time.sleep(1)
+            self._sleep(SETTLE_SECONDS)
             self._input_text(value)
-            time.sleep(1)
+            self._sleep(SETTLE_SECONDS)
 
         self._key(_KEYCODE_BACK)  # drop the IME so the Pay button is reachable
-        time.sleep(1)
+        self._sleep(SETTLE_SECONDS)
 
     def tap_pay(self, amount_text: str) -> None:
         self._tap_text(f"Pay {amount_text}")
@@ -280,18 +379,16 @@ class AndroidDriver(Driver):
     def wait_label(
         self,
         timeout: float,
+        *,
         interval: float = 2,
         prefixes: tuple[str, ...] = tree.LABEL_PREFIXES,
     ) -> str:
-        deadline = time.monotonic() + timeout
-        while True:
-            live = time.monotonic() < deadline
-            label = tree.label_from_tree(self._nodes(tolerate=live), prefixes)
-            if label is not None:
-                return label
-            if not live:
-                raise DriverError(f"no contract label within {timeout}s")
-            time.sleep(interval)
+        label = self._poll(
+            lambda nodes: tree.label_from_tree(nodes, prefixes), timeout, interval
+        )
+        if label is None:
+            raise DriverError(f"no contract label within {timeout}s")
+        return label
 
     def acs(self, outcome: str) -> None:
         self._find(tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=120)
@@ -311,22 +408,21 @@ class AndroidDriver(Driver):
         self._find(tree.find_text_exact, CANCEL_TITLE, "the cancel dialog", timeout=30)
         self._tap_text(CANCEL_CONFIRM)
 
-    def wait_rearmed(self, amount_text: str, timeout: float, interval: float = 2) -> bool:
-        deadline = time.monotonic() + timeout
-        while True:
-            live = time.monotonic() < deadline
-            # A device that will not dump raises out of here rather than
-            # returning False: "the sheet did not re-arm" is a cell verdict and
-            # this is not one.
-            if tree.sheet_rearmed(self._nodes(tolerate=live), "android", amount_text):
-                return True
-            if not live:
-                return False
-            time.sleep(interval)
+    def wait_rearmed(
+        self, amount_text: str, timeout: float, *, interval: float = 2
+    ) -> bool:
+        # A device that will not dump raises out of _poll rather than answering
+        # False: "the sheet did not re-arm" is a cell verdict and this is not.
+        found = self._poll(
+            lambda nodes: tree.sheet_rearmed(nodes, "android", amount_text) or None,
+            timeout,
+            interval,
+        )
+        return found is not None
 
     # -- evidence ------------------------------------------------------------
 
-    def dump_tree(self, attempts: int = _DUMP_ATTEMPTS, interval: float = 1) -> bytes:
+    def dump_tree(self, *, attempts: int = _DUMP_ATTEMPTS, interval: float = 1) -> bytes:
         """One accessibility dump, retaken until it parses.
 
         Two failures hide behind a plain dump-then-cat. `uiautomator dump`
@@ -347,7 +443,7 @@ class AndroidDriver(Driver):
         for attempt in range(attempts):
             # One round trip, so this stays two adb invocations: a dump that
             # never ran cannot leave the previous one behind to be read.
-            self._shell(
+            said = self._shell(
                 ["shell", f"rm -f {_DUMP_PATH}; uiautomator dump {_DUMP_PATH}"]
             )
             raw = self._shell(["shell", "cat", _DUMP_PATH]).encode("utf-8")
@@ -360,7 +456,9 @@ class AndroidDriver(Driver):
             if attempt + 1 < attempts:
                 self._sleep(interval)
         raise DriverError(
-            f"no parsable uiautomator dump in {attempts} attempts: {problem}"
+            f"no parsable uiautomator dump in {attempts} attempts: {problem}; "
+            f"the dump said {said.strip()[:200]!r} and the file read back as "
+            f"{raw[:200]!r}"
         ) from problem
 
     def screenshot(self) -> bytes:
