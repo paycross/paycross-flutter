@@ -22,6 +22,15 @@ Install the dependency (PyYAML; everything else is the standard library):
 pip install -r tool/e2e/requirements.txt
 ```
 
+To run what CI runs — pytest and ruff, both pinned exactly, because a floating
+linter turns a clean tree red on the day it gains a rule:
+
+```bash
+pip install -r tool/e2e/requirements-dev.txt
+ruff check  --config tool/e2e/ruff.toml tool/e2e
+ruff format --check --config tool/e2e/ruff.toml tool/e2e
+```
+
 Every command below is run from the repository root.
 
 ### Android
@@ -64,16 +73,28 @@ python -m tool.e2e.runner \
 |---|---|
 | `--platform` | `android` or `ios`. Required. |
 | `--cells` | a directory of cell files. Required. |
-| `--evidence-root` | where proof is written. Required. Outside any git checkout, and **one root per build** — see below. |
+| `--evidence-root` | where proof is written. Required. Outside any git checkout, and **one root per dimension** — see below. |
 | `--env-file` | shell-style file holding the five sandbox keys. Required. |
 | `--all` | rerun cells that already passed under this evidence root |
 | `--app` | APK (Android) or a `.app` **on the Mac** (iOS) to install first. Implies `--all`. Omit to use what is already installed. |
+| `--build-id` | names the build under test, e.g. `android-0.3.3-release-r8`. Written into every progress record; a resume only trusts a pass whose build-id matches. |
 | `--only` | run just this cell; repeatable |
 
 A rerun **skips what already passed** under the same evidence root, so an
-interrupted matrix is resumed rather than restarted. A pass carries no build
-fingerprint, so a resume cannot tell yesterday's build from today's: give every
-build a fresh `--evidence-root`. `--app` implies `--all` for the same reason.
+interrupted matrix is resumed rather than restarted.
+
+Two things bound what a resume may trust, and they are handled differently.
+
+* **The build** is carried. `--build-id` names it — hashing is not an option,
+  since the iOS `.app` is a directory on the Mac — and a pass recorded under one
+  name never satisfies a run under another. A run that names no build matches
+  records that carry none, which is every record written before this existed, so
+  an older evidence root keeps resuming exactly as it did. `--app` still implies
+  `--all`, which is the same answer without having to name a build.
+* **The dimension** is discipline. `passed_cells` keys on the cell id alone and
+  every dimension directory contains a cell called `control`, so a shared root
+  would let D0's `control` pass satisfy D2's. Use
+  `--evidence-root <root>/<dimension>-<variant>-<platform>`.
 
 The env file must define `CLIENT_PAYX_SANDBOX_ID`, `CLIENT_PAYX_SANDBOX_SECRET`,
 `TOKEN_URL`, `PAYMENT_API_URL` and `PAYCROSS_VERSION`. It is parsed for exactly
@@ -120,9 +141,17 @@ a broken rig otherwise produces a page of findings that are all the same
 finding. This is not theoretical — it is what caught a mid-run bearer expiry on
 2026-08-29 that would otherwise have read as four SDK defects.
 
-Because of that rule, **every cell directory must contain a `control` cell that
-runs on the platform being tested**. A directory without one is refused before a
-credential is read (exit 2).
+Because of that rule, **every dimension's cell directory must contain its own
+`control` cell that runs on the platform being tested**. A directory without one
+is refused before a credential is read (exit 2). Do not share one across
+dimensions, and do not share an evidence root either: `passed_cells` keys on the
+cell id alone, so D0's `control` pass would otherwise satisfy D2's resume.
+
+`tool/e2e/tests/cell_rules.py` holds the authoring rules every dimension's
+directory must satisfy — a control cell, a terminal verb last, no PAN that
+approves on TEST, `no_succeeded_txn` pinned to a session that exists, no
+airplane mode on iOS. A new dimension's test file calls `check_cell_dir` rather
+than restating them.
 
 ### Pass criteria
 
@@ -153,8 +182,9 @@ card:
 session:
   amount: 1000                  # positive integer, minor units
   currency: EUR                 # upper-case ISO 4217
-  options: {}                   # optional; merged (one key deep) over the
-                                #   default mint body
+  options: {}                   # optional; DEEP-merged over the default mint
+                                #   body, so pinning customer.merchant_reference
+                                #   keeps the rest of the customer block
 actions:
   - paste_token
   - type_card
@@ -162,7 +192,7 @@ actions:
   - acs:approve
   - wait_result 180
 expected:
-  label: "result:success:<txn>"
+  label: "result:success:<txn>"   # a literal, or `<any>` / `<none>` -- see below
   rearmed: false                # optional, defaults to false
   merchant:
     session_status: completed
@@ -185,46 +215,100 @@ expected.ios:
 ```
 
 Everything a cell can say is validated at load time — verbs, their arguments,
-the label, and every merchant key and value — so a typo fails in seconds rather
-than being read as an SDK finding twenty minutes into a matrix run. Cell files
-are also validated in CI.
+the label, every merchant key and value, and the `threeds` block's inner keys —
+so a typo fails in seconds rather than being read as an SDK finding twenty
+minutes into a matrix run. Cell files are also validated in CI.
+
+Two cross-field rules are checked at load as well, **over every platform the
+cell declares** rather than over the unmerged base: a platform expecting a
+re-armed sheet must have an `expect rearmed` action to look with, and the action
+must not be there unless *every* platform expects one — the action list is
+shared, so it runs on the other platform too and answers falsy. The same pair
+holds for `<none>` and `expect no_result`. A cell whose `expected.android`
+alone expects a re-arm used to load cleanly and fail on a device twenty minutes
+later.
+
+### Label sentinels
+
+`expected.label` is normally a literal in the frozen vocabulary, in which
+`<txn>` is a capture (and a template carrying two of them is refused, because
+the capture would be ambiguous). Two sentinels stand in for a literal:
+
+| Sentinel | Meaning |
+|---|---|
+| `<any>` | any well-formed contract label, whatever it turns out to be. A **discovery** cell: it asserts a terminal outcome, exactly once, with no crash, and nothing about which one. The label it measured is recorded in `result.json` rather than compared. |
+| `<none>` | no label may appear. For the Android process-kill cell, where the pending Dart call dies with the isolate and no result is delivered **by design**, so "the app said nothing" is the pass. Requires an `expect no_result` action. |
 
 ### Merchant assertions
 
 `session_status`, `txn_count`, `txn_status`, `no_succeeded_txn`,
-`failure_recovery`, `threeds`.
+`failure_recovery`, `failure_code`, `network_decline_code`, `saved_card_saved`,
+`saved_card_used`, `threeds`.
 
 A key that is **absent is not asserted**. A key present with an explicit
 **null** value asserts the field is absent — the two are different, and the
 distinction is what `failure_recovery: null` is for.
 
-Two things worth knowing before you write an expectation:
+Things worth knowing before you write an expectation:
 
-* `no_succeeded_txn: false` is a **no-op today**, not an assertion that a
-  succeeded transaction exists. Only the truthy case is checked. Cells that were
-  using it as an assertion had it removed rather than left to look meaningful.
-* `threeds.eci` and `threeds.version` are deliberately not assertable. A sandbox
-  upgrade must not present as a finding.
+* `no_succeeded_txn` reads **both** ways. `true` fails a session holding a
+  transaction that moved money; `false` fails one holding none. And "moved
+  money" is `succeeded`, `authorized` **or** `captured` — an `auth` session
+  stops at the second and an `auth_capture` at the third, so a cancel cell
+  looking only for `succeeded` would have passed on either.
+* `failure_code` and `network_decline_code` read `transactions[-1].failure`,
+  beside `failure_recovery`.
+* `saved_card_saved` / `saved_card_used` assert **presence**, never a value:
+  `evidence.scrub_resource` drops `stored_credentials.saved_token` and
+  `used_token` by name before the verifier sees them, so what is left is the
+  redaction marker for a card that was stored and `null` for one that was not.
+* `threeds` accepts exactly `outcome`, `flow` and `liability_shifted`, and an
+  unknown inner key is refused at load. `threeds.eci` and `threeds.version` are
+  deliberately not assertable: a sandbox upgrade must not present as a finding.
 
 ### Actions
 
 | Action | What it does |
 |---|---|
 | `paste_token` | enters the session token and taps the **example app's** Pay, then waits for the sheet |
+| `present_token` | the same, **without** waiting for a sheet — see below |
+| `tap_example_pay` | taps the example app's own Pay, with no token entry before it |
 | `type_card` | fills the SDK's card form through the real fields |
 | `tap_pay` | taps the **sheet's** Pay button |
 | `acs:<outcome>` | waits for the sandbox ACS page and taps one outcome button |
 | `cancel_challenge` | abandons an in-flight challenge and confirms |
 | `cancel_form` | abandons the sheet from the card form and confirms |
-| `expect rearmed` | waits up to 30 s for the `sheet_rearmed` predicate |
+| `expect <what>` | observes a non-result: `rearmed`, `no_result`, `google_pay`, `no_google_pay`, `saved_card`. `expect rearmed` waits up to 30 s for the `sheet_rearmed` predicate |
 | `wait_result <s>` | waits up to `<s>` for a contract label |
-| `background <s>`, `rotate`, `airplane on\|off`, `kill_activity` | declared, not implemented (D3); a cell using one fails as an authoring mistake |
+| `wait_expired <s>` | waits `<s>` for a session to pass its own expiry |
+| `enter_token <literal>` | types a literal into the token field, for the malformed-token cells |
+| `relaunch` | cold-starts the app mid-cell. On iOS this keeps the console window the cell has already written; `launch` would truncate it |
+| `type_cvv`, `tap_google_pay`, `select_saved_card`, `save_card` | wallet and saved-card entry (D4, D5) |
+| `background <s>`, `rotate`, `airplane on\|off`, `kill_activity`, `dont_keep_activities on\|off` | lifecycle (D3) |
 
-An argument is written `verb:arg` or `verb arg`, and the two are not
-interchangeable in one case: **an argument containing a colon must use the
-`verb:arg` form.** The parser splits on the first colon if the line has one at
-all, so `wait_result 1:20` parses its verb as `wait_result 1` and is rejected as
-an unknown action.
+`paste_token` and `present_token` differ in one thing, and it matters. Both
+enter the minted token and tap the example's Pay; **`paste_token` then waits for
+the sheet and `present_token` does not.** Use `present_token` where no sheet is
+the expected answer: on iOS a malformed or expired token is refused before
+`present` is ever called, so waiting for a sheet costs a 60-second timeout and
+then reports the wrong failure.
+
+Everything in this table below `cancel_form` is **declared, not implemented**:
+the vocabulary is stable so cell files can be written against it, and a cell
+using one fails as an authoring mistake rather than as a device fault — so no
+control check is spent proving a rig that was never in doubt.
+
+An argument is written `verb:arg` or `verb arg`, and the two are
+interchangeable: the parser splits on whichever delimiter comes first, so
+`wait_result 1:20` is reported against `wait_result` — the verb that takes the
+argument — rather than as an unknown action.
+
+`enter_token`'s literal is capped at 200 characters and restricted to
+`A-Z a-z 0-9 . _ ~ -`. The cap is far below the ~1011 of a real session token,
+so a live credential cannot be committed in a cell file even by accident; the
+character class is narrow because Android hands the value to `input text` on a
+device shell that re-splits and expands whatever it is given, and a mangled
+literal would leave the cell measuring a string it never sent.
 
 `acs:<outcome>` must match the sandbox ACS button's text **verbatim** — the
 outcome is chosen by which button is tapped, not by the PAN. A typo there buys a
@@ -357,7 +441,7 @@ in the code's ambitions.
 |---|---|---|
 | PAN read-back | `type_card(card, *, verify_pan=True)` reads the field back after typing | none — `type_card(card)` |
 | Keyboard | dropped with a back key inside `type_card` | `dismiss_keyboard` is iOS-only, and on this simulator **nothing dismisses the CVV pad** |
-| Amount matching | exact node-text match; `launch()` asserts `en-US` | no locale assertion; the `.`/`,` separator may be swapped, end-anchored |
+| Amount matching | exact node-text match; `launch()` asserts `en-US` exactly | the `.`/`,` separator may be swapped, end-anchored, so `launch()` only refuses a non-English locale — and an unreadable one passes, because a simulator that has never had the key written answers with a complaint rather than a locale |
 | WDA session | none | owns one; created with no `bundleId`, deletes whatever is open |
 | Console capture | none (logcat is pulled per window) | owns one, truncated per launch |
 | Screenshots | captured, but black (`FLAG_SECURE`) | **none at all** — the guard refuses every frame |
@@ -388,6 +472,9 @@ accepts the swap and then end-anchors, so `Pay €10,000.00` no longer satisfies
 
 ```
 <evidence-root>/<YYYYMMDD-HHMMSS>-<platform>/
+  report.json                       the whole run: exit code, summary, warnings,
+                                    one entry per cell. Written even when every
+                                    cell was skipped
   progress.jsonl                    one line per cell, appended and fsynced as it happens
   <cell>/NN-<action>.uix            accessibility dump after every action
   <cell>/NN-<action>.png            screenshot, sheet-foreground steps only --
@@ -396,8 +483,22 @@ accepts the swap and then end-anchors, so `Pay €10,000.00` no longer satisfies
   <cell>/NN-<action>-failed.uix     the tree at the moment a step failed
   <cell>/merchant.json              the session resource, scrubbed
   <cell>/logs.txt                   device log for the cell's window
-  <cell>/result.json                label, ids, timings, problems, budget
+  <cell>/result.json                label, ids, timings, problems, budget, and
+                                    the frames the screenshot guard refused
 ```
+
+`report.json` is what a reader downstream — the nightly, the campaign report —
+reads instead of parsing stdout. A run that skipped every cell still writes one,
+which is exactly the run a report assembler wants; the directory it leaves holds
+nothing else, and cannot satisfy a later resume, because `passed_cells` globs
+`*/progress.jsonl` and there is none. An evidence root therefore accumulates
+reports: **read the newest.**
+
+`report.json` also carries `warnings` — things the run noticed and carried on
+through, such as a bearer refresh that fell back to the `expires_in` the
+API-Gateway cache is known to restate (`cognito-m2m#1`). They print as `WARN`
+lines and never change the exit code: a warning that turns a green matrix red is
+a warning the next person learns to silence.
 
 The run id carries the platform because the two platforms are driven from two
 shells: on a bare timestamp, an Android and an iOS run started in the same
@@ -456,7 +557,7 @@ trailing it means a rule ran in the wrong order.
 pytest tool/e2e/tests -q
 ```
 
-447 tests, no device needed: every driver call is faked, so this covers the
+563 tests, no device needed: every driver call is faked, so this covers the
 parsing, the redaction, the label matching and the merchant verification — the
 places where a silent mistake would be read as an SDK finding. The shipped cell
 files are validated here too. CI runs this on Linux on every PR, in its own job,
@@ -514,24 +615,16 @@ can be written against a stable vocabulary before the drivers implement them.
 
 Known gaps, tracked for the next phase:
 
-* Progress records carry no build fingerprint — hence one evidence root per
-  build, by discipline rather than by check.
-* The run's exit code is printed, not written to disk; there is no run-level
-  `report.json`.
 * The token-refresh paths (the 401 retry and the `exp`-scheduled refetch) have
   not been exercised by a live run. No run has happened to cross one, but that
   is luck rather than arithmetic: the refresh is scheduled from the token's own
   `exp`, and the gateway cache hands out tokens already most of the way through
   their life. At the documented numbers — 3600 s lifetime, 3300 s cache TTL,
   240 s margin — `_refresh_after` bottoms out around **60 s**, and its floor is
-  0. A six-minute matrix **can** cross a refresh; none yet has.
-* `no_succeeded_txn: false` is a no-op, and `no_succeeded_txn` checks only
-  `succeeded` — `authorized` and `captured` also mean money moved.
-* `session.options` is a shallow merge, which is not enough for a "same
-  customer" cell.
-* `threeds` inner keys are not validated at load, so a typo there reads as a
-  finding mid-run.
-* iOS has no locale guard in `launch()` to match Android's.
+  0. A six-minute matrix **can** cross a refresh; none yet has. What is no
+  longer silent is the *fallback*: an `exp` that cannot be read, or one further
+  back than a whole token lifetime (this machine's clock, not the issuer's),
+  now produces a `WARN` line and a `warnings` entry in `report.json`.
 * **Screenshots are effectively dead weight.** iOS writes none — WDA's
   `/source` always contains the example's token field, so the redaction guard
   refuses every frame — and Android's are black under `FLAG_SECURE`. Either
