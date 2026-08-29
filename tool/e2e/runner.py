@@ -44,6 +44,7 @@ import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -327,16 +328,27 @@ def _kind(error: BaseException) -> str:
     return type(error).__name__
 
 
-def _shows_the_example_screen(dump: bytes, platform: str, token: str | None) -> bool:
+def _shows_the_example_screen(
+    dump: bytes, platform: str, secrets: Sequence[str | None]
+) -> bool:
     """Whether this dump is of the example app rather than of the sheet.
 
-    Three tells, any of which is enough: the token itself, anything else
-    JWT-shaped, or a result label -- the example renders one only once the
-    sheet has closed. An unreadable dump counts as a yes, because a leaked
-    frame cannot be un-leaked and a missing one costs nothing.
+    Three tells, any of which is enough: a credential this cell is known to
+    hold, anything else JWT-shaped, or a result label -- the example renders
+    one only once the sheet has closed. An unreadable dump counts as a yes,
+    because a leaked frame cannot be un-leaked and a missing one costs
+    nothing.
+
+    Every known credential rather than the one the cell minted, because
+    `wait_expired` re-mints on every poll: by a later step the string in the
+    example's token field is one the runner learned about afterwards, and the
+    original's prefix is not on screen at all. That would leave only the shape
+    rule -- which `evidence.scrub_resource` refuses to rely on for exactly
+    this, having twice been shown to miss a token.
     """
-    if token and token[:_TOKEN_PREFIX_CHARS].encode("utf-8") in dump:
-        return True
+    for secret in secrets:
+        if secret and secret[:_TOKEN_PREFIX_CHARS].encode("utf-8") in dump:
+            return True
     if evidence.JWT_RE.search(dump):
         return True
     try:
@@ -350,7 +362,9 @@ def _shows_the_example_screen(dump: bytes, platform: str, token: str | None) -> 
     return tree.label_from_tree(nodes) is not None
 
 
-def _may_screenshot(verb: str, dump: bytes, platform: str, token: str | None) -> bool:
+def _may_screenshot(
+    verb: str, dump: bytes, platform: str, secrets: Sequence[str | None]
+) -> bool:
     """Whether a frame of this step can be filed without leaking the token.
 
     Both conditions are required. The verb has to be one that runs with the
@@ -360,7 +374,7 @@ def _may_screenshot(verb: str, dump: bytes, platform: str, token: str | None) ->
     `grep eyJ` over the evidence tree cannot see into a compressed PNG, so
     that leak would be invisible to the check meant to catch it.
     """
-    return verb in SHOT_VERBS and not _shows_the_example_screen(dump, platform, token)
+    return verb in SHOT_VERBS and not _shows_the_example_screen(dump, platform, secrets)
 
 
 @dataclass
@@ -681,7 +695,7 @@ def run_cell(
                 # carrying on blind.
                 dump = driver.dump_tree()
                 write(f"{stem}.uix", dump)
-                if _may_screenshot(verb, dump, platform, token):
+                if _may_screenshot(verb, dump, platform, secrets):
                     try:
                         write(f"{stem}.png", driver.screenshot())
                     except Exception as error:  # noqa: BLE001
@@ -711,7 +725,7 @@ def run_cell(
             except Exception as secondary:  # noqa: BLE001
                 problems.append(f"driver: no dump after the failure ({secondary})")
             else:
-                if _may_screenshot(verb, dump, platform, token):
+                if _may_screenshot(verb, dump, platform, secrets):
                     try:
                         write(f"{stem}-failed.png", driver.screenshot())
                     except Exception as secondary:  # noqa: BLE001

@@ -1890,12 +1890,72 @@ def test_a_run_that_took_every_frame_it_could_names_none(cell_dir, tmp_path):
     assert written["screenshots_skipped"] == []
 
 
+#: A token the merchant API re-minted mid-cell. Deliberately not JWT_RE-shaped
+#: -- its segments are under sixteen characters -- and with a different first
+#: 24 characters from TOKEN, so a test using it separates the literal tell from
+#: the shape rule.
+RE_MINTED = "eyJraWQiOiJ0d28ifQ.eyJiIjoyfQ.gis"
+
+
+def test_a_frame_is_refused_while_a_re_minted_token_is_on_screen():
+    # `wait_expired` re-mints on every poll, so by a later step the string in
+    # the example's token field is not the one the cell started with. Told
+    # only the original, the literal tell goes stale and the guard is left
+    # with the shape rule -- which `scrub_resource` refuses to rely on for
+    # exactly this, having already been shown to miss a token twice.
+    assert evidence.JWT_RE.search(RE_MINTED.encode()) is None
+    assert RE_MINTED[:24] != TOKEN[:24]
+    dump = f'<hierarchy><node text="{RE_MINTED}"/></hierarchy>'.encode()
+
+    assert runner._may_screenshot("expect", dump, "android", [TOKEN]) is True
+    assert (
+        runner._may_screenshot("expect", dump, "android", [TOKEN, RE_MINTED]) is False
+    )
+
+
+def test_a_cell_that_re_minted_files_no_frame_of_the_new_token(tmp_path, monkeypatch):
+    # The wiring half: `run_cell` has to hand the guard the list it keeps
+    # extending, not the one credential it started with. Reverting that call
+    # site leaves the unit test above green.
+    monkeypatch.setattr(runner.time, "sleep", lambda seconds: None)
+
+    class ReMinting(FakeSandbox):
+        def __init__(self):
+            super().__init__()
+            self.reads = 0
+
+        def read(self, session_id):
+            self.reads += 1
+            if self.reads == 1:
+                return {"id": session_id, "status": "open", "session_token": RE_MINTED}
+            return {"id": session_id, "status": "expired"}
+
+    driver = FakeDriver()
+    driver.dump_tree = (
+        lambda: f'<hierarchy><node text="{RE_MINTED}"/></hierarchy>'.encode()
+    )
+    directory = tmp_path / "d2"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(
+        textwrap.dedent(CELL.format(id="control")).replace(
+            "  - tap_pay\n", "  - wait_expired 1\n  - tap_pay\n"
+        ),
+        encoding="utf-8",
+    )
+
+    run(directory, tmp_path, driver, sandbox=ReMinting())
+
+    # tap_pay is a SHOT_VERB, and its dump is showing the re-minted token.
+    assert not list((tmp_path / "evidence").glob("*/control/*tap_pay*.png"))
+    assert list((tmp_path / "evidence").glob("*/control/*tap_pay*.uix"))
+
+
 def test_a_dump_that_cannot_be_parsed_is_not_a_licence_to_photograph():
     # A leaked frame cannot be un-leaked and a missing one costs nothing, so
     # an unreadable dump counts as "the example's screen is showing".
-    assert runner._shows_the_example_screen(b"<not xml", "android", None) is True
-    assert runner._shows_the_example_screen(b"<not xml", "ios", None) is True
-    assert not runner._may_screenshot("tap_pay", b"<not xml", "android", None)
+    assert runner._shows_the_example_screen(b"<not xml", "android", []) is True
+    assert runner._shows_the_example_screen(b"<not xml", "ios", []) is True
+    assert not runner._may_screenshot("tap_pay", b"<not xml", "android", [])
 
 
 def test_a_cell_whose_dumps_are_unreadable_files_no_frame(cell_dir, tmp_path):
