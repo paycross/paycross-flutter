@@ -49,10 +49,13 @@ MAC_ENV = (
     "PATH=/opt/homebrew/bin:$HOME/development/flutter/bin:$PATH; "
 )
 
-#: Longer than the 120 s ceiling every curl below carries, so a WDA call that
-#: times out is reported by curl rather than by a killed ssh.
+#: Longer than the ceiling every curl below carries, so a WDA call that times
+#: out is reported by curl rather than by a killed ssh. Thirty seconds for the
+#: curl itself: a `/source` that has not answered by then is not going to, and
+#: every second of it is spent on top of a poll's deadline rather than inside
+#: it.
 SSH_TIMEOUT_SECONDS = 900
-WDA_TIMEOUT_SECONDS = 120
+WDA_TIMEOUT_SECONDS = 30
 
 #: The only directory this driver writes to on the Mac. `$HOME` is left for
 #: the remote shell to expand, as MAC_ENV's PATH already is. The session token
@@ -67,6 +70,12 @@ REMOTE_SHOT = f"{REMOTE_DIR}/shot.png"
 #: so it can never appear inside a frame. The two cannot simply be merged:
 #: simctl writes "Note: No display specified..." to stderr on success too.
 SHOT_STDERR = "[simctl-stderr]"
+
+#: Separates the console log's current size from the window read out of it.
+#: The size is asked for rather than inferred from the window, because `tail`'s
+#: own complaints are sent back too -- and "No such file or directory" is text,
+#: so a window that looked non-empty would otherwise pass for app output.
+CONSOLE_SIZE = "[console-size]"
 
 CARDHOLDER = "cardholderName"
 CARD_NUMBER = "cardNumber"
@@ -99,6 +108,11 @@ TOKEN_READBACK_SECONDS = 10
 #: How long the example's own screen and then the sheet are each given to come
 #: up. Named rather than inline because the tests reach past them.
 SCREEN_TIMEOUT_SECONDS = 60
+
+#: How long the previous cell's console capture is given to die, polled on the
+#: Mac so it costs one round trip rather than one per look.
+_CONSOLE_STOP_TRIES = 25
+_CONSOLE_STOP_INTERVAL = 0.2
 
 #: How many times a `/source` body is re-fetched before the driver calls
 #: WebDriverAgent unusable, and how long it waits between attempts.
@@ -145,13 +159,26 @@ def _ssh(command: str, *, stdin: bytes | None = None) -> str:
 
     `stdin` is the channel the session token travels on. A command line is
     world-readable for as long as the process lives, on both machines.
+
+    A Mac that has gone to sleep raises TimeoutExpired rather than exiting
+    non-zero, and a missing ssh raises FileNotFoundError. Neither is a
+    DriverError, so both escape every polling loop above and end the whole
+    matrix where they should have failed one cell.
     """
-    done = subprocess.run(
-        ["ssh", SSH_HOST, command],
-        capture_output=True,
-        timeout=SSH_TIMEOUT_SECONDS,
-        input=stdin,
-    )
+    what = (command.removeprefix(MAC_ENV).split() or ["ssh"])[0]
+    try:
+        done = subprocess.run(
+            ["ssh", SSH_HOST, command],
+            capture_output=True,
+            timeout=SSH_TIMEOUT_SECONDS,
+            input=stdin,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DriverError(
+            f"{SSH_HOST} did not answer {what!r} within {SSH_TIMEOUT_SECONDS}s"
+        ) from exc
+    except OSError as exc:
+        raise DriverError(f"could not run ssh for {what!r}: {exc}") from exc
     out = _text(done.stdout)
     if done.returncode != 0:
         out += _text(done.stderr)
@@ -166,6 +193,10 @@ class IosDriver(Driver):
     ):
         self._ssh = ssh
         self._udid = udid
+        #: Every interpolation into a remote command goes through this. A udid
+        #: is a constructor argument, not a constant, once the runner grows a
+        #: --udid flag.
+        self._quoted_udid = shlex.quote(udid)
         self._bundle = bundle
         self._session_id: str | None = None
         self._window: tuple[int, int] | None = None
@@ -245,10 +276,11 @@ class IosDriver(Driver):
     def install(self, app_path: str) -> None:
         """`app_path` is a path **on the Mac**: the .app is built there."""
         self._remote(
-            f"xcrun simctl uninstall {self._udid} {self._bundle} 2>/dev/null || true"
+            f"xcrun simctl uninstall {self._quoted_udid} {self._bundle} "
+            "2>/dev/null || true"
         )
         out = self._remote(
-            f"xcrun simctl install {self._udid} {shlex.quote(app_path)} 2>&1"
+            f"xcrun simctl install {self._quoted_udid} {shlex.quote(app_path)} 2>&1"
         )
         if out.strip():
             # simctl install says nothing at all when it works, so anything at
@@ -267,7 +299,9 @@ class IosDriver(Driver):
         truth is that there is no such simulator, which is the Android boot
         check's lesson transposed.
         """
-        said = self._remote(f"xcrun simctl list devices | grep {self._udid}").strip()
+        said = self._remote(
+            f"xcrun simctl list devices | grep -F -- {self._quoted_udid}"
+        ).strip()
         if not said:
             raise DriverError(
                 f"simctl list devices names no simulator {self._udid}: the udid is "
@@ -277,6 +311,32 @@ class IosDriver(Driver):
         if not found:
             raise DriverError(f"simctl reported no state for {self._udid}: {said!r}")
         return found.group(1)
+
+    def _stop_console(self) -> None:
+        """Kills the previous cell's capture and waits for it to be gone.
+
+        Two of them interleave into one log, and the older one still owns the
+        app it launched -- so the terminate below would be taking the app out
+        from under a capture that is still writing. The wait is done on the
+        Mac so it costs one round trip rather than one per look.
+        """
+        if self._console_pid is None:
+            return
+        pid = self._console_pid
+        self._console_pid = None
+        said = self._remote(
+            f"kill {pid} 2>/dev/null; n=0; "
+            f"while kill -0 {pid} 2>/dev/null && "
+            f"[ $n -lt {_CONSOLE_STOP_TRIES} ]; "
+            f"do sleep {_CONSOLE_STOP_INTERVAL}; n=$((n+1)); done; "
+            f"kill -0 {pid} 2>/dev/null && echo alive || echo gone"
+        ).strip()
+        if said != "gone":
+            raise DriverError(
+                f"the previous console capture (pid {pid}) is still running "
+                f"after {_CONSOLE_STOP_TRIES * _CONSOLE_STOP_INTERVAL:.0f}s; two "
+                "of them would interleave into one log"
+            )
 
     def _start_console(self) -> int:
         """Launches the app with its console captured, and returns the log mark.
@@ -289,14 +349,20 @@ class IosDriver(Driver):
         stderr is a terminal, and a plain file is not one.
 
         `--console-pty` blocks for the app's whole lifetime, so it is
-        backgrounded; the log's byte length is read in the same round trip and
-        becomes the offset `logs_since` reads from, which keeps one cell's
-        output out of the next cell's window.
+        backgrounded.
+
+        The log is truncated first, so a 40-minute matrix cannot grow one
+        without bound. That rests on a contract with the runner: **a cell's
+        logs are collected before the next launch**, because this is where the
+        previous cell's console stops being readable. The byte length is still
+        read afterwards and used as the offset, so a truncation that did not
+        take is a smaller window rather than a previous cell's output.
         """
         said = self._remote(
-            f"mkdir -p {REMOTE_DIR} && touch {CONSOLE_LOG} && "
+            f"mkdir -p {REMOTE_DIR} && : > {CONSOLE_LOG} && "
             f"wc -c < {CONSOLE_LOG} && "
-            f"( nohup xcrun simctl launch --console-pty {self._udid} {self._bundle} "
+            f"( nohup xcrun simctl launch --console-pty {self._quoted_udid} "
+            f"{self._bundle} "
             f">> {CONSOLE_LOG} 2>&1 < /dev/null & echo $! )"
         )
         fields = said.split()
@@ -336,8 +402,11 @@ class IosDriver(Driver):
         state = self._device_state()
         if state != "Booted":
             raise DriverError(f"simulator {self._udid} is {state!r}, not booted")
+        # Before the terminate: the old capture still owns the app.
+        self._stop_console()
         self._remote(
-            f"xcrun simctl terminate {self._udid} {self._bundle} 2>/dev/null || true"
+            f"xcrun simctl terminate {self._quoted_udid} {self._bundle} "
+            "2>/dev/null || true"
         )
         self._console_from = self._start_console()
         self._sleep(LAUNCH_SETTLE_SECONDS)
@@ -402,6 +471,11 @@ class IosDriver(Driver):
         The deadline is real time while the interval is not: with a no-op sleep
         injected this busy-waits, so a test that means to reach the deadline
         passes `timeout=0`.
+
+        The deadline bounds when the next look *starts*, not how long one takes:
+        a look's own transport timeout is spent on top of it. That is why
+        WDA_TIMEOUT_SECONDS is 30 rather than the ssh ceiling -- a 120 s curl
+        would let a 10 s wait run for two minutes.
         """
         deadline = time.monotonic() + timeout
         while True:
@@ -555,15 +629,18 @@ class IosDriver(Driver):
         page scrolls.
         """
         width, height = self._window_size()
-        attempts = max_swipes + 1
-        for attempt in range(attempts):
-            # The tolerance expires with the last attempt, as a poll's does
-            # with its deadline: a WDA that will not answer is reported as
-            # itself rather than as a button that never came up.
-            nodes = self._nodes(tolerate=attempt + 1 < attempts)
+        for attempt in range(max_swipes + 1):
+            # The tolerance expires with the last look, as a poll's does with
+            # its deadline: a WDA that will not answer is reported as itself
+            # rather than as a button that never came up.
+            nodes = self._nodes(tolerate=attempt < max_swipes)
             node = self._pick(nodes, name, False, True)
             if node is not None:
                 return node
+            if attempt == max_swipes:
+                # A look before the first drag and after the last, so
+                # `max_swipes` is a count of drags rather than of looks.
+                break
             self._wda(
                 "POST",
                 self._session("/wda/dragfromtoforduration"),
@@ -578,8 +655,16 @@ class IosDriver(Driver):
             self._sleep(settle)
         raise DriverError(f"{name!r} never came on screen after {max_swipes} swipes")
 
-    def _keyboard_up(self) -> bool:
-        return any(n.type == "Keyboard" and n.visible for n in self._nodes())
+    def _keyboard(self) -> tree.Node | None:
+        """The keyboard node, so a caller can ask where it is, not just whether.
+
+        Its bounds are the whole point: a fallback tap on a node the keyboard
+        covers types into the keyboard.
+        """
+        for node in self._nodes():
+            if node.type == "Keyboard" and node.visible:
+                return node
+        return None
 
     def dismiss_keyboard(self, *, settle: float = SETTLE_SECONDS) -> None:
         """Puts away the keyboard the CVV field raised.
@@ -594,19 +679,36 @@ class IosDriver(Driver):
         or Return key, so `XCUIApplication.dismissKeyboard` may find nothing to
         press and WDA answers with an error envelope. Tapping a neutral node
         above the keyboard is the way out: `amount` is tagged by the SDK
-        (`CardFormView.swift:179`) and is never interactive.
+        (`CardFormView.swift:179`) and is never interactive. Above is checked
+        rather than assumed -- tapping a node the keyboard covers types into
+        the keyboard.
         """
+        if self._keyboard() is None:
+            # acs() calls this on a page that has no keyboard, where
+            # dismissKeyboard costs two round trips to answer with an error
+            # envelope and change nothing.
+            return
         try:
             self._wda("POST", self._session("/wda/keyboard/dismiss"), {})
         except DriverError:
             pass
         self._sleep(settle)
-        if not self._keyboard_up():
+        keyboard = self._keyboard()
+        if keyboard is None:
             return
 
-        self.tap_identifier(AMOUNT, timeout=5)
+        target = self._find(AMOUNT, timeout=5)
+        x, y = target.centre
+        left, top, right, bottom = keyboard.bounds
+        if left <= x <= right and top <= y <= bottom:
+            raise DriverError(
+                f"the only way out of the keyboard is {AMOUNT!r}, and it is "
+                f"behind the keyboard at {target.centre}; tapping it would type "
+                "into the keyboard rather than dismiss it"
+            )
+        self._tap_node(target)
         self._sleep(settle)
-        if self._keyboard_up():
+        if self._keyboard() is not None:
             raise DriverError(
                 "the keyboard is still up after dismissKeyboard and a tap on "
                 "'amount'; it covers the ACS page's decline outcomes and blocks "
@@ -654,11 +756,13 @@ class IosDriver(Driver):
         field = self._find(TOKEN_FIELD, timeout=SCREEN_TIMEOUT_SECONDS)
         try:
             self._remote(
-                f"xcrun simctl pbcopy {self._udid}", stdin=text.encode("utf-8")
+                f"xcrun simctl pbcopy {self._quoted_udid}", stdin=text.encode("utf-8")
             )
             self._tap_node(field)
             self._sleep(PASTE_SETTLE_SECONDS)
-            x, y = field.centre
+            # Re-resolved: the tap raised the keyboard, which on a short screen
+            # scrolls the field out from under the coordinates it had before.
+            x, y = self._find(TOKEN_FIELD, timeout=15).centre
             self._wda(
                 "POST",
                 self._session("/wda/touchAndHold"),
@@ -668,7 +772,7 @@ class IosDriver(Driver):
             self.tap_identifier(PASTE_ITEM, timeout=15)
         finally:
             # The token outlives nothing: not the paste, not a failure.
-            self._remote(f"xcrun simctl pbcopy {self._udid}", stdin=b" ")
+            self._remote(f"xcrun simctl pbcopy {self._quoted_udid}", stdin=b" ")
         self._sleep(SETTLE_SECONDS)
 
         def took(nodes):
@@ -832,9 +936,9 @@ class IosDriver(Driver):
         # literally named `-` in the working directory instead of to stdout.
         raw = self._remote(
             f"mkdir -p {REMOTE_DIR}; "
-            f"said=$(xcrun simctl io {self._udid} screenshot {REMOTE_SHOT} "
-            f"2>&1 >/dev/null) && base64 < {REMOTE_SHOT}; "
-            f"printf '\n%s\n%s\n' {shlex.quote(SHOT_STDERR)} \"$said\"; "
+            f"said=$(xcrun simctl io {self._quoted_udid} screenshot {REMOTE_SHOT} "
+            f"2>&1 >/dev/null) && base64 < {REMOTE_SHOT} 2>&1; "
+            f"printf '\\n%s\\n%s\\n' {shlex.quote(SHOT_STDERR)} \"$said\"; "
             f"rm -f {REMOTE_SHOT}"
         )
         frame, marker, said = raw.partition(SHOT_STDERR)
@@ -880,12 +984,40 @@ class IosDriver(Driver):
                 "start at a previous cell's output"
             )
         seconds = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
-        console = self._remote(
-            f"tail -c +{self._console_from + 1} {CONSOLE_LOG} 2>/dev/null"
+        # Complaints are kept rather than discarded: a `tail` that found no file
+        # and a `log show` that refused both read as a quiet run otherwise. The
+        # size is therefore asked for separately -- "No such file or directory"
+        # is text, and a window holding only that would otherwise pass for app
+        # output.
+        answer = self._remote(
+            f"wc -c < {CONSOLE_LOG} 2>&1; printf '%s\\n' "
+            f"{shlex.quote(CONSOLE_SIZE)}; "
+            f"tail -c +{self._console_from + 1} {CONSOLE_LOG} 2>&1"
         )
+        measured, _, console = answer.partition(CONSOLE_SIZE)
+        try:
+            grown = int(measured.strip()) > self._console_from
+        except ValueError:
+            grown = False
+        if not grown:
+            # A Flutter app prints on every launch, so a window that never grew
+            # means the capture did not attach, and criterion 3 would pass on
+            # nothing. Liveness is asked here rather than up front on purpose:
+            # the capture exits when the app does, and an app that died is
+            # exactly what criterion 3 is looking for -- checking first would
+            # report the one cell that really crashed as a rig fault and throw
+            # away the console that holds the evidence.
+            self._check_console()
+            raise DriverError(
+                f"the console log has not grown past byte {self._console_from} "
+                f"since launch; {CONSOLE_LOG} measures "
+                f"{measured.strip()[:_EXCERPT]!r}. The app prints on every "
+                "start, so there is nothing here a crash could have been "
+                "recorded in"
+            )
         unified = self._remote(
-            f"xcrun simctl spawn {self._udid} log show --last {seconds}s "
-            "--info --debug --predicate 'process == \"Runner\"' 2>/dev/null"
+            f"xcrun simctl spawn {self._quoted_udid} log show --last {seconds}s "
+            "--info --debug --predicate 'process == \"Runner\"' 2>&1"
         )
         return (
             f"--- app console (simctl launch --console-pty), since this launch ---\n"

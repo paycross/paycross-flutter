@@ -28,6 +28,10 @@ from .base import Driver, DriverError
 ADB = "/mnt/c/Users/Syllo/AppData/Local/Android/Sdk/platform-tools/adb.exe"
 PACKAGE = "com.paycross.paycross_flutter_example"
 
+#: Every adb call is bounded. A wedged emulator would otherwise hold the whole
+#: matrix on one round trip.
+RUN_TIMEOUT_SECONDS = 300
+
 #: Staged here because the Windows adb cannot open a WSL path.
 STAGING_DIR = "/mnt/c/dev/tmp"
 WINDOWS_STAGING = r"C:\dev\tmp"
@@ -102,13 +106,27 @@ def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
     reads this text to report what actually went wrong. Binary results cannot
     carry an explanation -- appending to a PNG would corrupt it -- so those
     raise instead.
+
+    An emulator that has wedged raises TimeoutExpired rather than exiting
+    non-zero, and adb.exe lives on a Windows mount that is not always there,
+    which raises FileNotFoundError. Neither is a DriverError, so both escape
+    every polling loop above and end the whole matrix where they should have
+    failed one cell. The iOS driver's `_ssh` closes the same gap.
     """
-    done = subprocess.run(
-        [ADB, *argv],
-        capture_output=True,
-        timeout=300,
-        input=stdin.encode("utf-8") if stdin is not None else None,
-    )
+    what = argv[0] if argv else "adb"
+    try:
+        done = subprocess.run(
+            [ADB, *argv],
+            capture_output=True,
+            timeout=RUN_TIMEOUT_SECONDS,
+            input=stdin.encode("utf-8") if stdin is not None else None,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DriverError(
+            f"adb {what!r} did not answer within {RUN_TIMEOUT_SECONDS}s"
+        ) from exc
+    except OSError as exc:
+        raise DriverError(f"could not run adb for {what!r}: {exc}") from exc
     if binary:
         if done.returncode != 0:
             raise DriverError(

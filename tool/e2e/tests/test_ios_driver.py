@@ -240,6 +240,35 @@ def test_ssh_runs_the_command_on_the_configured_host_under_a_timeout(monkeypatch
     assert seen["kwargs"]["capture_output"] is True
 
 
+def test_ssh_turns_a_timeout_into_a_driver_error(monkeypatch):
+    # A Mac that has gone to sleep raises TimeoutExpired out of subprocess,
+    # which is not a DriverError -- so it escapes every polling loop and takes
+    # the whole matrix down instead of failing one cell.
+    def explode(argv, **kwargs):
+        raise ios.subprocess.TimeoutExpired(argv, ios.SSH_TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(ios.subprocess, "run", explode)
+
+    with pytest.raises(DriverError) as excinfo:
+        ios._ssh(ios.MAC_ENV + "xcrun simctl list devices")
+
+    message = str(excinfo.value)
+    assert "xcrun" in message
+    assert str(ios.SSH_TIMEOUT_SECONDS) in message
+
+
+def test_ssh_turns_a_missing_ssh_binary_into_a_driver_error(monkeypatch):
+    def explode(argv, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "ssh")
+
+    monkeypatch.setattr(ios.subprocess, "run", explode)
+
+    with pytest.raises(DriverError) as excinfo:
+        ios._ssh("true")
+
+    assert "ssh" in str(excinfo.value)
+
+
 def test_ssh_hands_stdin_to_the_process_rather_than_the_command_line(monkeypatch):
     seen = _stub_subprocess(monkeypatch)
 
@@ -291,6 +320,11 @@ def test_wda_calls_go_through_curl_on_the_mac_not_from_wsl():
     command = ssh.calls[0]
     assert "curl" in command
     assert "http://127.0.0.1:8100/status" in command
+    # A /source that has not answered in 30 s is not going to. The ceiling
+    # matters because a look's own transport time is spent on top of the
+    # poll's deadline, not inside it.
+    assert ios.WDA_TIMEOUT_SECONDS == 30
+    assert "-m 30" in command
     # WDA is bound to the Mac's loopback; there is nothing to reach from WSL.
     assert command.count("http://") == 1
 
@@ -364,6 +398,16 @@ def launch_outputs(session=None, alive="alive\n"):
     )
 
 
+def test_a_hostile_udid_cannot_break_out_of_a_command():
+    # Constructor arguments, not constants, once the runner takes --udid.
+    ssh = FakeSsh("", "")
+    hostile = "x; rm -rf ~"
+
+    ios.IosDriver(ssh=ssh, udid=hostile, sleep=lambda _: None).install("/tmp/R.app")
+
+    assert shlex.quote(hostile) in ssh.joined()
+
+
 def test_launch_terminates_then_opens_a_session_for_the_example_bundle():
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
@@ -402,6 +446,48 @@ def test_launch_captures_the_app_console_because_the_sdk_emits_no_os_log():
     assert "nohup" in started and "echo $!" in started
     # And the byte offset the log had beforehand is what logs_since reads from.
     assert d._console_from == CONSOLE_MARK
+
+
+def test_launch_kills_the_previous_capture_before_starting_another():
+    # Two of them interleave into one log, and the older one still owns the app
+    # it launched. Killed before the terminate, so the app it holds goes too.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    # The device check comes first, then the kill, then the terminate.
+    ssh.outputs = [DEVICE_LINE, "gone\n", *launch_outputs()[1:]]
+    ssh.calls.clear()
+
+    d.launch()
+
+    killed = next(i for i, c in enumerate(ssh.calls) if "kill 12345" in c)
+    started = next(i for i, c in enumerate(ssh.calls) if "--console-pty" in c)
+    terminated = next(i for i, c in enumerate(ssh.calls) if "simctl terminate" in c)
+    assert killed < terminated < started
+
+
+def test_launch_reports_a_previous_capture_that_will_not_die():
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.outputs = [DEVICE_LINE, "alive\n"]
+    ssh.calls.clear()
+
+    with pytest.raises(DriverError) as excinfo:
+        d.launch()
+
+    assert "12345" in str(excinfo.value)
+
+
+def test_launch_truncates_the_console_log_so_it_cannot_grow_unbounded():
+    # The runner reads a cell's logs before the next launch, so the previous
+    # cell's console has already been collected by the time this happens.
+    ssh = FakeSsh(*launch_outputs())
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    started = next(c for c in ssh.calls if "--console-pty" in c)
+    assert f": > {ios.CONSOLE_LOG}" in started
 
 
 def test_launch_does_not_let_the_session_relaunch_the_app_out_from_under_it():
@@ -715,7 +801,8 @@ def test_acs_gives_up_with_a_named_error_if_scrolling_never_reveals_it():
         driver(ssh).acs("fraud_suspected", timeout=0, max_swipes=2, settle=0)
 
     assert "fraud_suspected" in str(excinfo.value)
-    assert len([c for c in ssh.calls if "dragfromtoforduration" in c]) == 3
+    # N swipes means N drags, with a look before the first and after the last.
+    assert len([c for c in ssh.calls if "dragfromtoforduration" in c]) == 2
 
 
 def test_acs_puts_the_keyboard_away_before_it_tries_to_scroll():
@@ -782,11 +869,44 @@ def test_dismiss_keyboard_raises_if_the_pad_survives_even_that():
     assert "keyboard is still up" in str(excinfo.value)
 
 
-def test_dismiss_keyboard_does_nothing_more_when_the_pad_is_already_gone():
+def test_dismiss_keyboard_does_nothing_at_all_when_no_pad_is_up():
+    # acs() calls this on a page that has no keyboard, where dismissKeyboard
+    # would answer with an error envelope and cost two round trips to learn
+    # nothing.
     ssh = FakeSsh()
 
     driver(ssh).dismiss_keyboard(settle=0)
 
+    assert payloads_for(ssh, "/wda/tap") == []
+    assert not any("keyboard/dismiss" in c for c in ssh.calls)
+
+
+def test_dismiss_keyboard_refuses_a_fallback_target_behind_the_pad():
+    # Tapping a node the keyboard covers types into the keyboard. `amount` sits
+    # above it on the card form, but a scrolled sheet -- or another screen --
+    # can put it underneath.
+    covered = KEYBOARD_XML.replace(
+        'name="amount" label="10.00 EUR" value="10.00 EUR" enabled="true" '
+        'visible="true" x="16" y="192"',
+        'name="amount" label="10.00 EUR" value="10.00 EUR" enabled="true" '
+        'visible="true" x="16" y="600"',
+    )
+    assert 'y="600"' in covered
+
+    class Covered(KeyboardFakeSsh):
+        def __call__(self, command, *, stdin=None):
+            if "/source" in command:
+                self.calls.append(command)
+                self.stdins.append(stdin)
+                return source_response(covered)
+            return super().__call__(command, stdin=stdin)
+
+    ssh = Covered(clears_on_tap=True)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).dismiss_keyboard(settle=0)
+
+    assert "behind the keyboard" in str(excinfo.value)
     assert payloads_for(ssh, "/wda/tap") == []
 
 
@@ -810,7 +930,7 @@ def test_type_card_fills_the_fields_by_identifier_in_form_order():
 def test_type_card_dismisses_the_keyboard_the_cvv_field_raised():
     # It covers the bottom ~35% of the sheet, which is where the ACS page's
     # decline outcomes land. Android drops the IME for the same reason.
-    ssh = FakeSsh()
+    ssh = KeyboardFakeSsh(clears_on_tap=True)
     d = driver(ssh)
     d.tap_identifier = lambda name, **kw: None
 
@@ -829,10 +949,11 @@ def test_type_card_settles_between_the_taps_and_the_keystrokes():
 
     d.type_card(Card(pan="4111111111170000", expiry="12/28", cvv="123"))
 
-    # Five seconds on the rig: two per field, one inside dismiss_keyboard and
-    # one after it. Asserted here rather than spent.
+    # Four and a half seconds on the rig: two per field and one after
+    # dismiss_keyboard, which on this tree finds no pad and returns at once.
+    # Asserted here rather than spent.
     assert ios.SETTLE_SECONDS == 0.5
-    assert naps == [0.5] * 10
+    assert naps == [0.5] * 9
 
 
 # -- paste_token --------------------------------------------------------------
@@ -999,6 +1120,11 @@ def test_cancel_form_reaches_the_toolbar_item_and_not_the_challenge_bar():
 SIMCTL_NOTE = "Note: No display specified. Defaulting to display: LCD\n"
 
 
+def console_response(size="9000", body="flutter: up\n"):
+    """What the console round trip puts on stdout: size, marker, the window."""
+    return f"{size}\n{ios.CONSOLE_SIZE}\n{body}"
+
+
 def shot_response(frame="", said=SIMCTL_NOTE):
     """What the screenshot round trip puts on stdout: frame, marker, stderr."""
     return f"{frame}\n{ios.SHOT_STDERR}\n{said}"
@@ -1073,7 +1199,7 @@ def test_logs_since_before_launch_refuses_to_read_the_whole_console_log():
 
 
 def test_logs_since_reads_the_console_appended_since_this_launch():
-    ssh = FakeSsh("flutter: hello\n", "log output\n")
+    ssh = FakeSsh(console_response(body="flutter: hello\n"), "log output\n")
     d = launched(ssh)
 
     text = d.logs_since(datetime.now(timezone.utc) - timedelta(seconds=90))
@@ -1086,7 +1212,7 @@ def test_logs_since_reads_the_console_appended_since_this_launch():
 
 
 def test_logs_since_also_asks_the_unified_log_for_a_window_in_seconds():
-    ssh = FakeSsh("", "log output\n")
+    ssh = FakeSsh(console_response(), "log output\n")
     when = datetime.now(timezone.utc) - timedelta(seconds=90)
 
     text = launched(ssh).logs_since(when)
@@ -1098,12 +1224,78 @@ def test_logs_since_also_asks_the_unified_log_for_a_window_in_seconds():
     assert "log output" in text
 
 
+def test_logs_since_lets_the_tools_own_complaints_into_the_evidence():
+    # Discarded, a `log show` that refused and a `tail` that found no file both
+    # read as a quiet run.
+    ssh = FakeSsh(console_response(), "log output\n")
+
+    launched(ssh).logs_since(datetime.now(timezone.utc))
+
+    for command in ssh.calls[:2]:
+        assert "2>/dev/null" not in command
+        assert "2>&1" in command
+
+
+def test_logs_since_refuses_a_console_that_never_grew_past_the_mark():
+    # A Flutter app prints on every launch, so an empty window means the
+    # capture never attached -- and criterion 3 would pass on nothing.
+    ssh = FakeSsh(console_response(size=str(CONSOLE_MARK), body=""), "alive\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        launched(ssh).logs_since(datetime.now(timezone.utc))
+
+    assert "has not grown" in str(excinfo.value)
+
+
+def test_logs_since_calls_a_console_log_that_vanished_a_rig_fault():
+    # `tail` reports its own failure into the section now, so an emptiness test
+    # on the text alone would read "No such file or directory" as app output.
+    # The size is asked for separately and is what decides.
+    gone = "wc: /Users/mikz/work/e2e/ios/run/console.log: No such file"
+    ssh = FakeSsh(console_response(size=gone, body="tail: No such file\n"), "alive\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        launched(ssh).logs_since(datetime.now(timezone.utc))
+
+    message = str(excinfo.value)
+    assert "has not grown" in message
+    assert "No such file" in message
+
+
+def test_logs_since_names_a_dead_capture_when_the_console_is_empty():
+    ssh = FakeSsh(console_response(size=str(CONSOLE_MARK), body=""), "dead\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        launched(ssh).logs_since(datetime.now(timezone.utc))
+
+    assert "console capture is not running" in str(excinfo.value)
+
+
+def test_logs_since_still_returns_a_console_that_outlived_its_capture():
+    # The capture exits when the app does, and an app that died is exactly what
+    # criterion 3 is looking for. Checking liveness first would report the one
+    # cell that really crashed as a rig fault and lose the evidence.
+    crash = "Fatal error: Unexpectedly found nil\n"
+    ssh = FakeSsh(console_response(body=crash), "log output\n")
+
+    text = launched(ssh).logs_since(datetime.now(timezone.utc))
+
+    assert crash.strip() in text
+    assert not any("kill -0" in c for c in ssh.calls)
+
+
 # -- D3 -----------------------------------------------------------------------
 
 
 def test_the_d3_actions_refuse():
     d = driver(FakeSsh())
 
-    for call in (lambda: d.background(5), d.rotate, lambda: d.airplane(True), d.kill_activity):
+    refusals = (
+        lambda: d.background(5),
+        d.rotate,
+        lambda: d.airplane(True),
+        d.kill_activity,
+    )
+    for call in refusals:
         with pytest.raises(NotImplementedError):
             call()

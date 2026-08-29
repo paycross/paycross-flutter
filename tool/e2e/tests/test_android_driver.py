@@ -153,6 +153,36 @@ def test_run_refuses_to_return_binary_it_could_not_fetch(monkeypatch):
     assert "closed" in str(excinfo.value)
 
 
+def test_run_turns_a_timeout_into_a_driver_error(monkeypatch):
+    # An emulator that has wedged raises TimeoutExpired out of subprocess,
+    # which is not a DriverError -- so it escapes every polling loop and ends
+    # the whole matrix where it should have failed one cell.
+    def explode(argv, **kwargs):
+        raise android.subprocess.TimeoutExpired(argv, android.RUN_TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(android.subprocess, "run", explode)
+
+    with pytest.raises(DriverError) as excinfo:
+        android._run(["shell", "getprop", "sys.boot_completed"])
+
+    message = str(excinfo.value)
+    assert "shell" in message
+    assert str(android.RUN_TIMEOUT_SECONDS) in message
+
+
+def test_run_turns_a_missing_adb_into_a_driver_error(monkeypatch):
+    # adb.exe lives on the Windows side of a mount that is not always there.
+    def explode(argv, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", android.ADB)
+
+    monkeypatch.setattr(android.subprocess, "run", explode)
+
+    with pytest.raises(DriverError) as excinfo:
+        android._run(["devices"])
+
+    assert "devices" in str(excinfo.value)
+
+
 def test_run_hands_stdin_to_the_process_rather_than_the_command_line(monkeypatch):
     seen = _stub_subprocess(monkeypatch)
 
