@@ -1,0 +1,864 @@
+"""Drives the example app on the simulator, from WSL, entirely over ssh.
+
+Ports the campaign's wda.py and the three shell scripts beside it. The logic
+lives here rather than on the Mac for two reasons: the Mac's system Python is
+3.9, and the Mac has no GitHub credentials, so anything kept there has to be
+shipped by tar and can drift from what is committed.
+
+Every device interaction is one `ssh mac` round trip -- ~55 ms with the
+configured ControlMaster, which is comfortable for a 1 Hz poll. Nothing on the
+Mac runs under sudo, and the only path written there is REMOTE_DIR.
+
+Three things shape everything here:
+
+* An ssh session gets launchd's minimal PATH, so every remote command re-exports
+  DEVELOPER_DIR and PATH or xcrun, curl and flutter are simply missing.
+* WebDriverAgent reports a failure as HTTP 4xx with a JSON body, which `curl -s`
+  prints and `json.loads` accepts. Unchecked, a failed tap is silent.
+* The SDK emits no os_log, so the crash markers criterion 3 looks for reach the
+  app's stdout and stderr and nowhere else. They are captured by launching
+  through `simctl launch --console-pty` into a log file on the Mac.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+import re
+import shlex
+import subprocess
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from xml.etree import ElementTree as ET
+
+from .. import tree
+from ..cells import Card
+from .base import Driver, DriverError
+
+SSH_HOST = "mac"
+UDID = "C311AFDC-25FA-44A2-A800-10EB5A1039E3"
+BUNDLE = "com.paycross.paycrossFlutterExample"
+WDA = "http://127.0.0.1:8100"
+
+#: An ssh session gets launchd's minimal PATH, so every remote command sets
+#: these up front or xcrun, curl and flutter are all simply missing.
+MAC_ENV = (
+    "export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer "
+    "PATH=/opt/homebrew/bin:$HOME/development/flutter/bin:$PATH; "
+)
+
+#: Longer than the 120 s ceiling every curl below carries, so a WDA call that
+#: times out is reported by curl rather than by a killed ssh.
+SSH_TIMEOUT_SECONDS = 900
+WDA_TIMEOUT_SECONDS = 120
+
+#: The only directory this driver writes to on the Mac. `$HOME` is left for
+#: the remote shell to expand, as MAC_ENV's PATH already is. The session token
+#: is deliberately not among the things written here -- it goes to `pbcopy` on
+#: ssh's stdin and never reaches the Mac's disk.
+REMOTE_DIR = "$HOME/work/e2e/ios/run"
+CONSOLE_LOG = f"{REMOTE_DIR}/console.log"
+REMOTE_SHOT = f"{REMOTE_DIR}/shot.png"
+
+CARDHOLDER = "cardholderName"
+CARD_NUMBER = "cardNumber"
+EXPIRY = "expiry"
+CVV = "cvv"
+PAY_BUTTON = "payButton"
+#: Tagged by CardFormView.swift:179 and never interactive -- the neutral target
+#: for the keyboard-dismissal fallback.
+AMOUNT = "amount"
+THREE_DS_CANCEL = "threeDSCancel"
+SHEET_CANCEL = "Cancel"
+CANCEL_CONFIRM = "Yes, Cancel"
+PASTE_ITEM = "Paste"
+TOKEN_FIELD = "Session token"
+EXAMPLE_PAY = "Pay"
+
+#: What the seed scripts waited after a tap, an entry or a cold start. Kept as
+#: named values because the unit tests assert them rather than spend them: the
+#: rig's timing stays pinned without the suite sleeping through it.
+SETTLE_SECONDS = 0.5
+PASTE_SETTLE_SECONDS = 1.5
+LAUNCH_SETTLE_SECONDS = 6
+SCROLL_SETTLE_SECONDS = 1.0
+ALERT_SETTLE_SECONDS = 1
+POLL_INTERVAL_SECONDS = 1
+
+#: How long the pasted field is given to show that it took anything at all.
+TOKEN_READBACK_SECONDS = 10
+
+#: How long the example's own screen and then the sheet are each given to come
+#: up. Named rather than inline because the tests reach past them.
+SCREEN_TIMEOUT_SECONDS = 60
+
+#: How many times a `/source` body is re-fetched before the driver calls
+#: WebDriverAgent unusable, and how long it waits between attempts.
+_DUMP_ATTEMPTS = 3
+_DUMP_RETRY_SECONDS = 1
+
+#: The sheet is 402x874; the ACS page is taller. A drag from three quarters
+#: down to just under a third of the way up moves it by about half a screen.
+_DRAG_FROM = 0.75
+_DRAG_TO = 0.30
+_DRAG_DURATION = 0.4
+_MAX_SWIPES = 12
+
+#: How much of an unexpected answer is quoted back. A `/source` body holds the
+#: example's token field, so the excerpt is deliberately short and always a
+#: prefix -- a truncated read loses its tail, never its head.
+_EXCERPT = 200
+
+#: `xcrun simctl list devices` puts the state last: `iPhone 17 (UDID) (Booted)`.
+_DEVICE_STATE = re.compile(r"\(([^()]+)\)\s*$")
+
+#: base64url segments joined by dots. The Android driver checks the same shape
+#: for a stronger reason -- there the value reaches a device shell that
+#: re-splits it. Here it never touches a command line, so this is about the
+#: other half: a mint that answered with an error document would otherwise be
+#: pasted as though it were a credential and come back as an instant 401.
+_JWT = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
+
+
+def _text(raw: bytes) -> str:
+    # `--console-pty` copies the app's output through a pty, so every line in
+    # the console log arrives with a CR in front of its LF.
+    return raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+def _ssh(command: str, *, stdin: bytes | None = None) -> str:
+    """One remote command, bounded, never discarding a failure.
+
+    A non-zero exit has its stderr appended rather than raised: `terminate` is
+    expected to fail when nothing is running, and `grep` exits 1 when it
+    matches nothing. The callers that care read this text and say what they
+    saw. Discarding it is how "no route to host" would read as an empty log,
+    and an empty log is how criterion 3 passes on nothing.
+
+    `stdin` is the channel the session token travels on. A command line is
+    world-readable for as long as the process lives, on both machines.
+    """
+    done = subprocess.run(
+        ["ssh", SSH_HOST, command],
+        capture_output=True,
+        timeout=SSH_TIMEOUT_SECONDS,
+        input=stdin,
+    )
+    out = _text(done.stdout)
+    if done.returncode != 0:
+        out += _text(done.stderr)
+    return out
+
+
+class IosDriver(Driver):
+    package = BUNDLE
+
+    def __init__(
+        self, ssh=_ssh, udid: str = UDID, bundle: str = BUNDLE, sleep=time.sleep
+    ):
+        self._ssh = ssh
+        self._udid = udid
+        self._bundle = bundle
+        self._session_id: str | None = None
+        self._window: tuple[int, int] | None = None
+        #: Where the console log stood when this cell launched, so a previous
+        #: cell's output cannot be read as this one's.
+        self._console_from = 0
+        self._console_pid: int | None = None
+        # Every wait goes through this. The durations are the rig's real ones
+        # and stay pinned by the tests asserting on what was recorded here.
+        self._sleep = sleep
+
+    # -- transport -----------------------------------------------------------
+
+    def _remote(self, command: str, *, stdin: bytes | None = None) -> str:
+        return self._ssh(MAC_ENV + command, stdin=stdin)
+
+    def _wda(self, method: str, path: str, body: dict | None = None) -> dict:
+        """One WebDriverAgent call, made by curl on the Mac.
+
+        The body is piped in rather than passed as an argument: it is the same
+        channel the token would travel on if it ever needed to, and keeping one
+        shape means there is no second, less careful path.
+        """
+        url = WDA + path
+        if body is None:
+            command = f"curl -s -m {WDA_TIMEOUT_SECONDS} -X {method} {shlex.quote(url)}"
+        else:
+            payload = json.dumps(body)
+            command = (
+                f"printf %s {shlex.quote(payload)} | curl -s -m {WDA_TIMEOUT_SECONDS} "
+                f"-X {method} -H 'Content-Type: application/json' "
+                f"--data-binary @- {shlex.quote(url)}"
+            )
+        raw = self._remote(command)
+        if not raw.strip():
+            raise DriverError(f"WebDriverAgent returned nothing for {method} {path}")
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            # curl's own failures arrive as a sentence. json.loads answers those
+            # with a JSONDecodeError, which is not a DriverError and so escapes
+            # every polling loop in this file.
+            raise DriverError(
+                f"WebDriverAgent's answer to {method} {path} was not JSON: "
+                f"{raw.strip()[:_EXCERPT]!r}"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise DriverError(
+                f"WebDriverAgent's answer to {method} {path} was not an envelope: "
+                f"{raw.strip()[:_EXCERPT]!r}"
+            )
+        # WDA reports a failure as HTTP 4xx with a JSON body -- `curl -s` prints
+        # it and json.loads accepts it -- so without this check a failed tap,
+        # keys, drag or keyboard dismissal is completely silent, and the damage
+        # surfaces one caller later as a KeyError in _window_size or an
+        # AttributeError in dump_tree. Neither is a DriverError, which is how a
+        # single bad cell would take a 40-minute matrix down with it.
+        value = parsed.get("value")
+        if isinstance(value, dict) and "error" in value:
+            # Truncated on purpose: the envelope's traceback is ~10 KB (10,842
+            # characters when measured) and would otherwise land in `problems`
+            # and in every result.json.
+            raise DriverError(
+                f"{method} {path}: {value['error']} - "
+                f"{str(value.get('message', ''))[:_EXCERPT]}"
+            )
+        return parsed
+
+    def _session(self, path: str) -> str:
+        if self._session_id is None:
+            raise DriverError("no WebDriverAgent session; call launch() first")
+        return f"/session/{self._session_id}{path}"
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def install(self, app_path: str) -> None:
+        """`app_path` is a path **on the Mac**: the .app is built there."""
+        self._remote(
+            f"xcrun simctl uninstall {self._udid} {self._bundle} 2>/dev/null || true"
+        )
+        out = self._remote(
+            f"xcrun simctl install {self._udid} {shlex.quote(app_path)} 2>&1"
+        )
+        if out.strip():
+            # simctl install says nothing at all when it works, so anything at
+            # all is quoted back rather than matched against a catalogue of its
+            # wording.
+            raise DriverError(
+                f"simctl install said {out.strip()[:400]!r}; it says nothing when "
+                "it succeeds"
+            )
+
+    def _device_state(self) -> str:
+        """`Booted`, or whatever simctl called it -- and never a guess.
+
+        An unknown UDID makes grep exit 1 with nothing on stdout. Reading that
+        as a state would report a simulator part-way through booting when the
+        truth is that there is no such simulator, which is the Android boot
+        check's lesson transposed.
+        """
+        said = self._remote(f"xcrun simctl list devices | grep {self._udid}").strip()
+        if not said:
+            raise DriverError(
+                f"simctl list devices names no simulator {self._udid}: the udid is "
+                "wrong or its runtime is gone"
+            )
+        found = _DEVICE_STATE.search(said)
+        if not found:
+            raise DriverError(f"simctl reported no state for {self._udid}: {said!r}")
+        return found.group(1)
+
+    def _start_console(self) -> int:
+        """Launches the app with its console captured, and returns the log mark.
+
+        The SDK emits no os_log, so `log show` never sees the markers criterion
+        3 looks for -- Swift's `Fatal error:`, ObjC's `*** Terminating app due
+        to uncaught exception`, Dart's `Unhandled Exception:`. They reach the
+        app's stdout and stderr, which is what `--console-pty` copies. A pty
+        rather than `--stdout=`/`--stderr=` because NSLog writes to stderr when
+        stderr is a terminal, and a plain file is not one.
+
+        `--console-pty` blocks for the app's whole lifetime, so it is
+        backgrounded; the log's byte length is read in the same round trip and
+        becomes the offset `logs_since` reads from, which keeps one cell's
+        output out of the next cell's window.
+        """
+        said = self._remote(
+            f"mkdir -p {REMOTE_DIR} && touch {CONSOLE_LOG} && "
+            f"wc -c < {CONSOLE_LOG} && "
+            f"( nohup xcrun simctl launch --console-pty {self._udid} {self._bundle} "
+            f">> {CONSOLE_LOG} 2>&1 < /dev/null & echo $! )"
+        )
+        fields = said.split()
+        if len(fields) != 2 or not all(f.isdigit() for f in fields):
+            raise DriverError(
+                f"could not start the console capture: {said.strip()[:400]!r}"
+            )
+        mark, self._console_pid = int(fields[0]), int(fields[1])
+        return mark
+
+    def _check_console(self) -> None:
+        """Asserts the console capture outlived the session request.
+
+        POST /session with a bundleId launches the app, and for XCUIApplication
+        launching means terminate-then-launch, which would take the capture
+        with it. `forceAppLaunch: false` asks WDA to activate the running
+        instance instead; this is what proves it did. Without the check a
+        silently dead capture leaves `logs_since` with nothing to scan, and
+        "nothing crashed" passes on an empty window.
+        """
+        if self._console_pid is None:
+            return
+        said = self._remote(
+            f"kill -0 {self._console_pid} 2>/dev/null && echo alive || echo dead"
+        ).strip()
+        if said != "alive":
+            # The log is named, never quoted: whatever the app printed is
+            # redacted on its way into evidence, and this message is not on
+            # that path.
+            raise DriverError(
+                "the app's console capture is not running, so a crash would go "
+                f"unseen; simctl launch --console-pty exited, see {CONSOLE_LOG} "
+                f"on {SSH_HOST}"
+            )
+
+    def launch(self) -> None:
+        state = self._device_state()
+        if state != "Booted":
+            raise DriverError(f"simulator {self._udid} is {state!r}, not booted")
+        self._remote(
+            f"xcrun simctl terminate {self._udid} {self._bundle} 2>/dev/null || true"
+        )
+        self._console_from = self._start_console()
+        self._sleep(LAUNCH_SETTLE_SECONDS)
+
+        raw = self._wda(
+            "POST",
+            "/session",
+            {
+                "capabilities": {
+                    "alwaysMatch": {
+                        "bundleId": self._bundle,
+                        # The Flutter engine never fully quiesces, so waiting
+                        # for it times every session request out.
+                        "shouldWaitForQuiescence": False,
+                        # And launching would terminate the instance whose
+                        # console is being captured. Activate it instead.
+                        "forceAppLaunch": False,
+                    }
+                }
+            },
+        )
+        value = raw.get("value") or {}
+        session_id = raw.get("sessionId") or (
+            value.get("sessionId") if isinstance(value, dict) else None
+        )
+        if not session_id:
+            raise DriverError(
+                f"WebDriverAgent gave no sessionId: {json.dumps(raw)[:300]}"
+            )
+        self._session_id = session_id
+        # A new session can mean a new window; the cached size is not carried.
+        self._window = None
+        self._check_console()
+
+    # -- finding and tapping -------------------------------------------------
+
+    def _nodes(self, tolerate: bool = False) -> list[tree.Node]:
+        """The current tree, or `[]` if `tolerate` and WDA would not answer.
+
+        A polling caller has its own deadline and should spend it rather than
+        end a cell on one bad round trip. A one-shot read has no second chance
+        and must not silently see an empty screen: it would be reported as the
+        node it was looking for having gone missing.
+        """
+        try:
+            return tree.parse_wda(self.dump_tree())
+        except DriverError:
+            if not tolerate:
+                raise
+            return []
+
+    def _poll(self, look, timeout: float, interval: float):
+        """Runs `look` over the tree until it answers, or the deadline passes.
+
+        `look` returns what it found, or None for "not yet"; `_poll` hands back
+        the same, so each caller decides whether nothing is an error. The one
+        rule that lives here rather than in four copies: a refused dump reads as
+        an empty tree while the deadline is live and raises once it is not, so
+        WebDriverAgent falling over is reported as itself rather than as
+        whatever happened to be waited for.
+
+        The deadline is real time while the interval is not: with a no-op sleep
+        injected this busy-waits, so a test that means to reach the deadline
+        passes `timeout=0`.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            live = time.monotonic() < deadline
+            found = look(self._nodes(tolerate=live))
+            if found is not None:
+                return found
+            if not live:
+                return None
+            self._sleep(interval)
+
+    def _window_size(self) -> tuple[int, int]:
+        if self._window is None:
+            value = self._wda("GET", self._session("/window/size")).get("value") or {}
+            try:
+                self._window = (int(value["width"]), int(value["height"]))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise DriverError(
+                    "WebDriverAgent gave no window size: "
+                    f"{json.dumps(value)[:_EXCERPT]}"
+                ) from exc
+        return self._window
+
+    def _on_screen(self, node: tree.Node) -> bool:
+        """Visible *and* inside the window.
+
+        Both halves are needed. WebKit keeps the whole ACS page addressable, so
+        a node can be in the tree at y=1402 on an 874pt sheet; tapping its
+        centre then lands on whatever is really at those pixels -- the keyboard,
+        or nothing.
+        """
+        width, height = self._window_size()
+        x, y = node.centre
+        return node.visible and 0 <= x <= width and 0 <= y <= height
+
+    def _matches_in(
+        self, nodes: list[tree.Node], name: str, identifier_only: bool
+    ) -> list[tree.Node]:
+        def match(node):
+            if node.identifier == name:
+                return True
+            return not identifier_only and node.content_desc == name
+
+        return [n for n in nodes if match(n)]
+
+    def _matches(self, name: str, *, identifier_only: bool = False) -> list[tree.Node]:
+        return self._matches_in(self._nodes(), name, identifier_only)
+
+    def _pick(
+        self,
+        nodes: list[tree.Node],
+        name: str,
+        identifier_only: bool,
+        require_on_screen: bool,
+    ) -> tree.Node | None:
+        """The best match in one tree: on screen if there is one."""
+        hits = self._matches_in(nodes, name, identifier_only)
+        if not hits:
+            return None
+        for node in hits:
+            if self._on_screen(node):
+                return node
+        # Nothing matched on screen, which only means anything while WDA is
+        # reporting visibility at all. If nothing in the whole source carries
+        # it, the on-screen preference is inert: every fallback tap lands at
+        # raw coordinates and scroll_to burns all twelve swipes before blaming
+        # the button. Checked before `require_on_screen` answers, so both
+        # callers see the rig fault rather than a plausible wrong diagnosis.
+        if not any(n.visible for n in nodes):
+            raise DriverError(
+                "no node in the whole source is marked visible, so nothing can "
+                "be found on screen; WebDriverAgent is not reporting visibility "
+                f"(looking for {name!r})"
+            )
+        if require_on_screen:
+            return None
+        return hits[0]
+
+    def _find(
+        self,
+        name: str,
+        *,
+        timeout: float = 30,
+        interval: float = POLL_INTERVAL_SECONDS,
+        identifier_only: bool = False,
+        require_on_screen: bool = False,
+    ) -> tree.Node:
+        """Matches `name`, which is the identifier when one is set.
+
+        WDA falls the `name` attribute back to the label when an element has no
+        accessibilityIdentifier, so this reaches both the SDK's tagged controls
+        and the example app's untagged Pay button with one matcher -- exactly
+        what wda.py's by_name did. `identifier_only` turns the label half off,
+        which is how `cancel_form` avoids the challenge bar's Cancel item: that
+        one is *labelled* "Cancel" while its identifier is "threeDSCancel".
+        """
+        if not name:
+            # Every untagged element carries name="" and label="", which is most
+            # of a real source, so a tap would land on an arbitrary one instead
+            # of failing. Nothing in Phase 0 passes one; this is about the
+            # caller a later phase adds.
+            raise DriverError("refusing to match on an empty name")
+        found = self._poll(
+            lambda nodes: self._pick(nodes, name, identifier_only, require_on_screen),
+            timeout,
+            interval,
+        )
+        if found is None:
+            where = " on screen" if require_on_screen else ""
+            raise DriverError(f"no element named {name!r}{where} within {timeout}s")
+        return found
+
+    def _tap_node(self, node: tree.Node) -> None:
+        x, y = node.centre
+        self._wda("POST", self._session("/wda/tap"), {"x": float(x), "y": float(y)})
+
+    def tap_identifier(
+        self,
+        name: str,
+        *,
+        timeout: float = 30,
+        interval: float = POLL_INTERVAL_SECONDS,
+        identifier_only: bool = False,
+    ) -> None:
+        self._tap_node(
+            self._find(
+                name,
+                timeout=timeout,
+                interval=interval,
+                identifier_only=identifier_only,
+            )
+        )
+
+    def scroll_to(
+        self,
+        name: str,
+        *,
+        max_swipes: int = _MAX_SWIPES,
+        settle: float = SCROLL_SETTLE_SECONDS,
+    ) -> tree.Node:
+        """Swipes the sheet up until `name` is on screen, then returns it.
+
+        The sandbox ACS page is taller than the sheet. On the 402x874 simulator
+        only AUTHENTICATION OUTCOMES fits -- `approve` through
+        `authentication_required` -- and every ISSUER DECLINES button, which is
+        where `fraud_suspected` lives, starts below the fold. A name match alone
+        finds a node that cannot be tapped, so this is not optional for D0.
+
+        Driver-internal deliberately: the cell action vocabulary is frozen in
+        Phase 0, and nothing in it should have to know that one platform's ACS
+        page scrolls.
+        """
+        width, height = self._window_size()
+        attempts = max_swipes + 1
+        for attempt in range(attempts):
+            # The tolerance expires with the last attempt, as a poll's does
+            # with its deadline: a WDA that will not answer is reported as
+            # itself rather than as a button that never came up.
+            nodes = self._nodes(tolerate=attempt + 1 < attempts)
+            node = self._pick(nodes, name, False, True)
+            if node is not None:
+                return node
+            self._wda(
+                "POST",
+                self._session("/wda/dragfromtoforduration"),
+                {
+                    "fromX": width / 2,
+                    "fromY": height * _DRAG_FROM,
+                    "toX": width / 2,
+                    "toY": height * _DRAG_TO,
+                    "duration": _DRAG_DURATION,
+                },
+            )
+            self._sleep(settle)
+        raise DriverError(f"{name!r} never came on screen after {max_swipes} swipes")
+
+    def _keyboard_up(self) -> bool:
+        return any(n.type == "Keyboard" and n.visible for n in self._nodes())
+
+    def dismiss_keyboard(self, *, settle: float = SETTLE_SECONDS) -> None:
+        """Puts away the keyboard the CVV field raised.
+
+        It covers the bottom ~35% of the sheet, which is where the ACS page's
+        decline outcomes land -- and `scroll_to` drags from `height * 0.75`,
+        which is *inside* that area, so a keyboard left up also stops the swipe
+        from moving the page and the cell burns every swipe before giving up.
+        Android's `type_card` drops the IME with a back key for the same reason.
+
+        The fallback is not decoration. The CVV pad is numeric and has no Done
+        or Return key, so `XCUIApplication.dismissKeyboard` may find nothing to
+        press and WDA answers with an error envelope. Tapping a neutral node
+        above the keyboard is the way out: `amount` is tagged by the SDK
+        (`CardFormView.swift:179`) and is never interactive.
+        """
+        try:
+            self._wda("POST", self._session("/wda/keyboard/dismiss"), {})
+        except DriverError:
+            pass
+        self._sleep(settle)
+        if not self._keyboard_up():
+            return
+
+        self.tap_identifier(AMOUNT, timeout=5)
+        self._sleep(settle)
+        if self._keyboard_up():
+            raise DriverError(
+                "the keyboard is still up after dismissKeyboard and a tap on "
+                "'amount'; it covers the ACS page's decline outcomes and blocks "
+                "the scroll, so failing here beats burning every swipe"
+            )
+
+    def _keys(self, text: str) -> None:
+        # One character at a time, as wda.py does: WDA's /wda/keys takes a list.
+        self._wda("POST", self._session("/wda/keys"), {"value": list(text)})
+
+    # -- actions -------------------------------------------------------------
+
+    def _read_token(self, token_path: Path) -> str:
+        """The token, checked before anything is allowed to paste it.
+
+        Neither failure prints the value. An empty file would be pasted as
+        nothing and present as an instant 401; a mint that answered with an
+        error document would be pasted as though it were a credential and do
+        the same. The Android driver checks the same shape for a second reason
+        that does not apply here -- there the value reaches a device shell that
+        re-splits it, while here it only ever travels on a pipe.
+        """
+        text = token_path.read_text(encoding="utf-8").strip()
+        if not text:
+            raise DriverError(f"{token_path} is empty: there is no token to paste")
+        if not _JWT.fullmatch(text):
+            raise DriverError(
+                f"{token_path} does not hold a JWT: {len(text)} characters in "
+                f"{text.count('.') + 1} dot-separated segments, and not all of "
+                "them are base64url. Refusing to paste it."
+            )
+        return text
+
+    def paste_token(self, token_path: Path) -> None:
+        """Copies the token in through the pasteboard, never a command line.
+
+        The token reaches `simctl pbcopy` on ssh's stdin, so it is never an
+        argument on either machine and never lands on the Mac's disk at all.
+        The pasteboard is overwritten in a `finally`: left alone it outlives
+        the cell and anything on the simulator can read it.
+        """
+        token_path = Path(token_path)
+        text = self._read_token(token_path)
+
+        field = self._find(TOKEN_FIELD, timeout=SCREEN_TIMEOUT_SECONDS)
+        try:
+            self._remote(
+                f"xcrun simctl pbcopy {self._udid}", stdin=text.encode("utf-8")
+            )
+            self._tap_node(field)
+            self._sleep(PASTE_SETTLE_SECONDS)
+            x, y = field.centre
+            self._wda(
+                "POST",
+                self._session("/wda/touchAndHold"),
+                {"x": float(x), "y": float(y), "duration": 1.2},
+            )
+            self._sleep(PASTE_SETTLE_SECONDS)
+            self.tap_identifier(PASTE_ITEM, timeout=15)
+        finally:
+            # The token outlives nothing: not the paste, not a failure.
+            self._remote(f"xcrun simctl pbcopy {self._udid}", stdin=b" ")
+        self._sleep(SETTLE_SECONDS)
+
+        def took(nodes):
+            for node in self._matches_in(nodes, TOKEN_FIELD, False):
+                if node.value:
+                    return True
+            return None
+
+        # An empty pasteboard or a long-press that missed leaves the field as
+        # it was, and the run would only find out as a 401 that reads as an SDK
+        # bug. Only presence is checked: WDA is not promised to hand back all
+        # 1011 characters of a text field's value.
+        if self._poll(took, TOKEN_READBACK_SECONDS, SETTLE_SECONDS) is None:
+            raise DriverError(
+                f"the {TOKEN_FIELD!r} field is still empty after the paste; the "
+                "pasteboard or the Paste item did not take"
+            )
+
+        self.tap_identifier(EXAMPLE_PAY, identifier_only=True)
+        self._find(PAY_BUTTON, timeout=SCREEN_TIMEOUT_SECONDS)
+
+    def type_card(self, card: Card) -> None:
+        for name, value in (
+            (CARDHOLDER, card.holder),
+            (CARD_NUMBER, card.pan),
+            (EXPIRY, card.expiry_digits),
+            (CVV, card.cvv),
+        ):
+            self.tap_identifier(name)
+            self._sleep(SETTLE_SECONDS)
+            self._keys(value)
+            self._sleep(SETTLE_SECONDS)
+        # CVV is typed last and leaves a numeric keyboard over the bottom of
+        # the sheet, which then covers the ACS page's decline outcomes.
+        self.dismiss_keyboard()
+        self._sleep(SETTLE_SECONDS)
+
+    def tap_pay(self, amount_text: str) -> None:
+        # The amount is in the label, but payButton is a real identifier, so
+        # unlike Android there is nothing to compute here.
+        self.tap_identifier(PAY_BUTTON, identifier_only=True)
+
+    def wait_label(
+        self,
+        timeout: float,
+        *,
+        interval: float = POLL_INTERVAL_SECONDS,
+        prefixes: tuple[str, ...] = tree.LABEL_PREFIXES,
+    ) -> str:
+        label = self._poll(
+            lambda nodes: tree.label_from_tree(nodes, prefixes), timeout, interval
+        )
+        if label is None:
+            raise DriverError(f"no contract label within {timeout}s")
+        return label
+
+    def acs(
+        self,
+        outcome: str,
+        *,
+        timeout: float = 120,
+        max_swipes: int = _MAX_SWIPES,
+        settle: float = SCROLL_SETTLE_SECONDS,
+    ) -> None:
+        # The ACS page's buttons are exposed by name in the tree from 0.1.1
+        # onwards, which is what makes this a name match rather than a tap at
+        # remembered coordinates. Waiting for the page and then scrolling to
+        # the outcome are two different things: `fraud_suspected` is in the
+        # tree from the moment the page loads, and off-screen for just as long.
+        self._find(outcome, timeout=timeout)
+        # And a keyboard left up would swallow every swipe, because the drag
+        # starts inside it.
+        self.dismiss_keyboard(settle=settle)
+        self._tap_node(self.scroll_to(outcome, max_swipes=max_swipes, settle=settle))
+
+    def cancel_challenge(self) -> None:
+        # 0.1.1's installCancelBar() -- ThreeDSWebViewController.swift:71-84 in
+        # the v0.1.1 source, NOT the 0.1.0 tree under .e2e-3ds/ios/sdk-src,
+        # which has no such thing. 0.1.0 had no affordance at all here and
+        # held the shopper to the 480-second poll deadline.
+        self.tap_identifier(THREE_DS_CANCEL, timeout=120, identifier_only=True)
+        self._sleep(ALERT_SETTLE_SECONDS)
+        self.tap_identifier(CANCEL_CONFIRM, timeout=30)
+
+    def cancel_form(self) -> None:
+        # Identifier-only. The challenge bar's item is *labelled* "Cancel" too,
+        # so a label match could reach threeDSCancel from the wrong screen once
+        # D2/D3 add cells that cancel from either.
+        self.tap_identifier(SHEET_CANCEL, timeout=30, identifier_only=True)
+        self._sleep(ALERT_SETTLE_SECONDS)
+        self.tap_identifier(CANCEL_CONFIRM, timeout=30)
+
+    def wait_rearmed(
+        self,
+        amount_text: str,
+        timeout: float,
+        *,
+        interval: float = POLL_INTERVAL_SECONDS,
+    ) -> bool:
+        # A WDA that will not answer raises out of _poll rather than returning
+        # False: "the sheet did not re-arm" is a cell verdict and this is not.
+        found = self._poll(
+            lambda nodes: tree.sheet_rearmed(nodes, "ios", amount_text) or None,
+            timeout,
+            interval,
+        )
+        return found is not None
+
+    # -- evidence ------------------------------------------------------------
+
+    def dump_tree(
+        self, *, attempts: int = _DUMP_ATTEMPTS, interval: float = _DUMP_RETRY_SECONDS
+    ) -> bytes:
+        """One accessibility dump, re-fetched until it parses.
+
+        WDA wraps the XML in a JSON envelope, and answers mid-transition with a
+        body that stops halfway. Untreated that raises `ParseError` out of
+        `_nodes`, which is not a `DriverError` and so escapes every polling loop
+        -- one transient read would abort the cell.
+        """
+        if attempts < 1:
+            raise ValueError(f"attempts must be at least 1, got {attempts}")
+        for attempt in range(attempts):
+            value = self._wda("GET", "/source").get("value")
+            if not isinstance(value, str):
+                problem = f"the envelope's value was a {type(value).__name__}"
+                saw = json.dumps(value)[:_EXCERPT]
+            else:
+                raw = value.encode("utf-8")
+                try:
+                    ET.fromstring(raw)
+                except ET.ParseError as exc:
+                    problem = str(exc)
+                    # An excerpt, and always a prefix: a truncated body loses
+                    # its tail, so this cannot reach the example's token field.
+                    saw = value[:_EXCERPT]
+                else:
+                    return raw
+            if attempt + 1 < attempts:
+                self._sleep(interval)
+        raise DriverError(
+            f"no parsable WebDriverAgent source in {attempts} attempts: {problem}; "
+            f"it read back as {saw!r}"
+        )
+
+    def screenshot(self) -> bytes:
+        """A PNG of whatever is on the simulator, fetched as base64.
+
+        base64 rather than raw bytes because the same text transport carries
+        everything else, and a PNG that travelled as text would be mangled.
+        """
+        # Through a file rather than `screenshot -`: this Xcode writes a file
+        # literally named `-` in the working directory instead of to stdout.
+        raw = self._remote(
+            f"mkdir -p {REMOTE_DIR} && "
+            f"xcrun simctl io {self._udid} screenshot {REMOTE_SHOT} >/dev/null 2>&1 "
+            f"&& base64 < {REMOTE_SHOT}; rm -f {REMOTE_SHOT}"
+        )
+        # `base64` wraps its output, so the newlines go before the alphabet is
+        # checked. Validated rather than trusted: without `validate` b64decode
+        # discards every character outside the alphabet, so simctl's complaint
+        # would decode to a few bytes of garbage and be written into evidence
+        # as though it were a frame.
+        packed = "".join(raw.split())
+        try:
+            return base64.b64decode(packed, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise DriverError(
+                "the simulator returned no usable screenshot: "
+                f"{raw.strip()[:_EXCERPT]!r}"
+            ) from exc
+
+    def logs_since(self, since: datetime) -> str:
+        """The app's console since this launch, plus the unified log window.
+
+        Both, because neither is enough on its own. The SDK emits no os_log, so
+        `log show` never carries Swift's `Fatal error:`, ObjC's `*** Terminating
+        app due to uncaught exception` or Dart's `Unhandled Exception:` -- those
+        reach stdout and stderr, which is what the `--console-pty` capture
+        holds. The unified log is kept for everything the system says about the
+        process, which the console cannot see.
+
+        `--last <n>s` rather than `--start`: there is no timezone left to get
+        wrong, which is the same reason the Android driver asks the device to
+        compute its own logcat cutoff.
+        """
+        seconds = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
+        console = self._remote(
+            f"tail -c +{self._console_from + 1} {CONSOLE_LOG} 2>/dev/null"
+        )
+        unified = self._remote(
+            f"xcrun simctl spawn {self._udid} log show --last {seconds}s "
+            "--info --debug --predicate 'process == \"Runner\"' 2>/dev/null"
+        )
+        return (
+            f"--- app console (simctl launch --console-pty), since this launch ---\n"
+            f"{console}\n"
+            f"--- log show --last {seconds}s, predicate process == \"Runner\" ---\n"
+            f"{unified}"
+        )

@@ -1,0 +1,1052 @@
+"""The iOS driver, exercised against a fake ssh transport.
+
+Nothing here touches the Mac. `FakeSsh` records the remote command line and
+replays canned stdout with `ios._ssh`'s exact signature, so what a test asserts
+on is the command line and the JSON body that would really go on the wire.
+Every wait is recorded rather than taken, and the rig's real durations stay
+pinned by asserting on what was recorded.
+"""
+
+import base64
+import json
+import shlex
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from tool.e2e.cells import Card
+from tool.e2e.drivers import ios
+from tool.e2e.drivers.base import DriverError
+
+FIXTURES = Path(__file__).parent / "fixtures"
+SOURCE_XML = (FIXTURES / "ios-source.xml").read_text()
+
+#: What `xcrun simctl list devices | grep <udid>` answers on the rig, trailing
+#: space included.
+DEVICE_LINE = "    iPhone 17 (C311AFDC-25FA-44A2-A800-10EB5A1039E3) (Booted) \n"
+
+#: Shaped like the real thing -- base64url segments joined by dots -- because
+#: the driver refuses anything that is not.
+TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJzZXNzaW9uX2lkIjoiMDFhMCJ9.c2lnbmF0dXJlLWJ5dGVz"
+
+#: `wc -c` then the backgrounded pid, which is what `_start_console` parses.
+#: Non-zero on purpose: a log that already holds a previous cell's output is
+#: the only shape in which reading from the mark differs from reading the file.
+CONSOLE_MARK = 4096
+CONSOLE_STARTED = f"    {CONSOLE_MARK}\n12345\n"
+
+#: The same page after one swipe: fraud_suspected has come up into the window.
+SCROLLED_XML = SOURCE_XML.replace(
+    'name="fraud_suspected" label="fraud_suspected" value="" enabled="true" '
+    'visible="false" x="16" y="1402"',
+    'name="fraud_suspected" label="fraud_suspected" value="" enabled="true" '
+    'visible="true" x="16" y="402"',
+)
+assert SCROLLED_XML != SOURCE_XML, "the fixture's fraud_suspected node changed shape"
+
+#: The same page with the CVV field's numeric pad still up, covering the bottom
+#: ~35% -- which is where the ISSUER DECLINES buttons and scroll_to's drag
+#: origin both live.
+KEYBOARD_XML = SOURCE_XML.replace(
+    "</XCUIElementTypeOther>",
+    '<XCUIElementTypeKeyboard type="XCUIElementTypeKeyboard" name="" label="" '
+    'enabled="true" visible="true" x="0" y="564" width="402" height="310" '
+    'index="11"/></XCUIElementTypeOther>',
+    1,
+)
+assert "XCUIElementTypeKeyboard" in KEYBOARD_XML
+
+#: A source in which WebDriverAgent reports nothing as visible at all. The
+#: on-screen preference is inert against it, which is a rig fault rather than
+#: a licence to tap off-screen coordinates.
+BLIND_XML = SOURCE_XML.replace('visible="true"', 'visible="false"')
+assert 'visible="true"' not in BLIND_XML
+
+
+TRUNCATED = json.dumps({"value": "<XCUIElementTypeApplication"})
+
+
+def payloads_for(ssh, path):
+    """The JSON bodies actually put on the wire for `path`."""
+    bodies = []
+    for command in ssh.calls:
+        if path in command and "printf %s " in command:
+            raw = command.split("printf %s ", 1)[1].split(" | curl", 1)[0]
+            bodies.append(json.loads(shlex.split(raw)[0]))
+    return bodies
+
+
+def typed_strings(ssh):
+    """`_keys` sends {"value": [...]} one character at a time, as wda.py does."""
+    return ["".join(b["value"]) for b in payloads_for(ssh, "/wda/keys")]
+
+
+def source_response(xml=None):
+    return json.dumps({"value": SOURCE_XML if xml is None else xml})
+
+
+class FakeSsh:
+    """Records the remote command line and replays canned stdout.
+
+    Mirrors `ios._ssh`'s signature exactly, so nothing here can pass while the
+    real transport is called differently. Explicit outputs are consumed in
+    order; after they run out it answers any `/source` request with the
+    fixture, a window-size request with the simulator's 402x874, and everything
+    else with an empty WDA envelope. That fallback is what lets a multi-step
+    action be exercised without hand-counting how many round trips it makes.
+    """
+
+    def __init__(self, *outputs, xml=None):
+        self.outputs = list(outputs)
+        self.xml = xml
+        self.calls = []
+        self.stdins = []
+
+    def __call__(self, command, *, stdin=None):
+        self.calls.append(command)
+        self.stdins.append(stdin)
+        if self.outputs:
+            return self.outputs.pop(0)
+        if "/source" in command:
+            return source_response(self.xml)
+        if "window/size" in command:
+            return json.dumps({"value": {"width": 402, "height": 874}})
+        return json.dumps({"value": None})
+
+    def joined(self):
+        return " | ".join(self.calls)
+
+
+class ScrollingFakeSsh(FakeSsh):
+    """Serves the unscrolled ACS page until a drag arrives, then the scrolled one."""
+
+    def __init__(self):
+        super().__init__()
+        self.scrolled = False
+
+    def __call__(self, command, *, stdin=None):
+        if "dragfromtoforduration" in command:
+            self.scrolled = True
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            return json.dumps({"value": None})
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            return source_response(SCROLLED_XML if self.scrolled else SOURCE_XML)
+        return super().__call__(command, stdin=stdin)
+
+
+class KeyboardFakeSsh(FakeSsh):
+    """The CVV pad, which WDA cannot dismiss because it has no Done key.
+
+    `clears_on_tap` is the difference between a pad that goes away when a
+    neutral node is tapped and one that does not.
+    """
+
+    def __init__(self, clears_on_tap=True):
+        super().__init__()
+        self.clears_on_tap = clears_on_tap
+        self.cleared = False
+
+    def __call__(self, command, *, stdin=None):
+        if "keyboard/dismiss" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            # The real envelope shape: HTTP 4xx with JSON in the body.
+            return json.dumps(
+                {
+                    "value": {
+                        "error": "no such element",
+                        "message": "keyboard cannot be dismissed",
+                        "traceback": "x" * 10842,
+                    }
+                }
+            )
+        if "/wda/tap" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            if self.clears_on_tap:
+                self.cleared = True
+            return json.dumps({"value": None})
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            return source_response(SOURCE_XML if self.cleared else KEYBOARD_XML)
+        return super().__call__(command, stdin=stdin)
+
+
+def token_file(tmp_path, text=TOKEN):
+    path = tmp_path / "cell.token"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def driver(ssh, naps=None, session_id="sess-1"):
+    """The driver under test, with every wait recorded instead of taken."""
+    d = ios.IosDriver(ssh=ssh, sleep=(naps if naps is not None else []).append)
+    d._session_id = session_id
+    return d
+
+
+def unlaunched(ssh, naps=None):
+    """The same driver before `launch()`, so it has no session yet."""
+    return driver(ssh, naps, session_id=None)
+
+
+# -- _ssh, the one place the transport is real --------------------------------
+
+
+def _stub_subprocess(monkeypatch, stdout=b"", stderr=b"", returncode=0):
+    seen = {}
+
+    class Done:
+        pass
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        done = Done()
+        done.stdout, done.stderr, done.returncode = stdout, stderr, returncode
+        return done
+
+    monkeypatch.setattr(ios.subprocess, "run", fake_run)
+    return seen
+
+
+def test_ssh_runs_the_command_on_the_configured_host_under_a_timeout(monkeypatch):
+    seen = _stub_subprocess(monkeypatch, stdout=b"hi\n")
+
+    assert ios._ssh("echo hi") == "hi\n"
+    assert seen["argv"] == ["ssh", ios.SSH_HOST, "echo hi"]
+    # Every call is bounded: a hung ssh would otherwise hold the whole matrix.
+    assert seen["kwargs"]["timeout"] == ios.SSH_TIMEOUT_SECONDS
+    assert seen["kwargs"]["capture_output"] is True
+
+
+def test_ssh_hands_stdin_to_the_process_rather_than_the_command_line(monkeypatch):
+    seen = _stub_subprocess(monkeypatch)
+
+    ios._ssh("xcrun simctl pbcopy UDID", stdin=b"a.b.c")
+
+    assert seen["argv"] == ["ssh", ios.SSH_HOST, "xcrun simctl pbcopy UDID"]
+    assert seen["kwargs"]["input"] == b"a.b.c"
+
+
+def test_ssh_normalises_the_crlf_that_a_pty_console_produces(monkeypatch):
+    # `simctl launch --console-pty` copies the app's output through a pty,
+    # which turns every LF into CRLF on the way to the log.
+    _stub_subprocess(monkeypatch, stdout=b"one\r\ntwo\r\nthree")
+
+    assert ios._ssh("cat log") == "one\ntwo\nthree"
+
+
+def test_ssh_surfaces_the_stderr_of_a_failed_remote_command(monkeypatch):
+    # Discarding it is how "no route to host" reads as an empty log, and an
+    # empty log is how criterion 3 passes on nothing.
+    _stub_subprocess(
+        monkeypatch, stdout=b"", stderr=b"ssh: connect to host mac port 22\r\n",
+        returncode=255,
+    )
+
+    assert "connect to host mac" in ios._ssh("true")
+
+
+def test_every_remote_command_carries_the_env_exports_and_no_sudo():
+    ssh = FakeSsh("ok")
+
+    driver(ssh)._remote("echo hi")
+
+    command = ssh.calls[0]
+    assert "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer" in command
+    assert "/opt/homebrew/bin" in command
+    assert "$HOME/development/flutter/bin" in command
+    assert "sudo" not in command
+
+
+# -- _wda ---------------------------------------------------------------------
+
+
+def test_wda_calls_go_through_curl_on_the_mac_not_from_wsl():
+    ssh = FakeSsh(json.dumps({"value": {"ready": True}}))
+
+    driver(ssh)._wda("GET", "/status")
+
+    command = ssh.calls[0]
+    assert "curl" in command
+    assert "http://127.0.0.1:8100/status" in command
+    # WDA is bound to the Mac's loopback; there is nothing to reach from WSL.
+    assert command.count("http://") == 1
+
+
+def test_wda_puts_the_body_on_stdin_rather_than_the_command_line():
+    ssh = FakeSsh()
+
+    driver(ssh)._wda("POST", "/session/sess-1/wda/tap", {"x": 1.0, "y": 2.0})
+
+    command = ssh.calls[0]
+    assert "printf %s " in command and "--data-binary @-" in command
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 1.0, "y": 2.0}]
+
+
+def test_wda_raises_on_the_error_envelope_rather_than_returning_it():
+    # WDA reports a failure as HTTP 4xx with a JSON body, which curl -s prints
+    # and json.loads accepts -- so an unchecked call is completely silent and
+    # the damage surfaces one caller later as a KeyError or an AttributeError.
+    ssh = FakeSsh(
+        json.dumps(
+            {
+                "value": {
+                    "error": "invalid session id",
+                    "message": "Session does not exist",
+                    "traceback": "x" * 10842,
+                }
+            }
+        )
+    )
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh)._wda("POST", "/session/bad/wda/tap", {"x": 1.0, "y": 1.0})
+
+    text = str(excinfo.value)
+    assert "invalid session id" in text
+    assert "Session does not exist" in text
+    # The ~10 KB traceback must not reach problems or result.json.
+    assert len(text) < 400
+
+
+def test_wda_raises_when_the_answer_is_not_json():
+    # curl's own failures arrive as a sentence, which json.loads answers with a
+    # JSONDecodeError -- not a DriverError, so it escapes every polling loop.
+    ssh = FakeSsh("curl: (7) Failed to connect to 127.0.0.1 port 8100\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh)._wda("GET", "/status")
+
+    assert "Failed to connect" in str(excinfo.value)
+
+
+def test_wda_raises_when_the_answer_is_empty():
+    ssh = FakeSsh("   \n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh)._wda("GET", "/status")
+
+    assert "/status" in str(excinfo.value)
+
+
+# -- launch -------------------------------------------------------------------
+
+
+def launch_outputs(session=None, alive="alive\n"):
+    return (
+        DEVICE_LINE,
+        "",
+        CONSOLE_STARTED,
+        session or json.dumps({"value": {"sessionId": "sess-9"}}),
+        alive,
+    )
+
+
+def test_launch_terminates_then_opens_a_session_for_the_example_bundle():
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+
+    d.launch()
+
+    assert d._session_id == "sess-9"
+    joined = ssh.joined()
+    assert "simctl terminate" in joined
+    assert "simctl launch" in joined
+    assert "com.paycross.paycrossFlutterExample" in joined
+
+
+def test_launch_accepts_the_older_top_level_session_id_shape():
+    ssh = FakeSsh(*launch_outputs(session=json.dumps({"sessionId": "sess-8"})))
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+
+    d.launch()
+
+    assert d._session_id == "sess-8"
+
+
+def test_launch_captures_the_app_console_because_the_sdk_emits_no_os_log():
+    # criterion 3's iOS markers -- Swift's `Fatal error:`, ObjC's `***
+    # Terminating app`, Dart's `Unhandled Exception:` -- reach stdout and
+    # stderr, not the unified log. Without this capture `log show` alone
+    # answers with nothing and "nothing crashed" passes on an empty window.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+
+    d.launch()
+
+    started = next(c for c in ssh.calls if "--console-pty" in c)
+    assert ios.CONSOLE_LOG in started
+    # Backgrounded: --console-pty blocks for the app's whole lifetime.
+    assert "nohup" in started and "echo $!" in started
+    # And the byte offset the log had beforehand is what logs_since reads from.
+    assert d._console_from == CONSOLE_MARK
+
+
+def test_launch_does_not_let_the_session_relaunch_the_app_out_from_under_it():
+    # POST /session with a bundleId launches -- which for XCUIApplication means
+    # terminate-then-launch -- and that would kill the console capture started
+    # one step earlier. forceAppLaunch activates the running instance instead.
+    ssh = FakeSsh(*launch_outputs())
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    capabilities = payloads_for(ssh, "/session")[0]["capabilities"]["alwaysMatch"]
+    assert capabilities["forceAppLaunch"] is False
+    # The Flutter engine never quiesces, so waiting for it times the request out.
+    assert capabilities["shouldWaitForQuiescence"] is False
+    assert capabilities["bundleId"] == "com.paycross.paycrossFlutterExample"
+
+
+def test_launch_checks_the_console_capture_after_the_session_not_before():
+    ssh = FakeSsh(*launch_outputs(alive="dead\n"))
+
+    with pytest.raises(DriverError) as excinfo:
+        ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    message = str(excinfo.value)
+    assert "console" in message
+    # The log is named, never quoted: the app's own output is redacted on its
+    # way into evidence, and a DriverError is not on that path.
+    assert ios.CONSOLE_LOG in message
+    # The liveness question is asked once the session has had its chance to
+    # relaunch the app, which is the only thing that could kill the capture.
+    asked = next(i for i, c in enumerate(ssh.calls) if "kill -0" in c)
+    session = next(i for i, c in enumerate(ssh.calls) if "/session" in c)
+    assert asked > session
+
+
+def test_launch_reports_a_console_capture_that_would_not_start():
+    ssh = FakeSsh(DEVICE_LINE, "", "sh: xcrun: command not found\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    assert "command not found" in str(excinfo.value)
+
+
+def test_launch_refuses_a_simulator_that_is_not_booted():
+    shutdown = DEVICE_LINE.replace("(Booted)", "(Shutdown)")
+    ssh = FakeSsh(shutdown)
+
+    with pytest.raises(DriverError) as excinfo:
+        ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    assert "Shutdown" in str(excinfo.value)
+
+
+def test_launch_says_the_udid_is_unknown_rather_than_that_it_is_not_booted():
+    # grep finds nothing and exits 1, so the "answer" is empty. Reading that as
+    # a state would report a simulator part-way through booting when the truth
+    # is that there is no such simulator -- the emulator lesson, transposed.
+    ssh = FakeSsh("")
+
+    with pytest.raises(DriverError) as excinfo:
+        ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    message = str(excinfo.value)
+    assert "C311AFDC-25FA-44A2-A800-10EB5A1039E3" in message
+    assert "Booted" not in message
+
+
+def test_launch_settles_before_it_asks_wda_for_a_session():
+    ssh = FakeSsh(*launch_outputs())
+    naps = []
+
+    ios.IosDriver(ssh=ssh, sleep=naps.append).launch()
+
+    assert ios.LAUNCH_SETTLE_SECONDS == 6
+    assert naps == [6]
+
+
+# -- install ------------------------------------------------------------------
+
+
+def test_install_replaces_any_existing_build():
+    ssh = FakeSsh("", "")
+
+    driver(ssh).install("/Users/mikz/work/e2e/ios/Runner.app")
+
+    text = ssh.joined()
+    assert "simctl uninstall" in text
+    assert "simctl install" in text
+    assert "/Users/mikz/work/e2e/ios/Runner.app" in text
+
+
+def test_install_reports_what_simctl_actually_said():
+    failure = "An error was encountered processing the command: Invalid device\n"
+    ssh = FakeSsh("", failure)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).install("/tmp/Runner.app")
+
+    assert "Invalid device" in str(excinfo.value)
+
+
+# -- dump_tree ----------------------------------------------------------------
+
+
+def test_dump_tree_unwraps_the_json_envelope():
+    ssh = FakeSsh(source_response())
+
+    assert driver(ssh).dump_tree() == SOURCE_XML.encode()
+
+
+def test_dump_tree_retries_a_source_that_came_back_unparsable():
+    # A truncated body raises ParseError out of _nodes, which is not a
+    # DriverError, so it escapes every polling loop and aborts the cell for one
+    # transient read.
+    ssh = FakeSsh(TRUNCATED, source_response())
+
+    assert driver(ssh).dump_tree(interval=0) == SOURCE_XML.encode()
+
+
+def test_dump_tree_gives_up_as_a_driver_error_carrying_what_it_saw():
+    ssh = FakeSsh(*([TRUNCATED] * 3))
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).dump_tree(attempts=3, interval=0)
+
+    message = str(excinfo.value)
+    assert "XCUIElementTypeApplication" in message
+    # An excerpt, not the tree: a real dump holds the example's token field.
+    assert len(message) < 600
+
+
+def test_dump_tree_refuses_an_envelope_whose_value_is_not_the_source():
+    ssh = FakeSsh(*([json.dumps({"value": {"ready": True}})] * 3))
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).dump_tree(attempts=3, interval=0)
+
+    assert "dict" in str(excinfo.value)
+
+
+# -- the polling waits --------------------------------------------------------
+
+
+def test_wait_label_reads_the_contract_label_off_the_source():
+    ssh = FakeSsh(source_response())
+
+    label = driver(ssh).wait_label(timeout=10, interval=0)
+
+    assert label == "result:success:7d8e12aa-98c9-4032-9e03-6567d8db7bea"
+
+
+def test_wait_label_timing_out_raises():
+    ssh = FakeSsh(*([json.dumps({"value": "<XCUIElementTypeApplication/>"})] * 3))
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).wait_label(timeout=0, interval=0)
+
+    assert "label" in str(excinfo.value)
+
+
+def test_a_wait_rides_out_a_source_that_will_not_parse():
+    # WDA answers mid-transition with a body that stops halfway. Three of those
+    # must not end a cell that still has 10 s of its own deadline left.
+    refused = [TRUNCATED] * ios._DUMP_ATTEMPTS
+    ssh = FakeSsh(*refused, source_response())
+
+    label = driver(ssh).wait_label(timeout=10, interval=0)
+
+    assert label.startswith("result:success:")
+
+
+def test_a_wait_past_its_deadline_blames_the_dump_not_the_missing_node():
+    # Once the deadline is gone the tolerance goes with it, so the error names
+    # the source rather than reporting a label that was never looked for.
+    ssh = FakeSsh(*([TRUNCATED] * 3))
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).wait_label(timeout=0, interval=0)
+
+    assert "source" in str(excinfo.value)
+
+
+def test_wait_rearmed_is_true_when_the_banner_is_in_the_tree_but_offscreen():
+    ssh = FakeSsh(source_response())
+
+    assert driver(ssh).wait_rearmed("EUR 10.00", timeout=10, interval=0) is True
+
+
+def test_wait_rearmed_gives_up_and_says_so():
+    ssh = FakeSsh(*([json.dumps({"value": "<XCUIElementTypeApplication/>"})] * 3))
+
+    assert driver(ssh).wait_rearmed("EUR 10.00", timeout=0, interval=0) is False
+
+
+# -- finding and tapping ------------------------------------------------------
+
+
+def test_tap_identifier_uses_the_node_centre():
+    ssh = FakeSsh()
+
+    driver(ssh).tap_identifier("payButton")
+
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 201.0, "y": 815.0}]
+
+
+def test_tap_identifier_that_is_not_there_says_what_it_looked_for():
+    ssh = FakeSsh()
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).tap_identifier("noSuchThing", timeout=0, interval=0)
+
+    assert "noSuchThing" in str(excinfo.value)
+
+
+def test_tap_pay_uses_the_sheets_own_identifier_not_the_amount():
+    # Unlike Android, where the button's text is the only handle there is.
+    ssh = FakeSsh()
+
+    driver(ssh).tap_pay("EUR 10.00")
+
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 201.0, "y": 815.0}]
+
+
+def test_find_prefers_a_node_that_is_actually_on_screen():
+    ssh = FakeSsh()
+    d = driver(ssh)
+
+    # In the tree at y=1402 on an 874pt sheet: addressable, not tappable.
+    assert d._find("fraud_suspected", timeout=0).bounds[1] == 1402
+    with pytest.raises(DriverError):
+        d._find("fraud_suspected", timeout=0, require_on_screen=True)
+
+
+def test_find_calls_a_source_that_reports_no_visibility_at_all_a_rig_fault():
+    # Falling back to an off-screen node is only defensible while WDA is
+    # reporting visibility. If nothing in the whole source carries it, the
+    # on-screen preference is inert and every tap lands at raw coordinates.
+    ssh = FakeSsh(xml=BLIND_XML)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh)._find("payButton", timeout=0)
+
+    assert "visible" in str(excinfo.value)
+
+
+def test_find_identifier_only_does_not_match_a_label():
+    ssh = FakeSsh()
+    d = driver(ssh)
+
+    # threeDSCancel is *labelled* "Cancel"; the sheet's toolbar item is named
+    # it. Both are on screen, so which one a tap reaches is decided purely by
+    # whether the label half of the matcher is on.
+    assert d._find("threeDSCancel").identifier == "threeDSCancel"
+    assert [n.identifier for n in d._matches("Cancel")] == ["Cancel", "threeDSCancel"]
+    only = d._matches("Cancel", identifier_only=True)
+    assert [n.identifier for n in only] == ["Cancel"]
+
+
+def test_find_refuses_an_empty_name_rather_than_matching_the_whole_tree():
+    # Every untagged element carries name="" and label="", which is most of a
+    # real source, so the tap would land on an arbitrary one.
+    ssh = FakeSsh()
+
+    with pytest.raises(DriverError):
+        driver(ssh)._find("", timeout=0)
+
+    assert ssh.calls == []
+
+
+def test_a_call_before_launch_says_there_is_no_session():
+    ssh = FakeSsh()
+
+    with pytest.raises(DriverError) as excinfo:
+        unlaunched(ssh).tap_identifier("payButton")
+
+    assert "launch()" in str(excinfo.value)
+
+
+# -- scrolling and the ACS page -----------------------------------------------
+
+
+def test_scroll_to_does_not_swipe_when_the_target_is_already_on_screen():
+    ssh = ScrollingFakeSsh()
+
+    node = driver(ssh).scroll_to("approve", settle=0)
+
+    assert node.identifier == "approve"
+    assert not any("dragfromtoforduration" in c for c in ssh.calls)
+
+
+def test_acs_scrolls_until_the_outcome_is_on_screen_then_taps():
+    # fraud_suspected lives in ISSUER DECLINES, below the fold on a 402x874
+    # sheet. Without a scroll the tap lands on whatever is at y=1402.
+    ssh = ScrollingFakeSsh()
+
+    driver(ssh).acs("fraud_suspected", timeout=0, settle=0)
+
+    assert any("dragfromtoforduration" in c for c in ssh.calls)
+    tap = payloads_for(ssh, "/wda/tap")[-1]
+    assert tap["y"] == 424.0  # 402 + 44/2, i.e. on screen
+    assert 0 <= tap["y"] <= 874
+
+
+def test_acs_gives_up_with_a_named_error_if_scrolling_never_reveals_it():
+    ssh = FakeSsh()  # always the unscrolled page
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).acs("fraud_suspected", timeout=0, max_swipes=2, settle=0)
+
+    assert "fraud_suspected" in str(excinfo.value)
+    assert len([c for c in ssh.calls if "dragfromtoforduration" in c]) == 3
+
+
+def test_acs_puts_the_keyboard_away_before_it_tries_to_scroll():
+    # scroll_to drags from height * 0.75 = y~655, which is inside a keyboard
+    # whose top is y~564: a pad left up swallows every swipe AND hides the
+    # decline outcomes, so the cell burns all twelve and fails anyway.
+    ssh = KeyboardFakeSsh(clears_on_tap=True)
+
+    with pytest.raises(DriverError):
+        driver(ssh).acs("fraud_suspected", timeout=0, max_swipes=1, settle=0)
+
+    dismissed = next(i for i, c in enumerate(ssh.calls) if "keyboard/dismiss" in c)
+    dragged = next(i for i, c in enumerate(ssh.calls) if "dragfromtoforduration" in c)
+    assert dismissed < dragged
+
+
+def test_scroll_to_calls_a_blind_source_a_rig_fault_rather_than_swiping():
+    # require_on_screen can never be satisfied by a source that marks nothing
+    # visible, so without the check the cell burns every swipe and then reports
+    # a button that "never came on screen" -- a plausible wrong diagnosis.
+    ssh = FakeSsh(xml=BLIND_XML)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).scroll_to("fraud_suspected", max_swipes=2, settle=0)
+
+    assert "visible" in str(excinfo.value)
+    assert not any("dragfromtoforduration" in c for c in ssh.calls)
+
+
+def test_scroll_to_drags_within_the_window_it_asked_wda_for():
+    ssh = ScrollingFakeSsh()
+
+    driver(ssh).scroll_to("fraud_suspected", settle=0)
+
+    drag = payloads_for(ssh, "/wda/dragfromtoforduration")[0]
+    assert drag["fromX"] == 201.0 and drag["toX"] == 201.0
+    assert drag["fromY"] > drag["toY"]
+    assert 0 <= drag["toY"] <= 874 and 0 <= drag["fromY"] <= 874
+
+
+# -- the keyboard -------------------------------------------------------------
+
+
+def test_dismiss_keyboard_taps_a_neutral_node_when_the_pad_will_not_go():
+    # The CVV pad is numeric: no Done, no Return, so dismissKeyboard has
+    # nothing to press and answers with an error envelope. `amount` is
+    # SDK-tagged and never interactive.
+    ssh = KeyboardFakeSsh(clears_on_tap=True)
+
+    driver(ssh).dismiss_keyboard(settle=0)
+
+    assert any("keyboard/dismiss" in c for c in ssh.calls)
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 201.0, "y": 214.0}]
+
+
+def test_dismiss_keyboard_raises_if_the_pad_survives_even_that():
+    # Failing here beats burning every swipe: scroll_to drags from y=655,
+    # which is inside a keyboard whose top is around y=564.
+    ssh = KeyboardFakeSsh(clears_on_tap=False)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).dismiss_keyboard(settle=0)
+
+    assert "keyboard is still up" in str(excinfo.value)
+
+
+def test_dismiss_keyboard_does_nothing_more_when_the_pad_is_already_gone():
+    ssh = FakeSsh()
+
+    driver(ssh).dismiss_keyboard(settle=0)
+
+    assert payloads_for(ssh, "/wda/tap") == []
+
+
+# -- typing -------------------------------------------------------------------
+
+
+def test_type_card_fills_the_fields_by_identifier_in_form_order():
+    ssh = FakeSsh()
+    d = driver(ssh)
+    tapped = []
+    d.tap_identifier = lambda name, **kw: tapped.append(name)
+
+    d.type_card(Card(pan="4111111111170000", expiry="12/28", cvv="123"))
+
+    assert tapped == ["cardholderName", "cardNumber", "expiry", "cvv"]
+    # The wire carries a character list, not the contiguous string -- WDA's
+    # /wda/keys takes {"value": [...]}, which is what wda.py sends too.
+    assert typed_strings(ssh) == ["John Doe", "4111111111170000", "1228", "123"]
+
+
+def test_type_card_dismisses_the_keyboard_the_cvv_field_raised():
+    # It covers the bottom ~35% of the sheet, which is where the ACS page's
+    # decline outcomes land. Android drops the IME for the same reason.
+    ssh = FakeSsh()
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.type_card(Card(pan="4111111111170000", expiry="12/28", cvv="123"))
+
+    keys_at = max(i for i, c in enumerate(ssh.calls) if "/wda/keys" in c)
+    dismiss_at = next(i for i, c in enumerate(ssh.calls) if "keyboard/dismiss" in c)
+    assert dismiss_at > keys_at
+
+
+def test_type_card_settles_between_the_taps_and_the_keystrokes():
+    ssh = FakeSsh()
+    naps = []
+    d = driver(ssh, naps)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.type_card(Card(pan="4111111111170000", expiry="12/28", cvv="123"))
+
+    # Five seconds on the rig: two per field, one inside dismiss_keyboard and
+    # one after it. Asserted here rather than spent.
+    assert ios.SETTLE_SECONDS == 0.5
+    assert naps == [0.5] * 10
+
+
+# -- paste_token --------------------------------------------------------------
+
+
+def test_paste_token_refuses_an_empty_token_file(tmp_path):
+    ssh = FakeSsh()
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).paste_token(token_file(tmp_path, "   \n"))
+
+    assert "empty" in str(excinfo.value)
+    # Before any transport at all.
+    assert ssh.calls == []
+
+
+def test_paste_token_refuses_something_that_is_not_shaped_like_a_token(tmp_path):
+    # A mint that answered with an error document would otherwise be pasted as
+    # though it were a credential and come back as an instant 401.
+    ssh = FakeSsh()
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).paste_token(token_file(tmp_path, '{"error": "unauthorized"}'))
+
+    message = str(excinfo.value)
+    assert "JWT" in message
+    # The value is never echoed, whatever it turned out to be.
+    assert "unauthorized" not in message
+    assert ssh.calls == []
+
+
+def test_paste_token_never_puts_the_token_on_a_command_line(tmp_path):
+    ssh = FakeSsh()
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.paste_token(token_file(tmp_path))
+
+    # A command line is world-readable for as long as the process lives, on
+    # either machine, and this one never lands on the Mac's disk at all.
+    assert TOKEN not in ssh.joined()
+    assert "eyJhbGciOiJSUzI1NiJ9" not in ssh.joined()
+    carried = [(c, sent) for c, sent in zip(ssh.calls, ssh.stdins) if sent is not None]
+    assert len(carried) == 2
+    assert "pbcopy" in carried[0][0]
+    assert carried[0][1] == TOKEN.encode()
+    # And the pasteboard does not keep it: left alone it outlives the cell and
+    # anything on the simulator can read it.
+    assert "pbcopy" in carried[1][0]
+    assert TOKEN.encode() not in carried[1][1]
+
+
+def test_paste_token_clears_the_pasteboard_even_when_the_paste_fails(tmp_path):
+    ssh = FakeSsh()
+    d = driver(ssh)
+
+    def explode(name, **kw):
+        raise DriverError("no Paste menu item")
+
+    d.tap_identifier = explode
+
+    with pytest.raises(DriverError):
+        d.paste_token(token_file(tmp_path))
+
+    sent = [s for s in ssh.stdins if s is not None]
+    assert sent[0] == TOKEN.encode()
+    assert TOKEN.encode() not in sent[-1]
+
+
+def test_paste_token_reports_a_field_that_never_took_the_paste(tmp_path, monkeypatch):
+    # An empty pasteboard or a long-press that missed leaves the field as it
+    # was, and the run would only find out as a 401 that reads as an SDK bug.
+    monkeypatch.setattr(ios, "TOKEN_READBACK_SECONDS", 0)
+    blank = SOURCE_XML.replace('value="[REDACTED-SESSION-TOKEN]"', 'value=""')
+    assert "[REDACTED-SESSION-TOKEN]" not in blank
+    ssh = FakeSsh(xml=blank)
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    with pytest.raises(DriverError) as excinfo:
+        d.paste_token(token_file(tmp_path))
+
+    message = str(excinfo.value)
+    assert "Session token" in message
+    assert TOKEN not in message
+
+
+def test_paste_token_hands_off_to_the_sheet_once_the_field_has_taken_it(tmp_path):
+    ssh = FakeSsh()
+    d = driver(ssh)
+    tapped = []
+    d.tap_identifier = lambda name, **kw: tapped.append(name)
+
+    d.paste_token(token_file(tmp_path))
+
+    # Paste out of the long-press menu, then the example's own Pay button --
+    # which is untagged, so it matches on the name WDA falls back to.
+    assert tapped == ["Paste", "Pay"]
+
+
+def test_paste_token_waits_for_the_sheet_that_the_example_pay_opens(
+    tmp_path, monkeypatch
+):
+    # Failing here names the sheet. Carrying on would fail at type_card instead
+    # and name a card field, which reads as an SDK bug rather than a sheet that
+    # never opened.
+    monkeypatch.setattr(ios, "SCREEN_TIMEOUT_SECONDS", 0)
+    no_sheet = SOURCE_XML.replace('name="payButton"', 'name="notTheSheet"')
+    assert "payButton" not in no_sheet
+    ssh = FakeSsh(xml=no_sheet)
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    with pytest.raises(DriverError) as excinfo:
+        d.paste_token(token_file(tmp_path))
+
+    assert "payButton" in str(excinfo.value)
+
+
+# -- cancelling ---------------------------------------------------------------
+
+
+def test_cancel_challenge_taps_the_bar_button_then_confirms():
+    ssh = FakeSsh()
+    d = driver(ssh)
+    taps = []
+    d.tap_identifier = lambda name, **kw: taps.append(name)
+
+    d.cancel_challenge()
+
+    assert taps == ["threeDSCancel", "Yes, Cancel"]
+
+
+def test_cancel_form_taps_the_toolbar_cancel_then_confirms():
+    ssh = FakeSsh()
+    d = driver(ssh)
+    taps = []
+    d.tap_identifier = lambda name, **kw: taps.append((name, kw))
+
+    d.cancel_form()
+
+    assert [name for name, _ in taps] == ["Cancel", "Yes, Cancel"]
+    # Identifier-only, so the label half can never reach threeDSCancel -- which
+    # is labelled "Cancel" too -- once D2/D3 add cells that cancel from either
+    # screen.
+    assert taps[0][1]["identifier_only"] is True
+
+
+def test_cancel_form_reaches_the_toolbar_item_and_not_the_challenge_bar():
+    # The end-to-end version of the assertion above, through the real finder.
+    ssh = FakeSsh()
+
+    node = driver(ssh)._find("Cancel", identifier_only=True)
+
+    assert node.identifier == "Cancel"
+    assert node.bounds == (16, 76, 96, 108)
+
+
+# -- evidence -----------------------------------------------------------------
+
+
+def test_screenshot_comes_back_base64_and_is_decoded():
+    png = b"\x89PNG\r\n\x1a\n"
+    ssh = FakeSsh(base64.b64encode(png).decode())
+
+    assert driver(ssh).screenshot() == png
+
+
+def test_screenshot_accepts_the_line_wrapping_base64_adds():
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 300
+    wrapped = "\n".join(
+        base64.b64encode(png).decode()[at:at + 76]
+        for at in range(0, len(base64.b64encode(png).decode()), 76)
+    )
+    ssh = FakeSsh(wrapped + "\n")
+
+    assert driver(ssh).screenshot() == png
+
+
+def test_screenshot_refuses_to_hand_back_an_error_message_as_a_png():
+    # b64decode without validation discards every character outside the
+    # alphabet, so simctl's complaint decodes to a few bytes of garbage and is
+    # written into evidence as though it were a frame. This particular
+    # complaint really does survive that: 41 alphabet characters, which is a
+    # legal length once the spaces and the colon are thrown away.
+    said = "Unable to boot device in current state: Shutdown\n"
+    assert base64.b64decode("".join(said.split())), "the string stopped being a trap"
+
+    ssh = FakeSsh(said)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).screenshot()
+
+    assert "Unable to boot device" in str(excinfo.value)
+
+
+def test_logs_since_reads_the_console_appended_since_this_launch():
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.launch()
+    ssh.outputs = ["flutter: hello\n", "log output\n"]
+    ssh.calls.clear()
+
+    text = d.logs_since(datetime.now(timezone.utc) - timedelta(seconds=90))
+
+    console = ssh.calls[0]
+    # From the offset the log stood at when this cell launched, so a previous
+    # cell's crash cannot fail this one. `tail -c +N` counts from one.
+    assert f"tail -c +{CONSOLE_MARK + 1} {ios.CONSOLE_LOG}" in console
+    assert "flutter: hello" in text
+
+
+def test_logs_since_also_asks_the_unified_log_for_a_window_in_seconds():
+    ssh = FakeSsh("", "log output\n")
+    when = datetime.now(timezone.utc) - timedelta(seconds=90)
+
+    text = driver(ssh).logs_since(when)
+
+    command = ssh.calls[1]
+    assert "log show" in command
+    assert "--last 9" in command  # 90 s plus the 5 s of slack
+    assert 'process == "Runner"' in command
+    assert "log output" in text
+
+
+# -- D3 -----------------------------------------------------------------------
+
+
+def test_the_d3_actions_refuse():
+    d = driver(FakeSsh())
+
+    for call in (lambda: d.background(5), d.rotate, lambda: d.airplane(True), d.kill_activity):
+        with pytest.raises(NotImplementedError):
+            call()
