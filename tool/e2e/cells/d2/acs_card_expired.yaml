@@ -5,7 +5,8 @@
 # APPROVES. That is filed as a template/sandbox issue; the coverage stays
 # here, on the challenge card, where card_expired is one of the ISSUER
 # DECLINES buttons. The button's text is the outcome token verbatim
-# (render.go's issuerOutcomes), which is what `acs:<outcome>` taps.
+# (`internal/challenge/render.go`'s issuerOutcomes -- there is no
+# internal/acs/), which is what `acs:<outcome>` taps.
 #
 # Retryable -- change_method -- so the sheet re-arms rather than resolving,
 # the same shape as the two PAN-driven change_method cells beside it.

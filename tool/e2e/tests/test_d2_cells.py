@@ -87,8 +87,8 @@ def test_every_pan_is_quoted_and_is_one_the_sandbox_still_recognises():
     # Two assertions on one line of YAML, and the order matters. A quoted-only
     # regex would simply not FIND an unquoted PAN, so the scenario check would
     # go green on exactly the file it was meant to catch -- and an unquoted PAN
-    # with a leading zero is YAML octal. So: find every `pan:` line first, then
-    # insist it is quoted, then check it.
+    # with a leading zero is YAML octal, which is the hazard M10 was about. So:
+    # find every `pan:` line first, then insist it is quoted, then check it.
     live = {"0000", "0002", "9995", "0119", "3220", "3063", "0051"}  # scenarios.go
     for path in sorted(D2.glob("*.yaml")):
         for line in path.read_text(encoding="utf-8").splitlines():

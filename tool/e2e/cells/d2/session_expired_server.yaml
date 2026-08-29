@@ -35,7 +35,11 @@
 # `result:cancelled` is covered by `expect rearmed` and by the merchant state,
 # not by the label check.
 #
-# Budget: about 30 minutes. It is one cell and it resumes like any other.
+# Expected duration is about 30 minutes, most of it the wait_expired. The
+# runner's budget for it is 3026 s (50.4 min) -- a hang backstop sized off
+# the action list, not a prediction, and deliberately clear of the real
+# time so a slow sweeper does not present as a hang. It is one cell and it
+# resumes like any other.
 id: session_expired_server
 platforms: [android, ios]
 card:
