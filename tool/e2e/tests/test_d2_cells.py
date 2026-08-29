@@ -102,14 +102,21 @@ def test_every_pan_is_quoted_and_is_one_the_sandbox_still_recognises():
             assert pan[-4:] in live, f"{path.name}: {pan} no longer has a scenario"
 
 
-def test_the_discovery_cells_say_so():
+@pytest.mark.parametrize("platform", ["android", "ios"])
+def test_the_discovery_cells_say_so(platform):
     # `<any>` is a licence to record rather than assert, and every cell that
     # holds one must explain in its own comment what is being discovered --
     # otherwise a pinned expectation quietly becomes an unpinned one.
-    for path in sorted(D2.glob("*.yaml")):
-        text = path.read_text(encoding="utf-8")
-        if '"<any>"' in text:
-            assert "DISCOVER" in text.upper() or "record" in text, path.name
+    #
+    # Asked of the PARSED expectation rather than of the file's text: a
+    # `<any>` reachable only through an `expected.ios` override is still a
+    # discovery cell, and grepping for the quoted literal would also be
+    # satisfied by the string appearing in a comment. Per platform, because
+    # an override can make one platform a discovery cell and not the other.
+    for cell in cells.load_cells(D2, platform):
+        if cell.expected_for(platform).label == cells.ANY_LABEL:
+            text = cell.path.read_text(encoding="utf-8")
+            assert "DISCOVER" in text.upper() or "record" in text, cell.id
 
 
 def test_no_ios_cell_asks_for_airplane_mode():

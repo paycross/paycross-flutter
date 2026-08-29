@@ -175,9 +175,15 @@ class FakeDriver(Driver):
         return self.labels.pop(0) if self.labels else "result:success:txn-1"
 
     def dump_tree(self):
+        # Recorded like any other call: the ORDER of the evidence against the
+        # rest of a cell is a real property -- the teardown replay has to
+        # happen after the failure dump, or the dump is a picture of the
+        # cleanup.
+        self.actions.append(("dump_tree", None))
         return b"<hierarchy/>"
 
     def screenshot(self):
+        self.actions.append(("screenshot", None))
         return b"\x89PNG"
 
     def logs_since(self, since):
@@ -2557,20 +2563,20 @@ def test_the_new_verbs_carry_their_own_budget(verb, seconds):
 DEFAULT_ACTIONS = "  - paste_token\n  - type_card\n  - tap_pay\n  - wait_result 60\n"
 
 
-def cell_dir_with(tmp_path, actions, cell_id="control"):
-    """A cell whose action list is exactly `actions`, everything else CELL's."""
-    body = textwrap.dedent(CELL.format(id=cell_id))
+def cell_dir_with(tmp_path, actions):
+    """A `control` cell whose action list is exactly `actions`, else CELL's."""
+    body = textwrap.dedent(CELL.format(id="control"))
     assert DEFAULT_ACTIONS in body, "CELL's action block moved; fix DEFAULT_ACTIONS"
     directory = tmp_path / "cells"
     directory.mkdir()
-    (directory / f"{cell_id}.yaml").write_text(
+    (directory / "control.yaml").write_text(
         body.replace(DEFAULT_ACTIONS, "".join(f"  - {a}\n" for a in actions)),
         encoding="utf-8",
     )
     return directory
 
 
-def dying_at_the_label(driver, error=None):
+def dying_at_the_label(driver):
     """Makes `wait_result` raise, which is how a cell dies after a rig toggle.
 
     `wait_label` really does raise on a timeout (`no_label_error`) rather than
@@ -2579,15 +2585,15 @@ def dying_at_the_label(driver, error=None):
     """
 
     def raise_it(timeout):
-        raise error or DriverError("the label never appeared")
+        raise DriverError("the label never appeared")
 
     driver.wait_label = raise_it
     return driver
 
 
-def result_json(tmp_path, cell_id="control"):
+def result_json(tmp_path):
     return json.loads(
-        next((tmp_path / "evidence").glob(f"*/{cell_id}/result.json")).read_text()
+        next((tmp_path / "evidence").glob("*/control/result.json")).read_text()
     )
 
 
@@ -2685,3 +2691,96 @@ def test_the_replay_covers_every_declared_teardown_pair(tmp_path):
         ("dont_keep_activities", False),
     ]
     assert result_json(tmp_path)["teardown_replayed"] == ["dont_keep_activities off"]
+
+
+def test_a_cell_that_reached_its_own_teardown_is_not_made_to_do_it_twice(tmp_path):
+    # The `off` has to be in the tail that never ran. This cell died at its
+    # last action, one step AFTER putting the radios back itself -- so there
+    # is nothing outstanding, and a replay here would toggle a setting the
+    # cell had already restored.
+    driver = dying_at_the_label(FakeDriver())
+    directory = cell_dir_with(
+        tmp_path,
+        ["paste_token", "airplane on", "tap_pay", "airplane off", "wait_result 60"],
+    )
+
+    run(directory, tmp_path, driver)
+
+    assert [a for a in driver.actions if a[0] == "airplane"] == [
+        ("airplane", True),
+        ("airplane", False),
+    ]
+    assert result_json(tmp_path)["teardown_replayed"] == []
+
+
+def test_a_cell_whose_cut_itself_failed_still_puts_the_device_back(tmp_path):
+    # The failing action counts as having run, and this is the case that
+    # decides it: `AndroidDriver.airplane` reads the setting back and raises
+    # if it disagrees, so a raise there means the flip is AMBIGUOUS rather
+    # than known not to have happened. Replaying the `off` over a setting
+    # that never went on costs nothing; skipping it over one that did costs
+    # the rest of the matrix.
+    class HalfCut(FakeDriver):
+        def airplane(self, on):
+            self.actions.append(("airplane", on))
+            if on:
+                raise DriverError("the radios did not go down")
+
+    driver = HalfCut()
+    directory = cell_dir_with(
+        tmp_path,
+        ["paste_token", "airplane on", "tap_pay", "wait_result 60", "airplane off"],
+    )
+
+    run(directory, tmp_path, driver)
+
+    assert [a for a in driver.actions if a[0] == "airplane"] == [
+        ("airplane", True),
+        ("airplane", False),
+    ]
+    assert result_json(tmp_path)["teardown_replayed"] == ["airplane off"]
+
+
+def test_a_cell_that_died_before_cutting_the_network_leaves_it_alone(tmp_path):
+    # The `on` has to have run. A cell that died before reaching it never
+    # touched the device's settings, and an `airplane off` replayed here
+    # would be the runner changing a device no cell asked it to change --
+    # which is the whole objection to having `launch` clear airplane mode.
+    driver = FakeDriver()
+
+    def refuse(card):
+        raise DriverError("the card form never appeared")
+
+    driver.type_card = refuse
+    directory = cell_dir_with(
+        tmp_path,
+        [
+            "paste_token",
+            "type_card",
+            "airplane on",
+            "tap_pay",
+            "wait_result 60",
+            "airplane off",
+        ],
+    )
+
+    run(directory, tmp_path, driver)
+
+    assert not [a for a in driver.actions if a[0] == "airplane"]
+    assert result_json(tmp_path)["teardown_replayed"] == []
+
+
+def test_the_teardown_replay_happens_after_the_failure_dump(tmp_path):
+    # The tree at the moment of failure is most of the diagnosis. Putting the
+    # radios back first would change the screen that dump is a picture of, and
+    # leave the reader looking at the cleanup instead of at the failure.
+    driver = dying_at_the_label(FakeDriver())
+    directory = cell_dir_with(
+        tmp_path,
+        ["paste_token", "airplane on", "tap_pay", "wait_result 60", "airplane off"],
+    )
+
+    run(directory, tmp_path, driver)
+
+    last_dump = max(i for i, a in enumerate(driver.actions) if a[0] == "dump_tree")
+    assert driver.actions.index(("airplane", False)) > last_dump

@@ -530,6 +530,36 @@ def _teardown_left_undone(actions: Sequence[Action], reached: int) -> list[Actio
     ]
 
 
+def _replay_teardown(
+    step: Step, actions: Sequence[Action], reached: int
+) -> tuple[list[str], list[str]]:
+    """Puts back what a cell turned on and did not live to turn off.
+
+    Answers with what was replayed and what to say about it, so the caller
+    decides where both go and this stays testable without a whole cell around
+    it. Best effort by construction: every failure here is recorded and none
+    of them is raised, because the cell already has a verdict and a device
+    left dirty must not replace the reason it was.
+    """
+    replayed: list[str] = []
+    problems: list[str] = []
+    for undone in _teardown_left_undone(actions, reached):
+        spelled = f"{undone.verb} {undone.arg}"
+        try:
+            _perform(step, undone)
+        except Exception as error:  # noqa: BLE001
+            problems.append(
+                f"teardown: could not replay {spelled!r} ({error}); "
+                "the device is left for the next cell to refuse"
+            )
+        else:
+            replayed.append(spelled)
+            problems.append(
+                f"teardown: the cell died before {spelled!r}, so the runner replayed it"
+            )
+    return replayed, problems
+
+
 def _on_or_off(verb: str, arg: str | None) -> bool:
     """`on` or `off`, with nothing else quietly read as `off`.
 
@@ -701,6 +731,12 @@ def run_cell(
         #: a launch that raises has run no action, and zero is the honest
         #: answer rather than an undefined name in the handler.
         index = 0
+        #: The same, for the object the replay performs through. It is built
+        #: below, after the token file; a failure before that point has run no
+        #: action, so `index` is 0 and there is nothing to put back either
+        #: way. Named here so the handler cannot raise NameError over it,
+        #: which is the worst place in this function to acquire a second bug.
+        step = None
         try:
             os.chmod(token_dir, 0o700)
             # The same guard the evidence tree puts on a directory name: this
@@ -824,21 +860,10 @@ def run_cell(
             # matrix goes unrun. `AndroidDriver.launch` still refuses a device
             # in airplane mode -- this makes that backstop rare rather than
             # replacing it, because a replay can fail too.
-            for undone in _teardown_left_undone(cell.actions, index):
-                spelled = f"{undone.verb} {undone.arg}"
-                try:
-                    _perform(step, undone)
-                except Exception as secondary:  # noqa: BLE001
-                    problems.append(
-                        f"teardown: could not replay {spelled!r} ({secondary}); "
-                        "the device is left for the next cell to refuse"
-                    )
-                else:
-                    teardown_replayed.append(spelled)
-                    problems.append(
-                        f"teardown: the cell died before {spelled!r}, so the "
-                        "runner replayed it"
-                    )
+            if step is not None:
+                replayed, said = _replay_teardown(step, cell.actions, index)
+                teardown_replayed.extend(replayed)
+                problems.extend(said)
         finally:
             try:
                 shutil.rmtree(token_dir)
