@@ -680,10 +680,10 @@ credential is read. Add a control cell, or check the cell's `platforms:` list.
 
 ## What is not here
 
-Phases 2–4: the decline and integration-error matrix, lifecycle,
-Google Pay, saved cards and version floors. The four lifecycle actions are
-declared in the driver protocol and raise `NotImplementedError`, so cell files
-can be written against a stable vocabulary before the drivers implement them.
+Phases 1–4: the decline and integration-error matrix, lifecycle, Google Pay,
+saved cards and version floors. The four lifecycle actions are declared in the
+driver protocol and raise `NotImplementedError`, so cell files can be written
+against a stable vocabulary before the drivers implement them.
 
 Known gaps, tracked for the next phase:
 
