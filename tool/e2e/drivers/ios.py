@@ -62,6 +62,12 @@ REMOTE_DIR = "$HOME/work/e2e/ios/run"
 CONSOLE_LOG = f"{REMOTE_DIR}/console.log"
 REMOTE_SHOT = f"{REMOTE_DIR}/shot.png"
 
+#: Separates the base64 frame from whatever simctl said on stderr, in the one
+#: answer that carries both. None of its characters are in the base64 alphabet,
+#: so it can never appear inside a frame. The two cannot simply be merged:
+#: simctl writes "Note: No display specified..." to stderr on success too.
+SHOT_STDERR = "[simctl-stderr]"
+
 CARDHOLDER = "cardholderName"
 CARD_NUMBER = "cardNumber"
 EXPIRY = "expiry"
@@ -163,9 +169,10 @@ class IosDriver(Driver):
         self._bundle = bundle
         self._session_id: str | None = None
         self._window: tuple[int, int] | None = None
-        #: Where the console log stood when this cell launched, so a previous
-        #: cell's output cannot be read as this one's.
-        self._console_from = 0
+        #: Where the console log stood at this cell's launch. None until then,
+        #: because reading from byte 0 would hand a previous cell's output to
+        #: crash_lines and fail every later cell in the matrix.
+        self._console_from: int | None = None
         self._console_pid: int | None = None
         # Every wait goes through this. The durations are the rig's real ones
         # and stay pinned by the tests asserting on what was recorded here.
@@ -812,26 +819,43 @@ class IosDriver(Driver):
 
         base64 rather than raw bytes because the same text transport carries
         everything else, and a PNG that travelled as text would be mangled.
+
+        simctl's stderr is captured and sent back after SHOT_STDERR rather than
+        discarded, and an empty frame is refused. Discarding it made every
+        failure silent: `&&` skipped base64, `rm -f` made the exit status 0, so
+        the answer was an empty string -- and `b64decode("")` is `b""`, which
+        evidence.write() would file as a 0-byte frame of the sheet. The two
+        halves are separated rather than merged because simctl writes to stderr
+        on success as well.
         """
         # Through a file rather than `screenshot -`: this Xcode writes a file
         # literally named `-` in the working directory instead of to stdout.
         raw = self._remote(
-            f"mkdir -p {REMOTE_DIR} && "
-            f"xcrun simctl io {self._udid} screenshot {REMOTE_SHOT} >/dev/null 2>&1 "
-            f"&& base64 < {REMOTE_SHOT}; rm -f {REMOTE_SHOT}"
+            f"mkdir -p {REMOTE_DIR}; "
+            f"said=$(xcrun simctl io {self._udid} screenshot {REMOTE_SHOT} "
+            f"2>&1 >/dev/null) && base64 < {REMOTE_SHOT}; "
+            f"printf '\n%s\n%s\n' {shlex.quote(SHOT_STDERR)} \"$said\"; "
+            f"rm -f {REMOTE_SHOT}"
         )
+        frame, marker, said = raw.partition(SHOT_STDERR)
         # `base64` wraps its output, so the newlines go before the alphabet is
-        # checked. Validated rather than trusted: without `validate` b64decode
-        # discards every character outside the alphabet, so simctl's complaint
-        # would decode to a few bytes of garbage and be written into evidence
-        # as though it were a frame.
-        packed = "".join(raw.split())
+        # checked.
+        packed = "".join(frame.split())
+        if not packed:
+            raise DriverError(
+                f"the simulator returned no screenshot for {self._udid}: simctl "
+                f"said {(said if marker else raw).strip()[:_EXCERPT]!r}"
+            )
+        # Validated rather than trusted: without `validate` b64decode discards
+        # every character outside the alphabet, so a complaint that reached the
+        # frame half would decode to a few bytes of garbage and be written into
+        # evidence as though it were a frame.
         try:
             return base64.b64decode(packed, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise DriverError(
                 "the simulator returned no usable screenshot: "
-                f"{raw.strip()[:_EXCERPT]!r}"
+                f"{frame.strip()[:_EXCERPT]!r}"
             ) from exc
 
     def logs_since(self, since: datetime) -> str:
@@ -848,6 +872,13 @@ class IosDriver(Driver):
         wrong, which is the same reason the Android driver asks the device to
         compute its own logcat cutoff.
         """
+        if self._console_from is None:
+            # Byte 0 is a previous cell's output, and crash_lines would count
+            # it: one cell's crash would then fail every later cell.
+            raise DriverError(
+                "no console mark; call launch() first, or the window would "
+                "start at a previous cell's output"
+            )
         seconds = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
         console = self._remote(
             f"tail -c +{self._console_from + 1} {CONSOLE_LOG} 2>/dev/null"

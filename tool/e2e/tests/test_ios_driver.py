@@ -195,6 +195,21 @@ def unlaunched(ssh, naps=None):
     return driver(ssh, naps, session_id=None)
 
 
+def launched(ssh, naps=None):
+    """A driver that has really been through `launch()`.
+
+    The console mark only exists on the far side of one, so anything reading
+    the console log has to go through it rather than have it set by hand. The
+    launch's own traffic is dropped so a test can index from its first call.
+    """
+    ssh.outputs = list(launch_outputs()) + ssh.outputs
+    d = ios.IosDriver(ssh=ssh, sleep=(naps if naps is not None else []).append)
+    d.launch()
+    ssh.calls.clear()
+    ssh.stdins.clear()
+    return d
+
+
 # -- _ssh, the one place the transport is real --------------------------------
 
 
@@ -451,7 +466,9 @@ def test_launch_says_the_udid_is_unknown_rather_than_that_it_is_not_booted():
         ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
 
     message = str(excinfo.value)
+    assert "names no simulator" in message
     assert "C311AFDC-25FA-44A2-A800-10EB5A1039E3" in message
+    # And not dressed up as a state simctl never reported.
     assert "Booted" not in message
 
 
@@ -977,22 +994,53 @@ def test_cancel_form_reaches_the_toolbar_item_and_not_the_challenge_bar():
 # -- evidence -----------------------------------------------------------------
 
 
+#: simctl says this on *stderr* even when it works, which is why the frame and
+#: the complaint have to arrive separated rather than merged.
+SIMCTL_NOTE = "Note: No display specified. Defaulting to display: LCD\n"
+
+
+def shot_response(frame="", said=SIMCTL_NOTE):
+    """What the screenshot round trip puts on stdout: frame, marker, stderr."""
+    return f"{frame}\n{ios.SHOT_STDERR}\n{said}"
+
+
 def test_screenshot_comes_back_base64_and_is_decoded():
     png = b"\x89PNG\r\n\x1a\n"
-    ssh = FakeSsh(base64.b64encode(png).decode())
+    ssh = FakeSsh(shot_response(base64.b64encode(png).decode()))
 
     assert driver(ssh).screenshot() == png
 
 
 def test_screenshot_accepts_the_line_wrapping_base64_adds():
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 300
-    wrapped = "\n".join(
-        base64.b64encode(png).decode()[at:at + 76]
-        for at in range(0, len(base64.b64encode(png).decode()), 76)
-    )
-    ssh = FakeSsh(wrapped + "\n")
+    encoded = base64.b64encode(png).decode()
+    wrapped = "\n".join(encoded[at:at + 76] for at in range(0, len(encoded), 76))
+    ssh = FakeSsh(shot_response(wrapped))
 
     assert driver(ssh).screenshot() == png
+
+
+def test_screenshot_names_what_simctl_said_when_it_took_no_frame():
+    # The failure that started this: simctl's stderr went to /dev/null, `&&`
+    # skipped base64, and `rm -f` made the exit status 0 -- so the answer was
+    # an empty string, b64decode("") is b"", and evidence.write() would file a
+    # 0-byte PNG as though it were a frame of the sheet.
+    ssh = FakeSsh(shot_response(said="Invalid device: NO-SUCH-UDID\n"))
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).screenshot()
+
+    message = str(excinfo.value)
+    assert "Invalid device" in message
+    assert "C311AFDC-25FA-44A2-A800-10EB5A1039E3" in message
+
+
+def test_screenshot_refuses_an_answer_that_never_arrived():
+    # No marker either: the round trip itself failed.
+    ssh = FakeSsh("")
+
+    with pytest.raises(DriverError):
+        driver(ssh).screenshot()
 
 
 def test_screenshot_refuses_to_hand_back_an_error_message_as_a_png():
@@ -1012,12 +1060,21 @@ def test_screenshot_refuses_to_hand_back_an_error_message_as_a_png():
     assert "Unable to boot device" in str(excinfo.value)
 
 
+def test_logs_since_before_launch_refuses_to_read_the_whole_console_log():
+    # Byte 0 is a previous cell's output, and crash_lines would count it: one
+    # cell's crash would fail every later cell in the matrix.
+    ssh = FakeSsh()
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).logs_since(datetime.now(timezone.utc))
+
+    assert "launch()" in str(excinfo.value)
+    assert ssh.calls == []
+
+
 def test_logs_since_reads_the_console_appended_since_this_launch():
-    ssh = FakeSsh(*launch_outputs())
-    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
-    d.launch()
-    ssh.outputs = ["flutter: hello\n", "log output\n"]
-    ssh.calls.clear()
+    ssh = FakeSsh("flutter: hello\n", "log output\n")
+    d = launched(ssh)
 
     text = d.logs_since(datetime.now(timezone.utc) - timedelta(seconds=90))
 
@@ -1032,7 +1089,7 @@ def test_logs_since_also_asks_the_unified_log_for_a_window_in_seconds():
     ssh = FakeSsh("", "log output\n")
     when = datetime.now(timezone.utc) - timedelta(seconds=90)
 
-    text = driver(ssh).logs_since(when)
+    text = launched(ssh).logs_since(when)
 
     command = ssh.calls[1]
     assert "log show" in command
