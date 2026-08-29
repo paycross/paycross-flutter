@@ -41,19 +41,42 @@ than a line to add.
 
 `flutter build apk --release --dart-define=PAYCROSS_E2E=true`
 
-| build | bytes | |
+| build | bytes | rounded |
 |---|---|---|
 | `app-debug.apk` | 154,241,136 | 147 MiB |
 | `app-release.apk` | 48,002,203 | 45.8 MiB |
 
-A 69% drop: R8, resource shrinking, and icon tree-shaking (MaterialIcons-Regular
-1,645,184 → 1,420 bytes).
+**The 69% drop is mostly not R8.** It is dominated by debug→release itself.
+Uncompressed, entry by entry:
+
+| entry | debug | release | what changed |
+|---|---|---|---|
+| `lib/` | 123,640,432 | 46,098,380 | JIT engine (`libflutter.so` 108.4 MB) + `libVkLayer_khronos_validation.so` (15.2 MB) give way to the AOT engine (32.9 MB) + `libapp.so` (13.2 MB) |
+| `kernel_blob.bin` + `isolate_snapshot_data` | 53,573,219 | absent | the Dart is AOT-compiled into `libapp.so` instead |
+| `classes*.dex` | 26,677,344 (8 files) | 2,592,804 (1 file) | **R8's isolated contribution** |
+| `MaterialIcons-Regular.otf` | 1,645,184 | 1,420 | icon tree-shaking, which is release-only regardless of minification |
+| `resources.arsc` | 581,972 | 241,704 | resource shrinking |
+
+So R8 shows up in the dex column and resource shrinking in `resources.arsc`;
+everything else is the engine and the AOT switch, which a merchant gets from
+`--release` whether or not they minify. Separating the two exactly would need a
+non-minified release APK as a control, and **that build was not made** — the
+attribution above is by entry, not by experiment.
 
 ### The keep rules reached the build
 
-From `example/build/app/outputs/mapping/release/mapping.txt`. The classes that
-cross the `Intent` map to **themselves**; everything around them is renamed,
-which is what proves the rules were applied rather than that R8 did nothing:
+The direct proof sits beside `mapping.txt` in
+`example/build/app/outputs/mapping/release/`. `configuration.txt` records every
+rule file R8 actually consumed:
+**lines 118-131** reproduce `paycross-android-0.3.3/proguard.txt` — the AAR's
+consumer rules — verbatim, and **lines 93-109** do the same for Flutter's
+`flutter_proguard_rules.pro`. (Lines 110-117 are the example's own empty
+`proguard-rules.pro`, comment and all, which is how you can tell it contributed
+nothing.)
+
+`mapping.txt` then shows the effect. The classes that cross the `Intent` map to
+**themselves**; everything around them is renamed, which is what proves the
+rules were applied rather than that R8 did nothing:
 
 ```
 com.paycross.sdk.PayCrossResult            -> com.paycross.sdk.PayCrossResult:
@@ -68,11 +91,18 @@ com.paycross.flutter.PayCrossPlugin        -> l5.b:
 ```
 
 `com.paycross.sdk.PayCrossContract` maps to `R8$$REMOVED$$CLASS$$419`. That is
-R8 inlining both of its methods into their call sites in `PayCrossPlugin` —
-`createIntent` at the launch (`:163`) and `parseResult` in `deliver` (`:200`) —
-which it can do because the class holds no state and is instantiated fresh at
-each use. The classes the consumer rules name are the ones that must survive an
-`Intent`, and they did.
+R8 inlining both of its methods into synthetic lambdas derived from both call
+sites — it holds no state and is instantiated fresh at each use — and
+`mapping.txt` says where the code went:
+
+```
+parseResult    8 frames -> com.paycross.flutter.PayCrossPlugin$$ExternalSyntheticLambda0 -> l5.a
+createIntent   3 frames -> com.paycross.flutter.generated
+                             .PayCrossHostApi$Companion$$ExternalSyntheticLambda1 -> m5.d
+```
+
+The classes the consumer rules name are the ones that must survive an `Intent`,
+and they did.
 
 ### The live run
 
@@ -158,7 +188,7 @@ COCOAPODS: 1.17.0
 ### The artifact
 
 `flutter build ios --release --no-codesign --dart-define=PAYCROSS_E2E=true`,
-Xcode build 26.5 s:
+Xcode build time 26.5 s:
 
 ```
 ✓ Built build/ios/iphoneos/Runner.app (17.2MB)
@@ -178,8 +208,11 @@ $ otool -L Runner.app/Runner
   @rpath/Flutter.framework/Flutter                     (current version 0.0.0)
 ```
 
-So Swift 6 strict concurrency, dead-stripping and the module maps all survive an
-optimised whole-module build. That is the whole of what the iOS half proves.
+What a successful release link carries is dead-stripping and the module maps:
+neither removed a symbol the app needs, and both frameworks resolve. Swift 6
+strict concurrency is *not* part of that — it is enforced at compile time in
+every configuration, debug included, so this build re-confirms it rather than
+proving anything new about it. That is the whole of what the iOS half proves.
 
 Two build-time notes, neither of them an SDK defect and neither filed:
 

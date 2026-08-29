@@ -99,11 +99,13 @@ the debug build is not this build's. `--app` implies `--all`, which is the same
 answer without having to name a build, but naming it is what makes the evidence
 say which build passed.
 
-The keep rules are checkable statically as well, in
-`example/build/app/outputs/mapping/release/mapping.txt`: the classes that cross
-the `Intent` map to *themselves* while everything around them is renamed. That
-is evidence the rules were applied; the live run is the evidence they were
-enough.
+The keep rules are checkable statically as well. Beside `mapping.txt` sits
+`configuration.txt`, which records every rule file R8 consumed, and the SDK's
+consumer rules appear in it verbatim — lines 118-131 of the run this section
+documents, under `paycross-android-0.3.3/proguard.txt`. `mapping.txt` then
+shows the effect: the classes that cross the `Intent` map to *themselves* while
+everything around them is renamed. That is evidence the rules were applied; the
+live run is the evidence they were enough.
 
 **iOS is build-only, and cannot be otherwise.** Flutter refuses any non-debug
 build for the iOS simulator — `BuildInfo.supportsSimulator` is
@@ -680,10 +682,11 @@ credential is read. Add a control cell, or check the cell's `platforms:` list.
 
 ## What is not here
 
-Phases 1–4: the decline and integration-error matrix, lifecycle, Google Pay,
-saved cards and version floors. The four lifecycle actions are declared in the
-driver protocol and raise `NotImplementedError`, so cell files can be written
-against a stable vocabulary before the drivers implement them.
+Phases 1–4, apart from the release builds above: the decline and
+integration-error matrix, lifecycle, Google Pay, saved cards and version
+floors. The four lifecycle actions are declared in the driver protocol and
+raise `NotImplementedError`, so cell files can be written against a stable
+vocabulary before the drivers implement them.
 
 Known gaps, tracked for the next phase:
 
