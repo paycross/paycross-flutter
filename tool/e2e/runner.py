@@ -614,7 +614,7 @@ def run_cell(
         # 0700 directory, 0600 file, outside the evidence root, gone in the
         # finally even when the driver dies mid-cell.
         token_dir = Path(tempfile.mkdtemp(prefix="paycross-e2e-"))
-        step, verb = "00-launch", "launch"
+        stem, verb = "00-launch", "launch"
         try:
             os.chmod(token_dir, 0o700)
             # The same guard the evidence tree puts on a directory name: this
@@ -628,11 +628,11 @@ def run_cell(
             # and the actions, and the merchant API bounds its own calls.
             clock = time.monotonic()
             driver.launch()
-            #: One object rather than five keyword arguments, because
-            #: `wait_expired` needs the merchant API and the token file as
-            #: well as the driver. `secrets` is the cell's own list, so what
-            #: that verb learns is scrubbed from everything filed afterwards.
-            what = Step(
+            # One object rather than five keyword arguments, because
+            # `wait_expired` needs the merchant API and the token file as well
+            # as the driver. `secrets` is the cell's own list, so what that
+            # verb learns is scrubbed from everything filed afterwards.
+            step = Step(
                 driver=driver,
                 sandbox=sandbox,
                 card=cell.card,
@@ -642,13 +642,13 @@ def run_cell(
                 secrets=secrets,
             )
             for index, action in enumerate(cell.actions, start=1):
-                step, verb = f"{index:02d}-{action.verb}", action.verb
+                stem, verb = f"{index:02d}-{action.verb}", action.verb
                 if time.monotonic() - clock >= budget:
                     raise BudgetExceeded(
-                        f"the cell used its {budget:.1f}s budget before {step}"
+                        f"the cell used its {budget:.1f}s budget before {stem}"
                     )
 
-                answer = _perform(what, action)
+                answer = _perform(step, action)
                 if action.verb == "wait_result":
                     # Scrubbed where it is read: the label comes off the
                     # device, and main prints it. Doing it here means the
@@ -680,16 +680,16 @@ def run_cell(
                 # nothing left to observe, so the cell ends here rather than
                 # carrying on blind.
                 dump = driver.dump_tree()
-                write(f"{step}.uix", dump)
+                write(f"{stem}.uix", dump)
                 if _may_screenshot(verb, dump, platform, token):
                     try:
-                        write(f"{step}.png", driver.screenshot())
+                        write(f"{stem}.png", driver.screenshot())
                     except Exception as error:  # noqa: BLE001
                         # A frame is the least of what a cell collects, and
                         # the cell still has a verdict to reach.
                         problems.append(f"screenshot: {error}")
                 elif verb in SHOT_VERBS:
-                    screenshots_skipped.append(step)
+                    screenshots_skipped.append(stem)
             reached_the_end = True
         except Exception as error:  # noqa: BLE001
             # DriverError is the expected shape, but subprocess.TimeoutExpired
@@ -707,19 +707,19 @@ def run_cell(
                 # Best effort by now: a dump that fails here is the second
                 # failure in a row and costs only a diagnosis.
                 dump = driver.dump_tree()
-                write(f"{step}-failed.uix", dump)
+                write(f"{stem}-failed.uix", dump)
             except Exception as secondary:  # noqa: BLE001
                 problems.append(f"driver: no dump after the failure ({secondary})")
             else:
                 if _may_screenshot(verb, dump, platform, token):
                     try:
-                        write(f"{step}-failed.png", driver.screenshot())
+                        write(f"{stem}-failed.png", driver.screenshot())
                     except Exception as secondary:  # noqa: BLE001
                         problems.append(
                             f"screenshot: none after the failure ({secondary})"
                         )
                 elif verb in SHOT_VERBS:
-                    screenshots_skipped.append(f"{step}-failed")
+                    screenshots_skipped.append(f"{stem}-failed")
         finally:
             try:
                 shutil.rmtree(token_dir)
