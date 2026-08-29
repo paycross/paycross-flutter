@@ -18,7 +18,15 @@ from typing import Any, Iterable
 #: A session token is a JWT: three base64url segments. Anchored on the `eyJ`
 #: that every `{"` header base64-encodes to, and with a length floor so an
 #: ordinary dotted identifier is not mangled.
-JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}")
+#:
+#: One trailing segment is enough, not two. iOS truncates an element's
+#: accessibility value at 512 characters, so the example's token field reaches
+#: a `.uix` as a header, a dot and a few hundred characters of payload, with no
+#: signature at all -- and a three-segment rule let 512-character prefixes of
+#: live session tokens through into every iOS cell of the first live run
+#: (2026-08-29). Still a floor of sixteen characters per segment, which is what
+#: keeps `eyJshort.a.b` and ordinary dotted identifiers intact.
+JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_-]{16,}(?:\.[A-Za-z0-9_-]{16,})+")
 
 REDACTED = b"[REDACTED-SESSION-TOKEN]"
 
@@ -26,6 +34,13 @@ REDACTED = b"[REDACTED-SESSION-TOKEN]"
 #: Nothing that short is a credential worth protecting, and blanket-replacing
 #: a three-character string would corrupt every artifact it appears in.
 MIN_SECRET_CHARS = 8
+
+#: How much of a known secret has to appear before a prefix of it is treated as
+#: the secret. A device that truncated a token inside its first segment leaves
+#: no dot for the shape rule to see, and the runner knows the exact string it
+#: handed over. Long enough that the header every RS256 JWT shares -- and which
+#: carries nothing -- is not on its own a match.
+MIN_SECRET_PREFIX_CHARS = 48
 
 
 def redact(data: bytes, secrets: Iterable[str | None] = ()) -> bytes:
@@ -40,7 +55,8 @@ def redact(data: bytes, secrets: Iterable[str | None] = ()) -> bytes:
     session token it just minted. The shape rule alone is not enough: it wants
     sixteen characters a segment, so a shorter token slips through it, and a
     log line can wrap a token in a way no regex was written for. A caller who
-    holds the exact string should say so.
+    holds the exact string should say so. A long *prefix* of that string counts
+    too: a device that truncated the token still leaked most of it.
 
     Byte-level and encoding-agnostic, so a PNG passes through untouched. That
     is deliberate rather than lucky: a screenshot cannot be redacted, so the
@@ -48,8 +64,34 @@ def redact(data: bytes, secrets: Iterable[str | None] = ()) -> bytes:
     """
     for secret in secrets:
         if secret and len(secret) >= MIN_SECRET_CHARS:
-            data = data.replace(secret.encode("utf-8"), REDACTED)
+            data = _replace_prefixes(data, secret.encode("utf-8"))
     return JWT_RE.sub(REDACTED, data)
+
+
+def _replace_prefixes(data: bytes, secret: bytes) -> bytes:
+    """Replaces `secret`, and any long prefix of it, wherever it appears.
+
+    A whole-string replace misses a token the device truncated, and iOS
+    truncates an accessibility value at 512 characters. Each match is extended
+    as far as the secret keeps agreeing, so what is removed is exactly the part
+    that was really there -- a shorter run is not padded out, and a longer one
+    is not left with a tail.
+    """
+    if len(secret) < MIN_SECRET_PREFIX_CHARS:
+        return data.replace(secret, REDACTED)
+    head = secret[:MIN_SECRET_PREFIX_CHARS]
+    out = bytearray()
+    at = 0
+    while (found := data.find(head, at)) >= 0:
+        end = len(head)
+        while end < len(secret) and data[found + end : found + end + 1] == (
+            secret[end : end + 1]
+        ):
+            end += 1
+        out += data[at:found] + REDACTED
+        at = found + end
+    out += data[at:]
+    return bytes(out)
 
 
 def _now() -> str:

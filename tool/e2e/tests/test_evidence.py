@@ -67,6 +67,51 @@ def test_redacts_a_literal_secret_the_shape_rule_misses():
     assert b"[REDACTED-SESSION-TOKEN]" in out
 
 
+#: What WebDriverAgent actually put in a `.uix` on 2026-08-29: iOS truncates
+#: an element's accessibility value at 512 characters, so the example's token
+#: field carries a header, a dot and about 420 characters of payload -- and no
+#: signature. Two segments, not three.
+TRUNCATED_JWT = JWT[: JWT.index(".", JWT.index(".") + 1)][:512]
+
+
+def test_redacts_a_token_the_device_truncated_before_its_signature():
+    # This leaked 512-character session-token prefixes into every iOS cell's
+    # dumps in the first live run: JWT_RE wanted three segments and the
+    # literal-secret replace wanted the whole string, so a prefix was invisible
+    # to both.
+    assert TRUNCATED_JWT.count(".") == 1
+    dump = f'<node value="{TRUNCATED_JWT}"/>'.encode()
+
+    out = evidence.redact(dump)
+
+    assert TRUNCATED_JWT.encode() not in out
+    assert b"[REDACTED-SESSION-TOKEN]" in out
+
+
+def test_redacts_a_prefix_of_a_secret_it_was_handed():
+    # The shape rule cannot see a token truncated inside its first segment --
+    # there is no dot yet. The caller holds the exact string, so a prefix of
+    # it is still recognisable.
+    # A strict prefix: the signature and the end of the payload are gone, as a
+    # device that truncated the value would leave them.
+    prefix = JWT[: JWT.index(".", JWT.index(".") + 1) - 6]
+    assert prefix != JWT and len(prefix) > 40
+    dump = f'<node value="{prefix}"/>'.encode()
+
+    out = evidence.redact(dump, secrets=[JWT])
+
+    assert prefix.encode() not in out
+    assert b"[REDACTED-SESSION-TOKEN]" in out
+
+
+def test_a_short_head_shared_with_a_secret_is_not_a_leak():
+    # Every RS256 JWT starts the same way. Redacting on a handful of shared
+    # characters would blank unrelated evidence.
+    text = b'<node value="eyJhbGci"/>'
+
+    assert evidence.redact(text, secrets=[JWT]) == text
+
+
 def test_a_secret_too_short_to_be_a_token_is_left_alone():
     # Blanket-replacing a three-character string would corrupt every artifact
     # it appears in, and nothing that short is a credential worth protecting.
