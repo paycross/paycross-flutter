@@ -1,0 +1,52 @@
+# The provider never answers. `internal/worker/init.go`'s
+# `case sandboxcore.ScenarioTimeout` returns errTimeoutSimulation BEFORE
+# publishing any event (init.go:88-89 on origin/main at 1d45a9a; the local
+# checkout is seven commits behind and has it at :75-76 -- read origin/main),
+# so nothing is ever emitted: the SQS message is redelivered at ~180 s and
+# ~360 s and DLQs at ~540 s, and what the merchant eventually sees comes from
+# core's `payments:recover-stuck-transactions` (every 5 minutes, over rows
+# older than 5 minutes), not from the provider.
+#
+# This is the only path in the whole matrix that exercises the polling
+# deadline against a genuinely unresponsive backend rather than a cut cable.
+#
+# Two things follow, and both shape what this cell may assert.
+#
+# 1. The Dart side resolves on the SDK's OWN deadline, not the backend's.
+#    iOS: FlowLimits.pollDeadline = 480 s (PaymentFlowReducer.swift:8-15) ->
+#    .failed(recovery: .retry). Android's equivalent has not been read, so
+#    the label is DISCOVERED here rather than presumed. Phase 3 pins it.
+# 2. The transaction reaches status `failed` with `failure: null`.
+#    markAsFailed writes metadata['failure_reason'] while FormatsFailure
+#    reads metadata['error'], so no failure block is ever rendered -- which
+#    contradicts the published schema and is filed as an issue on
+#    paycross-core / api-docs. Asserting failure_recovery here would be
+#    asserting the bug.
+#
+# wait_result 600 clears the iOS deadline with room; the cell's budget
+# absorbs it because wait_result is a TIMED_VERB.
+#
+# `txn_status` is deliberately absent: at the moment the runner reads the
+# session the transaction may still be `processing` (core's recovery job runs
+# on a 5-minute cadence) and asserting either value would make the cell a
+# race.
+id: timeout_provider_never_answers
+platforms: [android, ios]
+card:
+  pan: "4111111111150051"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - wait_result 600
+expected:
+  label: "<any>"
+  merchant:
+    session_status: open
+    txn_count: 1
+    no_succeeded_txn: true

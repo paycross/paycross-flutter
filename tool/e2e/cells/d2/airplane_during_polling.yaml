@@ -1,0 +1,47 @@
+# The money moves and the shopper is told it did not.
+#
+# The challenge is approved, the provider authorizes, and THEN the network
+# goes. The SDK is left polling a status endpoint it cannot reach and
+# eventually gives up on its own deadline (iOS: 480 s, and the catch at
+# PaymentFlowRunner.swift:179-182 swallows every network error until then).
+# Meanwhile the merchant API has a SUCCEEDED transaction and a COMPLETED
+# session.
+#
+# That gap -- Dart reporting a failure over a payment that went through -- is
+# the single most important thing this matrix can measure for a merchant, and
+# it is why no_succeeded_txn is `false` here: this cell asserts that the money
+# DID move, and records what Dart said about it.
+#
+# <any> because the label is the measurement, not the assertion. Phase 3 pins
+# it per platform.
+#
+# Ordering caveat to check on the first run: `acs:approve` returns as soon as
+# the button is tapped, so there is a short race between the tap and
+# `airplane on` in which the authorization may not have reached the provider.
+# If the merchant state comes back open/failed instead, insert a short `wait`
+# before `airplane on` and re-run -- and say so here rather than silently
+# loosening the expectation.
+id: airplane_during_polling
+platforms: [android]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - acs:approve
+  - airplane on
+  - wait_result 600
+  - airplane off
+expected:
+  label: "<any>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    no_succeeded_txn: false

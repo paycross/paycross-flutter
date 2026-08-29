@@ -1,0 +1,25 @@
+# The shopper changes their mind before paying anything. The one cancel path
+# D0 does not cover -- it cancels mid-challenge, after a transaction exists.
+# Here nothing was ever submitted, so txn_count is 0 and that is the
+# assertion: a session that grew a transaction from an abandoned form would
+# be a real finding.
+id: cancel_on_form
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - cancel_form
+  - wait_result 120
+expected:
+  label: "result:cancelled"
+  merchant:
+    session_status: open
+    txn_count: 0
+    no_succeeded_txn: true

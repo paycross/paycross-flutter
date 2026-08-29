@@ -1,0 +1,37 @@
+# The other terminal authentication outcome. do_not_retry, so the sheet
+# resolves rather than re-arming -- the mirror of D0's fraud_suspected cell
+# on the authentication side rather than the issuer side.
+#
+# D0 already covers authentication_failed (which re-arms) and fraud_suspected;
+# a reader checking D2 against the spec's ACS trio finds this in the place of
+# authentication_failed for that reason, and do_not_honor is the third.
+#
+# threeds.outcome is left unasserted on purpose: a rejection is not the same
+# as D0's not_authenticated and nothing has measured which token the sandbox
+# records. flow is asserted because a challenge is a challenge.
+id: acs_authentication_rejected
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - acs:authentication_rejected
+  - wait_result 180
+expected:
+  label: "result:failure:do_not_retry:<txn>"
+  merchant:
+    session_status: open
+    txn_count: 1
+    txn_status: failed
+    no_succeeded_txn: true
+    failure_recovery: do_not_retry
+    threeds:
+      flow: challenge
+      liability_shifted: false

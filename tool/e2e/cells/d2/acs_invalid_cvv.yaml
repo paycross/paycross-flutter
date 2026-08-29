@@ -1,0 +1,46 @@
+# A CVV failure, reached through the ACS page rather than through a PAN.
+#
+# `declined_invalid_cvv.json` (PAN ...0127) no longer declines: payment-sandbox
+# 66db130 removed its magic entry, so it falls through DefaultOutcome and
+# APPROVES. That is filed as a template/sandbox issue; the coverage stays
+# here, on the challenge card, where invalid_cvv is one of the ISSUER DECLINES
+# buttons.
+#
+# Retryable -- change_method -- so the sheet re-arms rather than resolving.
+#
+# No threeds assertion: this is an authorization decline that follows a
+# successful authentication, and what the sandbox records in threeds_result
+# for that pairing has never been measured. The run records it; Phase 3 pins
+# it if it proves stable.
+id: acs_invalid_cvv
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - acs:invalid_cvv
+  - expect rearmed
+  - cancel_form
+  - wait_result 120
+expected:
+  label: "result:cancelled"
+  rearmed: true
+  merchant:
+    session_status: open
+    txn_count: 1
+    txn_status: failed
+    no_succeeded_txn: true
+    failure_code: invalid_cvv
+    failure_recovery: change_method
+    # Explicitly absent, not merely unasserted. CVV failures are scheme-
+    # specific alphanumerics (Visa's N7), not ISO 8583 decline codes, so
+    # canonical.go deliberately maps this one to no network_decline_code at
+    # all -- and `null` is how a cell says "this field must not be there".
+    network_decline_code: null

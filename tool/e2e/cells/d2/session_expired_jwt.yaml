@@ -1,0 +1,42 @@
+# The token is past its own `exp` while its session is still open.
+#
+# The two clocks differ on purpose: config('payments.session_ttl') puts the
+# JWT's exp at mint + 900 s (PaymentSession.php:127,138) while the session's
+# expires_at is mint + 1200 s -- session_ttl + session_grace_period, both
+# env-overridable, so re-read config/payments.php if this cell ever starts
+# timing out (PaymentSession.php, the `creating` hook). Waiting out the
+# difference is the only way to reach this state, and it is why `wait` exists
+# at all.
+#
+# iOS checks isExpired() at PaymentSheet.swift:49-51 -- before `present` on
+# line 65 -- so NO SHEET EVER APPEARS. `present_token` is used rather than
+# `paste_token` for exactly that reason: waiting 60 s for a card form that is
+# never coming would report "the card form never appeared" instead of the
+# label already on screen.
+#
+# <any> because only iOS's answer has been read in source and neither has
+# been measured on a device: the cell records what each platform says and
+# Phase 3 pins it. Both are expected to reach a `restart` recovery.
+#
+# Distinguished from its sibling `session_expired_server` by <txn>: this
+# session holds no transaction, so the label's transaction field is empty.
+# Only one of the two can name a transaction.
+id: session_expired_jwt
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - wait 960
+  - present_token
+  - wait_result 90
+expected:
+  label: "<any>"
+  merchant:
+    session_status: open
+    txn_count: 0
+    no_succeeded_txn: true

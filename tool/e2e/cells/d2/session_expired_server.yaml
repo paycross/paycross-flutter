@@ -1,0 +1,66 @@
+# The SERVER has expired the session, and the token presented is still valid.
+#
+# Three moving parts, in order:
+#
+#  1. A retryable decline first, so the session holds a FAILED transaction
+#     and this cell's <txn> is non-empty -- which is the only thing that
+#     distinguishes it from session_expired_jwt. The do-not-honor PAN is used
+#     rather than a challenge because it reaches the same state in a third of
+#     the time. `payments:expire-sessions` does not look at transactions
+#     (ExpirePaymentSessions.php:29-31), so a session holding one expires
+#     exactly like an empty one.
+#  2. `wait_expired` polls the merchant API until the every-minute job flips
+#     the session, AND rewrites the token file from every read on the way --
+#     an open session re-mints a token on every GET
+#     (PaymentSessionResource.php, gated on effective_status === OPEN --
+#     ANY non-open status returns a null token, and `effective_status` reads
+#     `expired` as soon as expires_at passes, BEFORE the sweeper runs), so
+#     the last read before the flip leaves a token good for another ~900 s.
+#     Without that refresh this cell would measure the JWT expiry again
+#     rather than the server's verdict.
+#  3. `relaunch` clears the example's token field and the previous result, so
+#     `present_token` presents into a clean app.
+#
+# SessionResolution.swift:37-40 answers `expired` with
+# .failed(transactionID: resumeID, recovery: .restart) AFTER presenting the
+# sheet, so on iOS a sheet does appear briefly here. present_token does not
+# require one either way.
+#
+# <any> because Android's resolution path has not been read and neither
+# platform has been measured: the cell records the label and Phase 3 pins it.
+# Both are expected to reach a `restart` recovery, and this one -- unlike
+# session_expired_jwt -- should be able to name the transaction.
+#
+# The runner compares only the LAST wait_result's label; the intermediate
+# `result:cancelled` is covered by `expect rearmed` and by the merchant state,
+# not by the label check.
+#
+# Budget: about 30 minutes. It is one cell and it resumes like any other.
+id: session_expired_server
+platforms: [android, ios]
+card:
+  pan: "4111111111150002"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - expect rearmed
+  - cancel_form
+  - wait_result 120
+  - wait_expired 1400
+  - relaunch
+  - present_token
+  - wait_result 90
+expected:
+  label: "<any>"
+  rearmed: true
+  merchant:
+    session_status: expired
+    txn_count: 1
+    txn_status: failed
+    no_succeeded_txn: true

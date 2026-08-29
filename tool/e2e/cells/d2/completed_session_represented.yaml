@@ -1,0 +1,49 @@
+# A session that has already been paid, presented a second time.
+#
+# This is the one integration error with real money on the other side of it.
+# SessionResolution.swift:35-52 resolves a `completed` session carrying a
+# transaction to .resume -- it polls that transaction's status rather than
+# submitting anything -- and the doc comment at :14-20 says why in as many
+# words: "the consequence of getting it wrong is a second authorization
+# against a session that has already been paid". Android mirrors it in
+# PaymentViewModel.initialize.
+#
+# So the assertion that matters is txn_count: 1. A second transaction here
+# would be a shopper charged twice, and it is the most serious thing this
+# matrix can find. `no_succeeded_txn: false` is a real assertion beside it:
+# this session MUST hold a transaction that moved money, or the re-present
+# was not a re-present.
+#
+# <any> for the label alone: a resumed success and a refusal are both
+# defensible answers and neither has been measured, so the cell records what
+# each platform says while the merchant assertions carry the finding. Phase 3
+# pins the label per platform.
+#
+# The documented empty-transactionId success -- a completed session with NO
+# transaction (SessionResolution.swift:46-50) -- is deliberately not covered:
+# it needs a session that completed without ever creating a transaction, and
+# nothing the campaign can mint produces one.
+id: completed_session_represented
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - wait_result 180
+  - relaunch
+  - present_token
+  - wait_result 180
+expected:
+  label: "<any>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    no_succeeded_txn: false

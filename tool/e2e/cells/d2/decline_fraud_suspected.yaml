@@ -1,0 +1,36 @@
+# A TERMINAL decline: recovery=do_not_retry is not retryable, so the sheet
+# resolves and Dart gets a PayCrossFailure. The counterpart to the two
+# change_method cells beside it, and the one shape a merchant must handle
+# without offering a retry.
+#
+# PAN-driven: 0119 is OutcomeFraudSuspected (scenarios.go:23), reached before
+# 3DS, so no threeds_result is asserted.
+#
+# Caveat, the same one D0's ACS fraud cell carries: Android's
+# Recovery.fromString fails closed to DO_NOT_RETRY for any token it does not
+# know, so the label alone is weak evidence there. The merchant API's
+# failure.recovery, asserted below, is the load-bearing half.
+id: decline_fraud_suspected
+platforms: [android, ios]
+card:
+  pan: "4111111111150119"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - wait_result 180
+expected:
+  label: "result:failure:do_not_retry:<txn>"
+  merchant:
+    session_status: open
+    txn_count: 1
+    txn_status: failed
+    no_succeeded_txn: true
+    failure_code: fraud_suspected
+    failure_recovery: do_not_retry
+    network_decline_code: "59"
