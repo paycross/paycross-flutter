@@ -101,8 +101,9 @@ CARDHOLDER = "Cardholder name input"
 
 #: Rendered by Google Play services, not by the SDK -- so it moves with the
 #: GMS version and with the device locale. The SDK's own testTag is invisible
-#: to uiautomator because testTagsAsResourceId is never set; that is filed
-#: upstream, and until it lands this is the only handle there is. Confirmed
+#: to uiautomator because testTagsAsResourceId is never set; that is filed as
+#: payment-android-sdk#26, and until it lands this is the only handle there
+#: is. Confirmed
 #: against this campaign's own dumps, most recently 2026-08-30.
 GOOGLE_PAY_DESC = "Pay with GPay"
 

@@ -381,8 +381,8 @@ the SDK — so it moves with the **GMS version** and with the **device locale**,
 and it can break without a line changing in either repo. The SDK does tag its
 own button (`Modifier.testTag("google_pay_button")`), but
 `testTagsAsResourceId` is set nowhere in either repo, so Compose test tags are
-invisible to `uiautomator`; that is filed upstream, and until it lands this is
-the only handle there is. The node is also **not clickable** — the click
+invisible to `uiautomator`; that is filed as **payment-android-sdk#26**, and
+until it lands this is the only handle there is. The node is also **not clickable** — the click
 handler lives on the `AndroidView`, not on a Compose node — so it is tapped at
 its bounds centre.
 
