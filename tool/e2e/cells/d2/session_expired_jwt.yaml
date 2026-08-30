@@ -32,6 +32,12 @@
 # landed past expires_at, and the session read `expired`. It had won the same
 # race twice before, so the cell was flaky roughly one run in three.
 #
+# The point is that BOTH readings are legitimate. The cell waits out the JWT's
+# 900 s and then reads a session that dies at 1200 s, so the read may land
+# either side of 1200 s and the server-side status is whichever it happened to
+# catch. It is incidental to what this cell measures -- the JWT-expiry path --
+# and asserting it was asserting a coin flip.
+#
 # Relaxing it loses nothing. `txn_count: 0` is what tells this cell apart from
 # session_expired_server, which holds one transaction, and the pinned label's
 # EMPTY <txn> says the same thing a second way. `session_status` only restated
