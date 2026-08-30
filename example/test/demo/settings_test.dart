@@ -484,4 +484,22 @@ void main() {
 
     expect(find.textContaining('Sandbox only'), findsOneWidget);
   });
+
+  testWidgets('a slow store says why the buttons are dead', (tester) async {
+    final backend = _SlowBackend();
+    await tester.pumpWidget(_settings(store: SecretStore(backend: backend)));
+    await tester.pump();
+
+    // A cold Keychain read can take a visible moment on a real phone, and
+    // three dead buttons over three empty fields look like a broken build
+    // unless something on screen says the read has not come back yet.
+    expect(_enabled(tester, 'Save'), isFalse);
+    expect(find.text('Reading saved credentials…'), findsOneWidget);
+
+    backend.gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Reading saved credentials…'), findsNothing);
+    expect(_enabled(tester, 'Save'), isTrue);
+  });
 }

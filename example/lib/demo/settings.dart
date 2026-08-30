@@ -279,6 +279,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Wrap(
           spacing: 12,
           runSpacing: 12,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             FilledButton(
               onPressed: _busy || !_loaded ? null : _save,
@@ -292,6 +293,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: _busy || !_loaded ? null : _forget,
               child: const Text('Forget credentials'),
             ),
+            // Beside the buttons rather than above the fields, because it is
+            // the buttons being dead that needs explaining: three empty
+            // fields under three grey buttons is what a broken build looks
+            // like, and a cold Keychain read takes a visible moment on a
+            // real phone. Gone the moment the read lands, whatever it found.
+            if (!_loaded) const Text('Reading saved credentials…'),
           ],
         ),
         if (_message != null) ...[
