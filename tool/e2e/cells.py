@@ -211,6 +211,14 @@ ARG_ACTIONS = MappingProxyType(
 #: a cell is a fact about the grammar rather than about how cells are written.
 TEARDOWN = frozenset({("airplane", "off"), ("dont_keep_activities", "off")})
 
+#: Log markers a cell may declare it expects. Deliberately a closed set of
+#: one: `Force finishing activity` is a fault everywhere except in the cell
+#: that turns on the developer option whose entire effect is to produce it.
+#: `FATAL EXCEPTION`, `ANR in` and the Dart and Swift markers are not here
+#: and must never be -- a cell that could mute those could pass through a
+#: crash, which is the one thing criterion 3 exists to stop.
+TOLERABLE_CRASH_MARKERS = frozenset({"Force finishing activity"})
+
 
 def _is_non_empty_str(value: Any) -> bool:
     return isinstance(value, str) and bool(value)
@@ -357,6 +365,11 @@ class Cell:
     #: platform. Call `expected_for(platform)` instead.
     expected: Expected
     overrides: dict[str, dict[str, Any]]
+    #: Criterion-3 markers this cell has declared its own behaviour produces.
+    #: Validated against `TOLERABLE_CRASH_MARKERS` at load, so this can only
+    #: ever hold what that closed set allows. Defaulted, because exactly one
+    #: cell in the whole matrix declares anything.
+    tolerated_crash_markers: tuple[str, ...] = ()
 
     def expected_for(self, platform: str) -> Expected:
         """The base expectation with this platform's overrides merged in.
@@ -663,6 +676,20 @@ def load_cell(path: Path) -> Cell:
 
     expected = _expected(_require(raw, "expected", where), where)
 
+    # Refused here rather than reported by `verify`: a cell asking to be
+    # excused something it must never be excused is a cell that would pass a
+    # crash through, and the cheap moment to say so is before a device is
+    # touched.
+    tolerated = raw.get("tolerated_crash_markers") or []
+    if not isinstance(tolerated, list):
+        raise CellError(f"{where}: tolerated_crash_markers must be a list")
+    unknown = sorted(set(map(str, tolerated)) - TOLERABLE_CRASH_MARKERS)
+    if unknown:
+        raise CellError(
+            f"{where}: tolerated_crash_markers {unknown} is not tolerable; only "
+            f"{sorted(TOLERABLE_CRASH_MARKERS)} may be declared"
+        )
+
     overrides = {}
     for platform in PLATFORMS:
         override = raw.get(f"expected.{platform}")
@@ -690,6 +717,7 @@ def load_cell(path: Path) -> Cell:
         actions=tuple(parse_action(a, where) for a in raw_actions),
         expected=expected,
         overrides=overrides,
+        tolerated_crash_markers=tuple(map(str, tolerated)),
     )
     # After construction rather than inline above: these rules read
     # `expected_for(platform)`, which needs the whole cell.

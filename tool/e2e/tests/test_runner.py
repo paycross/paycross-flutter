@@ -2784,3 +2784,95 @@ def test_the_teardown_replay_happens_after_the_failure_dump(tmp_path):
 
     last_dump = max(i for i, a in enumerate(driver.actions) if a[0] == "dump_tree")
     assert driver.actions.index(("airplane", False)) > last_dump
+
+
+# --- Plan B D3: a cell may be excused the log line its own setting produces --
+
+FORCED_FINISH = (
+    "08-28 12:00:02.000 I ActivityManager: Force finishing activity "
+    "com.paycross.example/com.paycross.PaymentActivity"
+)
+
+
+class KeepsNoActivities(FakeDriver):
+    """A device that can actually perform the verb the cell under test uses.
+
+    `FakeDriver` inherits `Driver`'s NotImplementedError for it, which the
+    runner correctly reads as an authoring fault -- and that would fail these
+    cells for a reason that has nothing to do with what they are about.
+    """
+
+    def dont_keep_activities(self, on):
+        self.actions.append(("dont_keep_activities", on))
+
+
+def logging(driver, log):
+    """A device whose logs say whatever the test wants them to say."""
+    driver.logs_since = lambda since: log
+    return driver
+
+
+def keeping_no_activities(tmp_path, *, declared):
+    """The `dont_keep_activities` cell, with and without its declaration."""
+    body = textwrap.dedent(CELL.format(id="control")).replace(
+        DEFAULT_ACTIONS,
+        "  - paste_token\n  - dont_keep_activities on\n  - tap_pay\n"
+        "  - wait_result 60\n  - dont_keep_activities off\n",
+    )
+    if declared:
+        body += 'tolerated_crash_markers:\n  - "Force finishing activity"\n'
+    directory = tmp_path / "cells"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(body, encoding="utf-8")
+    return directory
+
+
+def test_the_forced_finish_fails_a_cell_that_did_not_declare_it(tmp_path):
+    # The default. `Force finishing activity` naming the app under test is a
+    # fault, and the whole allow-list exists so that stays true everywhere but
+    # the one cell that asked.
+    driver = logging(
+        KeepsNoActivities(labels=["result:success:txn-1"]), f"{FORCED_FINISH}\n"
+    )
+
+    report = run(keeping_no_activities(tmp_path, declared=False), tmp_path, driver)
+
+    assert not report.results[0].passed
+    assert any("crash:" in p for p in report.results[0].problems)
+    assert result_json(tmp_path)["tolerated_crash_lines"] == []
+
+
+def test_the_declared_marker_is_excused_and_written_into_the_evidence(tmp_path):
+    # Reclassified, never muted: the line is not a fault, and it is also the
+    # observation the cell was written to make, so it has to be readable
+    # afterwards.
+    driver = logging(
+        KeepsNoActivities(labels=["result:success:txn-1"]), f"{FORCED_FINISH}\n"
+    )
+
+    report = run(keeping_no_activities(tmp_path, declared=True), tmp_path, driver)
+
+    assert report.results[0].passed, report.results[0].problems
+    written = result_json(tmp_path)
+    assert written["tolerated_crash_markers"] == ["Force finishing activity"]
+    assert written["tolerated_crash_lines"] == [FORCED_FINISH]
+
+
+def test_a_real_crash_still_fails_the_cell_that_declared_the_other_marker(tmp_path):
+    # The excuse is per marker, not per cell. This cell is excused its forced
+    # finish and is still failed by the crash beside it.
+    log = (
+        f"{FORCED_FINISH}\n"
+        "08-28 12:00:04.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
+        "08-28 12:00:04.000 E AndroidRuntime: Process: com.paycross.example, PID: 9\n"
+    )
+    driver = logging(KeepsNoActivities(labels=["result:success:txn-1"]), log)
+
+    report = run(keeping_no_activities(tmp_path, declared=True), tmp_path, driver)
+
+    problems = report.results[0].problems
+    assert not report.results[0].passed
+    assert [p for p in problems if "crash:" in p] == [
+        "crash: 08-28 12:00:04.000 E AndroidRuntime: FATAL EXCEPTION: main"
+    ]
+    assert result_json(tmp_path)["tolerated_crash_lines"] == [FORCED_FINISH]

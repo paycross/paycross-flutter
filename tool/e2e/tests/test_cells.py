@@ -822,3 +822,42 @@ def test_the_acs_allow_list_holds_all_three_of_the_sandboxs_button_groups():
     assert {"approve", "authentication_rejected"} <= cells.ACS_OUTCOMES
     assert {"do_not_honor", "card_expired", "invalid_cvv"} <= cells.ACS_OUTCOMES
     assert {"timeout", "issuer_unavailable", "unknown_error"} <= cells.ACS_OUTCOMES
+
+
+# --- C6: tolerated crash markers -------------------------------------------
+
+
+def test_a_cell_declares_no_tolerated_markers_by_default(tmp_path):
+    cell = cells.load_cell(write(tmp_path, "control.yaml", CONTROL))
+
+    assert cell.tolerated_crash_markers == ()
+
+
+def test_a_cell_may_declare_the_one_marker_its_own_setting_produces(tmp_path):
+    body = CONTROL + 'tolerated_crash_markers:\n  - "Force finishing activity"\n'
+
+    cell = cells.load_cell(write(tmp_path, "control.yaml", body))
+
+    assert cell.tolerated_crash_markers == ("Force finishing activity",)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    ["FATAL EXCEPTION", "ANR in", "Unhandled Exception:", "Fatal error:"],
+)
+def test_no_cell_may_declare_a_marker_that_would_mute_a_crash(tmp_path, marker):
+    # The closed set is the whole point: a cell that could excuse one of these
+    # could pass through a crash, which is the one thing criterion 3 exists to
+    # stop.
+    body = CONTROL + f'tolerated_crash_markers:\n  - "{marker}"\n'
+
+    message = expect_rejected(tmp_path, body)
+
+    assert "not tolerable" in message
+    assert marker in message
+
+
+def test_tolerated_crash_markers_must_be_a_list(tmp_path):
+    body = CONTROL + 'tolerated_crash_markers: "Force finishing activity"\n'
+
+    assert "must be a list" in expect_rejected(tmp_path, body)

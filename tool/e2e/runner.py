@@ -695,6 +695,13 @@ def run_cell(
     #: dirty and I cleaned it" is a different story from "it was never dirty",
     #: and the next cell's launch guard cannot tell them apart afterwards.
     teardown_replayed: list[str] = []
+    #: Criterion-3 lines this cell declared its own behaviour produces, and
+    #: which were therefore not counted as faults. Filed rather than dropped:
+    #: for the one cell that declares anything, these lines ARE the
+    #: observation it was written to make -- and an empty list on a cell that
+    #: declared a marker says the behaviour did not happen, which is a
+    #: finding of its own.
+    tolerated_crash_lines: list[str] = []
     reached_the_end = False
     authoring = False
 
@@ -926,10 +933,15 @@ def run_cell(
             write("logs.txt", log.encode())
             # Never gated on reaching the end: a crash is not a consequence of
             # the first failure, it is very often the cause of it.
-            problems += [
-                f"crash: {line.strip()}"
-                for line in verify.crash_lines(log, driver.package)
-            ]
+            #
+            # What the cell declared it expects is excused rather than
+            # dropped: `tolerated_crash_lines` goes into result.json below, so
+            # the observation the cell was written to make is in the evidence
+            # beside the verdict. Nothing is muted, only reclassified.
+            faults, tolerated_crash_lines = verify.crash_lines(
+                log, driver.package, cell.tolerated_crash_markers
+            )
+            problems += [f"crash: {line.strip()}" for line in faults]
 
     problems = [_redacted(problem, *secrets) for problem in problems]
     result = CellResult(
@@ -961,6 +973,10 @@ def run_cell(
                 "problems": problems,
                 "screenshots_skipped": screenshots_skipped,
                 "teardown_replayed": teardown_replayed,
+                "tolerated_crash_markers": list(cell.tolerated_crash_markers),
+                "tolerated_crash_lines": [
+                    _redacted(line.strip(), *secrets) for line in tolerated_crash_lines
+                ],
                 "budget_seconds": budget,
                 "seconds": (datetime.now(timezone.utc) - started).total_seconds(),
             },
