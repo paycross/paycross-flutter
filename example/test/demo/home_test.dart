@@ -1,11 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/editor.dart';
+import 'package:paycross_demo/demo/history_screen.dart';
 import 'package:paycross_demo/demo/home.dart';
+import 'package:paycross_demo/demo/presets.dart';
+import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
+import 'package:paycross_demo/demo/test_cards_screen.dart';
+
+import '_surface.dart';
+
+/// A store whose reads fail, which is what an iOS Runner missing the
+/// Keychain Sharing entitlement looks like from Dart.
+class _ThrowingBackend implements SecretBackend {
+  @override
+  Future<String?> read(String key) async => throw StateError('no keychain');
+
+  @override
+  Future<void> write(String key, String value) async {}
+
+  @override
+  Future<void> delete(String key) async {}
+}
 
 void main() {
   testWidgets('says the app is sandbox-only', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
+    await tester.pumpAndSettle();
 
     expect(find.textContaining('Sandbox only'), findsOneWidget);
   });
@@ -45,5 +66,129 @@ void main() {
     // pending row. That is the panel's own tested behaviour, and it is why
     // this asserts the pending row rather than 'unknown'.
     expect(find.text('Demo …'), findsOneWidget);
+  });
+
+  testWidgets('the other two actions open with no platform under them either', (
+    tester,
+  ) async {
+    // Both defaults reach a real platform store -- History's is
+    // SharedPreferences -- and neither route may throw. A route that did
+    // would be a red screen on a colleague's phone rather than a screen
+    // with nothing in it yet.
+    await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
+
+    await tester.tap(find.byTooltip('History'));
+    await tester.pumpAndSettle();
+    expect(find.byType(HistoryScreen), findsOneWidget);
+    // Pending, not empty and not failed: `SharedPreferences.getInstance()`
+    // never answers under `flutter test`, exactly as the version read does
+    // not. That is why the screen has a state for "has not answered yet"
+    // that is distinct from "answered with nothing".
+    expect(find.text('Reading past runs…'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Test cards'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TestCardsScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('lists every preset with its expectation', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (final preset in demoPresets) {
+      expect(find.text(preset.name), findsOneWidget, reason: preset.name);
+    }
+  });
+
+  testWidgets('the active-profile strip says what a run would use', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+    final backend = InMemorySecretBackend();
+    backend.entries['paycross_demo_client_id'] = 'abcdef0123456789';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(store: SecretStore(backend: backend)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The environment is a constant and the id is truncated on purpose.
+    expect(find.text('Sandbox — client abcdef…'), findsOneWidget);
+    expect(find.textContaining('secret-1'), findsNothing);
+  });
+
+  testWidgets('an unconfigured profile says so rather than looking broken', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sandbox — not configured'), findsOneWidget);
+  });
+
+  testWidgets('Custom opens the editor on the ordinary body', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('customPreset')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(EditorScreen), findsOneWidget);
+    expect(find.text('Edit — Custom'), findsOneWidget);
+  });
+
+  testWidgets('an unconfigured store routes a run to Settings', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(demoPresets.first.name));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsScreen), findsOneWidget);
+  });
+
+  testWidgets('a storage read that throws routes to Settings, not a crash', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(store: SecretStore(backend: _ThrowingBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(demoPresets.first.name));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

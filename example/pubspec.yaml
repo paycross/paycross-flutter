@@ -49,6 +49,10 @@ dependencies:
   # this app may hold a credential.
   flutter_secure_storage: ^11.0.0
 
+  # History only. It holds ids, outcomes and versions -- never a token, and
+  # never a credential, which is why this is not the secure store.
+  shared_preferences: ^2.5.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
