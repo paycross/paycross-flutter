@@ -16,3 +16,16 @@ void useTallSurface(WidgetTester tester) {
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 }
+
+/// A surface the size of an ordinary phone, in logical pixels.
+///
+/// [useTallSurface] is a testing convenience: it builds every row at once so
+/// a finder can see them. It is not a size any phone has, so a screen that
+/// only works there is a screen nobody can use. This is the width people
+/// actually hold, and it is what catches an overflow and a list that cannot
+/// be scrolled to the end.
+void usePhoneSurface(WidgetTester tester) {
+  tester.view.physicalSize = const Size(390, 844);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+}

@@ -260,4 +260,31 @@ void main() {
     // against platform stores that never answer under `flutter test`.
     await tester.pump(const Duration(seconds: 10));
   });
+
+  testWidgets('Home lays out and scrolls at ordinary phone width', (
+    tester,
+  ) async {
+    usePhoneSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // An overflow stripe is an exception in a widget test, and the tall
+    // surface every other test here uses would never produce one.
+    expect(tester.takeException(), isNull);
+    expect(find.text(demoPresets.first.name), findsOneWidget);
+
+    // And the far end of the list is reachable, which is the other thing the
+    // tall surface hides: on a phone this is a list you have to scroll.
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('customPreset')),
+      200,
+    );
+
+    expect(find.byKey(const ValueKey('customPreset')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

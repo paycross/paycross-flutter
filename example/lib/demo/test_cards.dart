@@ -1,3 +1,5 @@
+import 'dart:math';
+
 /// One sandbox card and what it does.
 class TestCard {
   const TestCard({required this.pan, required this.behaviour, this.note});
@@ -10,7 +12,7 @@ class TestCard {
   String get grouped {
     final groups = <String>[];
     for (var i = 0; i < pan.length; i += 4) {
-      groups.add(pan.substring(i, i + 4 > pan.length ? pan.length : i + 4));
+      groups.add(pan.substring(i, min(i + 4, pan.length)));
     }
     return groups.join(' ');
   }

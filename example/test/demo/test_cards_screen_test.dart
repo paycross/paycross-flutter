@@ -23,4 +23,22 @@ void main() {
     expect(find.text('Do not use'), findsOneWidget);
     expect(find.textContaining('io.paycross#870'), findsNWidgets(3));
   });
+
+  testWidgets('the sheet lays out and scrolls at ordinary phone width', (
+    tester,
+  ) async {
+    usePhoneSurface(tester);
+    await tester.pumpWidget(const MaterialApp(home: TestCardsScreen()));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text(usableTestCards.first.grouped), findsOneWidget);
+
+    // The do-not-use section is below ten cards' worth of text, and it is
+    // the half of this screen that stops a false SDK bug being filed.
+    await tester.scrollUntilVisible(find.text('Do not use'), 200);
+
+    expect(find.text('Do not use'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

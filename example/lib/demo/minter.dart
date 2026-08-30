@@ -57,8 +57,14 @@ class MintedSession {
   final String id;
   final String token;
 
-  /// What was actually sent, placeholders substituted -- the editor shows
-  /// it and the bug-report block quotes it.
+  /// What was actually sent, with `{{timestamp}}` and `{{uuid}}` resolved.
+  ///
+  /// It does not leave this module, and it must not start to. The preset
+  /// bodies carry a customer's name, email, phone number and billing
+  /// address, so this is PII rather than a debugging string: History stores
+  /// it nowhere, the bug-report block does not quote it, and no screen shows
+  /// it. What reads it today is the minter's own test, which is how the
+  /// substitution is checked at all.
   final String sentBody;
 }
 
@@ -406,9 +412,11 @@ class Minter {
 
 /// Substitutes the two placeholders the preset bodies carry.
 ///
-/// Takes its clock so a minter's own `now` reaches the body: a test that
-/// pins the reference it sent needs the same stamp twice, and the editor
-/// calls this directly.
+/// Called by [Minter.mint] and nowhere else: substitution happens once, at
+/// the moment of sending, so what the editor holds and what a deep link
+/// carries stay templates until then. It takes its clock rather than reading
+/// the ambient one so that a test can pin `{{timestamp}}` and compare the
+/// reference the minter actually sent against the same stamp.
 String substitutePlaceholders(
   String body, {
   DateTime Function() now = DateTime.now,

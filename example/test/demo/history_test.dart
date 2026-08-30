@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/history.dart';
 
@@ -11,6 +13,25 @@ HistoryEntry _entry() => HistoryEntry(
   pluginVersion: '0.1.0',
   nativeSdkVersion: '0.1.1',
 );
+
+/// A store whose first write fails and whose later ones do not, which is
+/// what a device that was briefly out of space looks like.
+class _FailOnceBackend implements HistoryBackend {
+  bool _failed = false;
+  List<String> entries = <String>[];
+
+  @override
+  Future<List<String>> read() async => List<String>.from(entries);
+
+  @override
+  Future<void> write(List<String> written) async {
+    if (!_failed) {
+      _failed = true;
+      throw StateError('no space');
+    }
+    entries = List<String>.from(written);
+  }
+}
 
 void main() {
   test('an entry survives a round trip through the store', () async {
@@ -99,5 +120,68 @@ void main() {
       'pluginVersion',
       'nativeSdkVersion',
     });
+  });
+
+  test('one corrupt line does not take the rest of the history with it', () {
+    // A process killed mid-write leaves a truncated last line. Reading the
+    // whole store as empty threw away every run that had been written
+    // correctly, which is the history somebody wanted that morning.
+    final backend = InMemoryHistoryBackend()
+      ..entries = [
+        jsonEncode(_entry().toJson()),
+        '{"at": "2026-08-29T15:04:05.000Z", "presetNam',
+      ];
+
+    expect(HistoryStore(backend: backend).read(), completion(hasLength(1)));
+  });
+
+  test('two runs finishing at once both survive', () async {
+    // `append` is read-modify-write over one key. Unserialised, both reads
+    // see the old list and the second write drops the first one's row.
+    final store = HistoryStore(backend: InMemoryHistoryBackend());
+
+    await Future.wait([
+      store.append(_entry()),
+      store.append(
+        HistoryEntry(
+          at: DateTime.utc(2026, 8, 29, 16),
+          presetName: 'Instant approve (no 3DS)',
+          sessionId: 'sess-10',
+          transactionId: null,
+          outcome: 'Payment cancelled.',
+          demoVersion: '0.1.0+7',
+          pluginVersion: '0.1.0',
+          nativeSdkVersion: 'unknown',
+        ),
+      ),
+    ]);
+
+    expect((await store.read()).map((e) => e.sessionId).toSet(), {
+      'sess-9',
+      'sess-10',
+    });
+  });
+
+  test('a write that fails does not stop the next one', () async {
+    // The queue is what serialises appends, so a link that threw must not be
+    // what every later append is still waiting on. The caller sees the
+    // failure; the queue does not keep it.
+    final store = HistoryStore(backend: _FailOnceBackend());
+
+    await expectLater(store.append(_entry()), throwsStateError);
+    await store.append(
+      HistoryEntry(
+        at: DateTime.utc(2026, 8, 29, 16),
+        presetName: 'Instant approve (no 3DS)',
+        sessionId: 'sess-10',
+        transactionId: null,
+        outcome: 'Payment cancelled.',
+        demoVersion: '0.1.0+7',
+        pluginVersion: '0.1.0',
+        nativeSdkVersion: 'unknown',
+      ),
+    );
+
+    expect((await store.read()).single.sessionId, 'sess-10');
   });
 }
