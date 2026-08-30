@@ -124,12 +124,31 @@ class _DemoHomeState extends State<DemoHome> {
   /// rebuilt the tree under an open run would be a worse bug than this one.
   bool _busy = false;
 
+  /// Says a link was dropped, on the channel a malformed link already uses.
+  ///
+  /// Silence reads as a broken build: the phone is in somebody's hand and the
+  /// link they just fired did nothing they can see. The wording names the way
+  /// out rather than the flag that refused it.
+  void _refuse(BuildContext context) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        content: Text('Link ignored — close the open screen first.'),
+      ),
+    );
+  }
+
   Future<void> _run(BuildContext context, Preset preset) async {
-    if (_busy) return;
+    if (_busy) {
+      _refuse(context);
+      return;
+    }
     // Anything pushed over Home -- a Run screen a tile started, Settings, the
     // editor -- makes Home no longer the current route; `_busy` only knows
     // about runs this widget started.
-    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) {
+      _refuse(context);
+      return;
+    }
     _busy = true;
     try {
       await runPreset(

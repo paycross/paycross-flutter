@@ -181,7 +181,7 @@ void main() {
     expect(find.byType(HomeScreen), findsOneWidget);
   });
 
-  testWidgets('a link arriving over a run a tile started starts nothing', (
+  testWidgets('a link over a run a tile started starts nothing and says so', (
     tester,
   ) async {
     useTallSurface(tester);
@@ -225,8 +225,15 @@ void main() {
 
     expect(mints, 1);
     expect(find.byType(RunScreen), findsOneWidget);
+    // Silence here reads as a broken build: the phone is in somebody's hand
+    // and the link they just fired did nothing they can see.
+    expect(
+      find.text('Link ignored — close the open screen first.'),
+      findsOneWidget,
+    );
 
     await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('a link arriving during a tap starts nothing', (tester) async {
