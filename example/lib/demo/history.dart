@@ -170,9 +170,9 @@ class HistoryStore {
   /// This is read-modify-write over a single key. Two runs finishing at once
   /// would both read the old list and the second write would drop the first
   /// one's row -- silently, and only under a race nobody would reproduce on
-  /// purpose. The chain is static because these stores are cheap `const`
-  /// values built at each call site, so an instance field would not be
-  /// shared between them.
+  /// purpose. The queue is keyed on the backend rather than held in a field
+  /// because these stores are cheap `const` values built at each call site,
+  /// so an instance field would not be shared between them.
   Future<void> append(HistoryEntry entry) {
     final queued = _writeQueues[_backend] ?? Future<void>.value();
     final written = queued.then((_) async {

@@ -1,5 +1,10 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/home.dart';
 import 'package:paycross_demo/demo/secrets.dart';
+import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_demo/main.dart' as app;
 import 'package:paycross_flutter/paycross_flutter.dart';
 // The generated Pigeon client is deliberately not exported (see
@@ -88,5 +93,68 @@ void main() {
     expect(host.lastConfiguration, isNotNull);
     expect(host.lastConfiguration?.googlePayMerchantId, isNull);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a run link reaches a run down the same path a tile does', (
+    tester,
+  ) async {
+    final links = StreamController<Uri>();
+    addTearDown(links.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: app.DemoHome(
+          links: links.stream,
+          store: SecretStore(backend: InMemorySecretBackend()),
+        ),
+      ),
+    );
+
+    links.add(
+      Uri.parse('paycross-flutter-demo://run?preset=Frictionless%203DS'),
+    );
+    await tester.pumpAndSettle();
+
+    // Nothing is stored, so the link lands exactly where a tile tap lands.
+    // That is `runPreset`'s "not configured routes to Settings" rule, and
+    // this is the whole point of the link going through `runPreset`: the
+    // rule is written once and cannot be true of one entrance only.
+    expect(find.byType(SettingsScreen), findsOneWidget);
+  });
+
+  testWidgets('a second link while the first is still opening is dropped', (
+    tester,
+  ) async {
+    final links = StreamController<Uri>();
+    addTearDown(links.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: app.DemoHome(
+          links: links.stream,
+          store: SecretStore(backend: InMemorySecretBackend()),
+        ),
+      ),
+    );
+
+    final uri = Uri.parse(
+      'paycross-flutter-demo://run?preset=Frictionless%203DS',
+    );
+    links.add(uri);
+    await tester.pump();
+    links.add(uri);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
+    // The real assertion: had the second link been honoured there would be a
+    // second route underneath this one, and one pop would land on it rather
+    // than on Home. A link can arrive while a run is already open, which is
+    // the one thing a tile on Home cannot do.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsScreen), findsNothing);
+    expect(find.byType(HomeScreen), findsOneWidget);
   });
 }

@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
 import 'automation_screen.dart';
+import 'demo/deeplink.dart';
 import 'demo/home.dart';
+import 'demo/minter.dart';
+import 'demo/presets.dart';
 import 'demo/secrets.dart';
 import 'e2e_mode.dart';
 
@@ -26,9 +29,10 @@ SecretStore mainSecretStore = const SecretStore();
 /// Runs a real payment against sandbox with no backend of your own.
 ///
 /// Under `--dart-define=PAYCROSS_E2E=true` this awaits exactly one thing and
-/// cannot fail: no stored credentials are read, and the app goes straight to
-/// the automation screen. An unguarded await here would take down all six D0
-/// cells on both platforms, and the failure would look like an SDK hang.
+/// cannot fail: no stored credentials are read, no deep-link subscription is
+/// opened, and the app goes straight to the automation screen. An unguarded
+/// await here would take down all six D0 cells on both platforms, and the
+/// failure would look like an SDK hang.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Under the define this whole expression is the constant branch -- no
@@ -71,6 +75,75 @@ class ExampleApp extends StatelessWidget {
     title: kE2e ? 'PayCross Example' : 'PayCross Demo',
     theme: ThemeData(colorSchemeSeed: Colors.indigo),
     darkTheme: ThemeData.dark(useMaterial3: true),
-    home: kE2e ? const CheckoutScreen() : const HomeScreen(),
+    home: kE2e ? const CheckoutScreen() : const DemoHome(),
+  );
+}
+
+/// Home, wrapped in the deep-link subscription.
+///
+/// Separate from [ExampleApp] so the subscription is opened under a
+/// `Navigator` and a `ScaffoldMessenger` -- a rejected link has somewhere to
+/// report itself, and a run link has somewhere to push to.
+///
+/// Reached only from the demo branch above, so the automation build registers
+/// no deep-link handler at all rather than one that is switched off.
+class DemoHome extends StatefulWidget {
+  const DemoHome({
+    super.key,
+    this.links,
+    this.store = const SecretStore(),
+    this.mintWith = mintWithCredentials,
+  });
+
+  /// Injected by tests. Null means the real platform stream.
+  final Stream<Uri>? links;
+
+  /// The one store both entrances to a run read, so a link and a tile cannot
+  /// disagree about whether this build is configured.
+  ///
+  /// A constructor argument rather than a `main`-level variable like
+  /// [mainSecretStore]: that one exists only because `main` is an entrypoint
+  /// and cannot take parameters. This is a widget, and every other widget in
+  /// this app reaches its platform edges the same way.
+  final SecretStore store;
+  final Future<MintedSession> Function(Credentials, String body) mintWith;
+
+  @override
+  State<DemoHome> createState() => _DemoHomeState();
+}
+
+class _DemoHomeState extends State<DemoHome> {
+  /// True from a link's arrival until the run it started has been left.
+  ///
+  /// Home's own tiles go dead while a run is being set up, but a tile cannot
+  /// be tapped from under a pushed Run screen and a link can arrive at any
+  /// moment. Without this a second `am start` while the first run is still
+  /// open mints a second live session and stacks a second Run screen on it.
+  ///
+  /// Deliberately not `setState`: nothing renders this, and a link that
+  /// rebuilt the tree under an open run would be a worse bug than this one.
+  bool _busy = false;
+
+  Future<void> _run(BuildContext context, Preset preset) async {
+    if (_busy) return;
+    _busy = true;
+    try {
+      await runPreset(
+        context,
+        preset,
+        preset.body,
+        store: widget.store,
+        mintWith: widget.mintWith,
+      );
+    } finally {
+      _busy = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => DeepLinkListener(
+    links: widget.links,
+    onRun: (preset) => _run(context, preset),
+    child: HomeScreen(store: widget.store, mintWith: widget.mintWith),
   );
 }

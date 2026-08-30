@@ -53,6 +53,11 @@ dependencies:
   # never a credential, which is why this is not the secure store.
   shared_preferences: ^2.5.5
 
+  # Its floor is exactly this plugin's -- Flutter >=3.44.0, Dart ^3.12.0 --
+  # and it implements the FlutterSceneLifeCycleDelegate callbacks this
+  # Runner needs, because the Runner uses FlutterSceneDelegate.
+  app_links: ^7.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
