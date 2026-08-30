@@ -1617,16 +1617,14 @@ def test_logs_since_still_returns_a_console_that_outlived_its_capture():
 # -- D3 -----------------------------------------------------------------------
 
 
-def test_the_d3_actions_refuse():
+def test_the_two_actions_this_platform_cannot_have_still_refuse():
+    # D3 implements background, rotate and kill_activity here. These two are
+    # not "not yet": the simulator shares the host's network (R6) and iOS has
+    # no activity to not keep, so both refusals are permanent and each says
+    # which platform the cell using it belongs on.
     d = driver(FakeSsh())
 
-    refusals = (
-        lambda: d.background(5),
-        d.rotate,
-        lambda: d.airplane(True),
-        d.kill_activity,
-    )
-    for call in refusals:
+    for call in (lambda: d.airplane(True), lambda: d.dont_keep_activities(True)):
         with pytest.raises(NotImplementedError):
             call()
 
@@ -1954,11 +1952,12 @@ def test_wait_acs_says_which_page_never_came():
 #: NotImplementedError as a cell-authoring fault and spends no control check on
 #: it, where an AttributeError reads as a device problem -- and two of those in
 #: a row abort a forty-minute matrix as a rig fault.
+#: `background`, `rotate` and `kill_activity` have left this list: D3
+#: implements all three here, each with its own tests below.
+#: `dont_keep_activities` has left it too, but for the opposite reason -- it
+#: is not waiting for a dimension, it can never exist on iOS -- so it sits
+#: with `airplane` in the permanent-refusal test instead.
 NOT_LANDED_YET = [
-    ("background", (5,)),
-    ("rotate", ()),
-    ("kill_activity", ()),
-    ("dont_keep_activities", (True,)),
     ("type_cvv", ("123",)),
     ("tap_google_pay", ()),
     ("select_saved_card", ()),
@@ -1975,3 +1974,145 @@ def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
 
     with pytest.raises(NotImplementedError):
         getattr(d, name)(*args)
+
+
+# -- D3: lifecycle ------------------------------------------------------------
+
+
+def active_app(bundle):
+    """What `GET /wda/activeAppInfo` answers with, envelope and all."""
+    return json.dumps({"value": {"name": "", "pid": 8580, "bundleId": bundle}})
+
+
+SPRINGBOARD = active_app("com.apple.springboard")
+OUR_APP = active_app("com.paycross.flutterdemo")
+
+
+def test_the_foreground_bundle_is_asked_of_wda_directly():
+    # NOT read off `/source`'s root element. Measured on the rig 2026-08-31:
+    # WebDriverAgent roots the source at an XCUIElementTypeApplication whose
+    # `name` is the app's DISPLAY name ("PayCross Demo"), not its bundle id --
+    # so a comparison against the bundle would never match, `_wait_foreground`
+    # would time out on every resume, and `background` would fail every time.
+    # `activeAppInfo` answers the question this method is named for.
+    ssh = FakeSsh(OUR_APP)
+
+    assert driver(ssh)._foreground_bundle() == "com.paycross.flutterdemo"
+    assert "/wda/activeAppInfo" in ssh.joined()
+
+
+def test_the_foreground_bundle_needs_no_session():
+    # It is unsessioned on WDA's side, and `background`'s first half asks it
+    # about a moment when the app under test is not even frontmost.
+    assert unlaunched(FakeSsh(SPRINGBOARD))._foreground_bundle() == (
+        "com.apple.springboard"
+    )
+
+
+def test_an_answer_without_a_bundle_reads_as_nothing_frontmost():
+    ssh = FakeSsh(json.dumps({"value": {"pid": 1}}))
+
+    assert driver(ssh)._foreground_bundle() == ""
+
+
+def test_wait_foreground_gives_up_naming_what_it_saw():
+    ssh = FakeSsh(SPRINGBOARD)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh)._wait_foreground(timeout=0)
+
+    message = str(excinfo.value)
+    assert "com.paycross.flutterdemo is not frontmost" in message
+    assert "com.apple.springboard" in message
+
+
+def test_wait_foreground_keeps_looking_until_the_app_is_back():
+    ssh = FakeSsh(SPRINGBOARD, SPRINGBOARD, OUR_APP)
+    naps = []
+
+    driver(ssh, naps)._wait_foreground(interval=1)
+
+    assert len(ssh.calls) == 3
+    assert naps == [1, 1]
+
+
+def test_background_goes_home_waits_and_re_activates():
+    # `activate` attaches to the running process. Anything named "launch" here
+    # means terminate-then-launch for XCUIApplication, which would take the
+    # --console-pty capture with it and leave criterion 3 reading an empty log.
+    ssh = FakeSsh(
+        json.dumps({"value": None}), SPRINGBOARD, json.dumps({"value": None}), OUR_APP
+    )
+    naps = []
+
+    driver(ssh, naps).background(60)
+
+    assert "/session/sess-1/wda/homescreen" in ssh.calls[0]
+    assert "/wda/activeAppInfo" in ssh.calls[1]
+    assert "/session/sess-1/wda/apps/activate" in ssh.calls[2]
+    assert payloads_for(ssh, "/wda/apps/activate") == [
+        {"bundleId": "com.paycross.flutterdemo"}
+    ]
+    assert naps == [
+        ios.BACKGROUND_SETTLE_SECONDS,
+        60,
+        ios.BACKGROUND_SETTLE_SECONDS,
+    ]
+    # Nothing that would restart the app and take the console capture with it.
+    assert "apps/launch" not in ssh.joined()
+    assert "simctl terminate" not in ssh.joined()
+
+
+def test_background_refuses_a_home_screen_that_did_not_take():
+    ssh = FakeSsh(json.dumps({"value": None}), OUR_APP)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).background(60)
+
+    assert "still frontmost after /wda/homescreen" in str(excinfo.value)
+    assert "apps/activate" not in ssh.joined()
+
+
+def test_rotate_toggles_the_orientation_it_read():
+    ssh = FakeSsh(json.dumps({"value": "PORTRAIT"}))
+    naps = []
+
+    driver(ssh, naps).rotate()
+
+    assert payloads_for(ssh, "/orientation") == [{"orientation": "LANDSCAPE"}]
+    assert naps == [ios.ROTATE_SETTLE_SECONDS]
+
+
+def test_rotate_turns_back_from_landscape():
+    ssh = FakeSsh(json.dumps({"value": "LANDSCAPE"}))
+
+    driver(ssh).rotate()
+
+    assert payloads_for(ssh, "/orientation") == [{"orientation": "PORTRAIT"}]
+
+
+def test_the_settle_waits_are_this_rigs_own():
+    # The Android values are that driver's; the two rigs settle at different
+    # speeds and copying one onto the other hides which was measured.
+    assert (ios.BACKGROUND_SETTLE_SECONDS, ios.ROTATE_SETTLE_SECONDS) == (2, 2)
+
+
+def test_kill_activity_terminates_the_app():
+    ssh = FakeSsh()
+    naps = []
+
+    driver(ssh, naps).kill_activity()
+
+    assert "xcrun simctl terminate" in ssh.calls[0]
+    assert "com.paycross.flutterdemo" in ssh.calls[0]
+    assert naps == [ios.SETTLE_SECONDS]
+
+
+def test_dont_keep_activities_refuses_and_says_why():
+    # An Android developer option. There is no activity to not keep.
+    with pytest.raises(NotImplementedError) as excinfo:
+        driver(FakeSsh()).dont_keep_activities(True)
+
+    message = str(excinfo.value)
+    assert "Android developer option" in message
+    assert "platforms: [android]" in message

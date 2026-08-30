@@ -111,6 +111,13 @@ SCROLL_SETTLE_SECONDS = 1.0
 ALERT_SETTLE_SECONDS = 1
 POLL_INTERVAL_SECONDS = 1
 
+#: How long the window server is given after a home-screen press, a
+#: re-activation or a rotation. This rig's own numbers: the Android driver's
+#: are three seconds, and a simulator settles faster than an emulator. Copying
+#: one onto the other would hide which of them was measured.
+BACKGROUND_SETTLE_SECONDS = 2
+ROTATE_SETTLE_SECONDS = 2
+
 #: How long the pasted field is given to show that it took anything at all.
 TOKEN_READBACK_SECONDS = 10
 
@@ -946,6 +953,108 @@ class IosDriver(Driver):
         raise NotImplementedError(
             "airplane mode does not exist on the iOS simulator: it shares the "
             "host's network, and cutting that needs sudo or the GUI"
+        )
+
+    # -- the app process and the device --------------------------------------
+
+    def _foreground_bundle(self) -> str:
+        """The bundle id of whatever is frontmost, or "".
+
+        Asked of `GET /wda/activeAppInfo`, which answers with the bundle id
+        directly. NOT read off `/source`'s root element, which is where an
+        earlier design put it: measured on this rig 2026-08-31, WebDriverAgent
+        roots the source at an XCUIElementTypeApplication whose `name` is the
+        app's DISPLAY name -- `PayCross Demo`, and `Paycross Flutter` before
+        the rename, both of which are in the committed fixture. Comparing that
+        against `self._bundle` would never match, `_wait_foreground` would
+        time out on every resume, and `background` would fail every cell that
+        used it while looking like an SDK finding.
+
+        Unsessioned, which matters: `background`'s first half asks this about
+        a moment when the app under test is deliberately not frontmost. One
+        small JSON answer rather than a whole `/source` body, which on the
+        sheet is large.
+        """
+        value = self._wda("GET", "/wda/activeAppInfo").get("value") or {}
+        return str(value.get("bundleId") or "") if isinstance(value, dict) else ""
+
+    def _wait_foreground(
+        self, *, timeout: float = 30, interval: float = POLL_INTERVAL_SECONDS
+    ) -> None:
+        # Same deadline convention as `_poll`: with timeout=0 it looks once
+        # and then gives up, which is how a test reaches the failure branch
+        # without spending the wait.
+        deadline = time.monotonic() + timeout
+        while True:
+            live = time.monotonic() < deadline
+            seen = self._foreground_bundle()
+            if seen == self._bundle:
+                return
+            if not live:
+                raise DriverError(
+                    f"{self._bundle} is not frontmost after {timeout}s; "
+                    f"WebDriverAgent reports {seen!r}"
+                )
+            self._sleep(interval)
+
+    def background(self, seconds: float) -> None:
+        """Home screen, wait, then re-activate -- never re-launch.
+
+        `activate` attaches to the running process. Anything named "launch"
+        here means terminate-then-launch for XCUIApplication, which would
+        take the --console-pty capture with it and leave criterion 3 reading
+        an empty log -- the same trap `launch()`'s bundle-less session
+        capabilities exist to avoid.
+
+        Both halves are verified, for the reason the Android side has: a home
+        press that did not take would background nothing, and the cell would
+        report that the SDK survived something that never happened.
+        """
+        self._wda("POST", self._session("/wda/homescreen"), {})
+        self._sleep(BACKGROUND_SETTLE_SECONDS)
+        if self._foreground_bundle() == self._bundle:
+            raise DriverError("the app is still frontmost after /wda/homescreen")
+        self._sleep(seconds)
+        self._wda(
+            "POST", self._session("/wda/apps/activate"), {"bundleId": self._bundle}
+        )
+        self._wait_foreground()
+        self._sleep(BACKGROUND_SETTLE_SECONDS)
+
+    def rotate(self) -> None:
+        """A quarter turn through WebDriverAgent.
+
+        Nothing in the SDK locks an orientation and nothing resets on a
+        rotation: the sheet's state lives in a PaymentSheetModel held by the
+        awaiting frame, and `load()` runs from a `.task` that re-fires only
+        on a view-identity change. A challenge survives too -- it is a child
+        view controller pinned with a flexible autoresizing mask, not a
+        separate presentation. So on iOS this cell asserts that nothing
+        happens, which is a real assertion.
+        """
+        current = self._wda("GET", self._session("/orientation")).get("value")
+        target = "PORTRAIT" if current == "LANDSCAPE" else "LANDSCAPE"
+        self._wda("POST", self._session("/orientation"), {"orientation": target})
+        self._sleep(ROTATE_SETTLE_SECONDS)
+
+    def kill_activity(self) -> None:
+        """Ends the app's process, sheet and all.
+
+        `simctl terminate` rather than anything through WebDriverAgent: this
+        stands in for a low-memory kill, and what the cell measures is that
+        the pending Dart call dies with the isolate.
+        """
+        self._remote(
+            f"xcrun simctl terminate {self._quoted_udid} {self._bundle} "
+            "2>/dev/null || true"
+        )
+        self._sleep(SETTLE_SECONDS)
+
+    def dont_keep_activities(self, on: bool) -> None:
+        raise NotImplementedError(
+            "'Don't keep activities' is an Android developer option and iOS has "
+            "no equivalent: there is no activity to not keep. A cell using it "
+            "must be platforms: [android]."
         )
 
     def type_card(self, card: Card) -> None:
