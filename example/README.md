@@ -68,7 +68,8 @@ stored. If the two differ it says so: *"Verified — press Save to keep them."*
 Edit a field, verify, walk away, and you have proven a credential the next
 launch will not use.
 
-**Forget credentials** wipes both fields from the secure store.
+**Forget credentials** wipes all three — client ID, client secret and Google
+Pay merchant id — from the secure store.
 
 Home's top strip tells you where you stand: "Sandbox — not configured", or
 "Sandbox — client " and the first six characters of the id.
