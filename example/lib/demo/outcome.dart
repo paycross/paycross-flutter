@@ -1,6 +1,7 @@
 import 'package:paycross_flutter/paycross_flutter.dart';
 
 import '../e2e_label.dart';
+import 'minter.dart';
 
 /// What an ordinary user reads, for every outcome the SDK can produce.
 ///
@@ -28,9 +29,17 @@ String humanOutcome(PayCrossResult outcome) => switch (outcome) {
 };
 
 /// An integration mistake, which arrives as a thrown exception.
-String humanError(PayCrossIntegrationError problem) =>
-    problem.code == PayCrossErrorCode.resultUnknown
-    // Distinct from a refusal on purpose: the payment may have gone through,
-    // so the merchant reconciles rather than re-charging.
-    ? 'Unknown outcome — reconcile server-side. ${problem.message}'
-    : 'Integration problem (${problem.code.name}) — ${problem.message}';
+///
+/// The message half goes through the minter's mask first. It comes from the
+/// native SDK, which makes no promise about what it quotes, and what this
+/// function returns is stored in History and copied into the bug-report
+/// block -- so it gets the same treatment a response body gets, and the same
+/// 400-character cut so one runaway message cannot become the whole report.
+String humanError(PayCrossIntegrationError problem) {
+  final said = maskAndTrim(problem.message);
+  return problem.code == PayCrossErrorCode.resultUnknown
+      // Distinct from a refusal on purpose: the payment may have gone
+      // through, so the merchant reconciles rather than re-charging.
+      ? 'Unknown outcome — reconcile server-side. $said'
+      : 'Integration problem (${problem.code.name}) — $said';
+}

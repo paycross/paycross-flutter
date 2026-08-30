@@ -442,12 +442,22 @@ String _safeToEcho(String text) {
   try {
     decoded = jsonDecode(text);
   } on FormatException {
-    return _maskAndTrim(text);
+    return maskAndTrim(text);
   }
-  return _maskAndTrim(jsonEncode(scrubResource(decoded)));
+  return maskAndTrim(jsonEncode(scrubResource(decoded)));
 }
 
-String _maskAndTrim(String text) {
+/// Masks anything JWT-shaped in [text] and cuts it short.
+///
+/// Public because it is not only responses that need it: a native SDK's
+/// error message makes no promise about what it quotes, and that message is
+/// stored in History and copied into the block people paste into issues.
+/// `outcome.dart` puts it through here for the same reason `_safeToEcho`
+/// does -- one rule about what may leave this app in text, not two.
+///
+/// The 400-character cut is what keeps a runaway message from becoming the
+/// whole bug report.
+String maskAndTrim(String text) {
   final masked = text.replaceAll(_jwtShape, '<redacted>');
   return masked.length <= 400 ? masked : '${masked.substring(0, 400)}…';
 }

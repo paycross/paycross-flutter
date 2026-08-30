@@ -80,4 +80,52 @@ void main() {
     expect(unknown, contains('reconcile'));
     expect(unknown, isNot(contains('Refused')));
   });
+
+  /// A real-shaped JWT: the mask keys off `eyJ` plus two dot-separated
+  /// segments, so a made-up string would not exercise it.
+  const jwt =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.'
+      'eyJzdWIiOiIxMjM0NTY3ODkwIn0.'
+      'dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXkg';
+
+  test('a native error message cannot carry a token into a bug report', () {
+    // `PayCrossIntegrationError.message` comes from the native SDK, which
+    // makes no promise about what it quotes. It is stored in History and
+    // copied into the block people paste into issues, so it gets the same
+    // treatment a response body gets.
+    final text = humanError(
+      const PayCrossIntegrationError(
+        PayCrossErrorCode.unknown,
+        'the session was refused: $jwt',
+      ),
+    );
+
+    expect(text, isNot(contains(jwt)));
+    expect(text, contains('<redacted>'));
+  });
+
+  test(
+    'the unknown-outcome message is scrubbed too, not just the other one',
+    () {
+      // Two branches, one rule -- and this is the branch a real incident takes.
+      final text = humanError(
+        const PayCrossIntegrationError(
+          PayCrossErrorCode.resultUnknown,
+          'killed while holding $jwt',
+        ),
+      );
+
+      expect(text, isNot(contains(jwt)));
+      expect(text, contains('reconcile'));
+    },
+  );
+
+  test('a runaway native message is cut short rather than pasted whole', () {
+    final text = humanError(
+      PayCrossIntegrationError(PayCrossErrorCode.unknown, 'x' * 5000),
+    );
+
+    expect(text.length, lessThan(500));
+    expect(text, endsWith('…'));
+  });
 }
