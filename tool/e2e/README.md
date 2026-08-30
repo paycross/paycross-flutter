@@ -67,6 +67,70 @@ python -m tool.e2e.runner \
     --app /Users/<you>/…/example/build/ios/iphonesimulator/Runner.app
 ```
 
+### Release builds
+
+A debug build proves nothing about a shipped one. The example's `release` build
+type turns on R8 and resource shrinking — `isMinifyEnabled` and
+`isShrinkResources` in `example/android/app/build.gradle.kts` — because the
+Android SDK returns its outcome across an `Intent` and only its own
+`consumer-rules.pro` keeps `PayCrossResult`, its subclasses and `Recovery` from
+being renamed. If those rules ever stop being applied, every payment comes back
+as `error:resultUnknown` instead of its real outcome, and nothing but a minified
+build can show it.
+
+`example/android/app/proguard-rules.pro` is deliberately empty: the rules this
+build needs come from the libraries. A rule appearing there means the SDK is not
+shipping one it should, which is a finding to file rather than a line to add.
+
+```bash
+(cd example && flutter build apk --release --dart-define=PAYCROSS_E2E=true)
+
+python -m tool.e2e.runner \
+    --platform android \
+    --cells tool/e2e/cells/d0 \
+    --evidence-root ~/e2e-evidence/d1-release-android \
+    --env-file ~/path/to/.env.staging \
+    --build-id "android-0.3.3-release-r8" \
+    --app example/build/app/outputs/flutter-apk/app-release.apk
+```
+
+A **fresh evidence root and a distinct `--build-id`**: a pass recorded against
+the debug build is not this build's. `--app` implies `--all`, which is the same
+answer without having to name a build, but naming it is what makes the evidence
+say which build passed.
+
+The keep rules are checkable statically as well. Beside `mapping.txt` sits
+`configuration.txt`, which records every rule file R8 consumed, and the SDK's
+consumer rules appear in it verbatim — lines 118-131 of the run this section
+documents, under `paycross-android-0.3.3/proguard.txt`. `mapping.txt` then
+shows the effect: the classes that cross the `Intent` map to *themselves* while
+everything around them is renamed. That is evidence the rules were applied; the
+live run is the evidence they were enough.
+
+**iOS is build-only, and cannot be otherwise.** Flutter refuses any non-debug
+build for the iOS simulator — `BuildInfo.supportsSimulator` is
+`isEmulatorBuildMode(mode)`, which is `mode == BuildMode.debug`, and
+`build_ios.dart` turns anything else into `'<MODE> mode is not supported for
+simulators.'` So the D0 set can only ever execute against a debug iOS binary,
+and what a release build can prove there is that it compiles and links:
+
+```bash
+# on the Mac, in the example directory
+flutter build ios --config-only --release --no-codesign
+(cd ios && pod install)
+flutter build ios --release --no-codesign --dart-define=PAYCROSS_E2E=true
+```
+
+`--no-codesign` is needed on `--config-only` too when the machine has no signing
+identity; without it that step fails before `pod install` with *"No development
+certificates available to code sign app for device deployment"*. Check that
+`Runner.app/Frameworks` holds `PayCross.framework` and `PayCrossCore.framework`
+and that `otool -L Runner.app/Runner` links both. Closing the gap for real needs
+a physical device through TestFlight.
+
+The two build ids in use are `android-0.3.3-release-r8` and, if a device run
+ever becomes possible, `ios-0.1.1-release`.
+
 ### Flags
 
 | Flag | Meaning |
@@ -618,10 +682,11 @@ credential is read. Add a control cell, or check the cell's `platforms:` list.
 
 ## What is not here
 
-Phases 1–4: release builds, the decline and integration-error matrix, lifecycle,
-Google Pay, saved cards and version floors. The four lifecycle actions are
-declared in the driver protocol and raise `NotImplementedError`, so cell files
-can be written against a stable vocabulary before the drivers implement them.
+Phases 1–4, apart from the release builds above: the decline and
+integration-error matrix, lifecycle, Google Pay, saved cards and version
+floors. The four lifecycle actions are declared in the driver protocol and
+raise `NotImplementedError`, so cell files can be written against a stable
+vocabulary before the drivers implement them.
 
 Known gaps, tracked for the next phase:
 
