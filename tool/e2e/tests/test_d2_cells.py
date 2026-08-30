@@ -50,6 +50,7 @@ EXPECTED_IDS = {
     "error_malformed_token",
     "session_expired_jwt",
     "session_expired_server",
+    "session_expired_server_submit",
     "timeout_provider_never_answers",
 } | ANDROID_ONLY
 
@@ -60,7 +61,7 @@ def test_d2_is_exactly_the_cells_the_plan_promised():
 
 @pytest.mark.parametrize(
     "platform, count",
-    [("android", 18), ("ios", 15)],
+    [("android", 19), ("ios", 16)],
 )
 def test_the_d2_cells_satisfy_the_shared_authoring_rules(platform, count):
     loaded = check_cell_dir(D2, platform)
