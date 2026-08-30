@@ -426,6 +426,51 @@ JWT `exp` is mint + 900 s while the session's own `expires_at` is mint + 1200 s
 that is expired while its session is still open is to wait out the difference.
 `cell_rules` refuses it in any cell whose id does not name an expiry.
 
+### Saved cards, which are two cells and not one
+
+Card-on-file is the only dimension whose cells are **not independent**, and
+getting that wrong is silent rather than loud. Three facts drive the shape:
+
+* `customer.merchant_reference` identifies the customer. Omit it and the
+  backend mints a random UUID, so the card is stored against a customer nothing
+  will ever look up again.
+* `saved_cards: {show: all}` is what puts the customer's cards into the session
+  at all. Omit it and the list comes back empty however many cards exist.
+* That list is snapshotted **once at session creation and never rebuilt**. So
+  the paying session has to be minted *after* the storing one has settled —
+  which, since filename order is the only ordering, means naming the pair
+  `..._1_save` / `..._2_pay`.
+
+And `save_card_config` on the request only *renders* the checkbox. The save is
+driven by `card.save` on the submit, which in the SDK is the shopper ticking it
+— hence the `save_card` action. A cell with the config and no action is an
+ordinary payment asserting a save that never happened.
+
+Two customer references rather than one, where a dimension has two pairs: each
+selector then offers exactly one row, so "the first stored card" is never
+ambiguous. Re-running a pair is safe — storing the same PAN again answers
+`save_operation: already_existing`, so the customer accumulates exactly one card
+however many times it runs, and `saved_card_saved` still passes because it reads
+presence rather than the operation.
+
+**The merchant API cannot answer "was a card offered".** `Sandbox.read` has no
+`saved_cards` key under any condition; that list lives only in the public
+checkout snapshot the SDK reads. So the question is answerable only from the
+device, which is what `expect saved_card` is for.
+
+Two platform differences the drivers hide, both measured rather than assumed:
+
+* **What is tappable is not what is nameable.** Android's save checkbox has an
+  empty `text` and an empty `content-desc`, so it is found by its `checkable`
+  state; its label is a separate node that does nothing when tapped. On iOS the
+  row carries the label but only the unnamed control inside it responds.
+* **iOS scrolls, Android does not.** The iOS toggle sits below the fold, so
+  `save_card` scrolls to it — and scrolls back, because a form left scrolled
+  puts `amount` under the navigation bar and breaks the keyboard-dismissal
+  fallback that `acs()` depends on. That is why `save_card` runs **before**
+  `type_card` in every store cell: typing raises a numeric pad nothing on this
+  build dismisses, and the scroll drag starts inside it.
+
 ### Rig guards, and putting a cell's toys away
 
 `airplane on` and `dont_keep_activities on` change the **device**, not the app,
