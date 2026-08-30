@@ -45,12 +45,23 @@ void main() {
     // test/e2e_label_test.dart; what this adds is that the injected flag
     // changes no part of whether the screen builds or what it shows before a
     // payment has been made.
-    await tester.pumpWidget(const MaterialApp(home: CheckoutScreen(e2e: true)));
-    expect(find.text('Pay'), findsOneWidget);
-
     await tester.pumpWidget(
-      const MaterialApp(home: CheckoutScreen(e2e: false)),
+      const MaterialApp(home: CheckoutScreen(key: ValueKey('e2e'), e2e: true)),
     );
     expect(find.text('Pay'), findsOneWidget);
+    final underE2e = tester.state<State>(find.byType(CheckoutScreen));
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: CheckoutScreen(key: ValueKey('demo'), e2e: false),
+      ),
+    );
+    expect(find.text('Pay'), findsOneWidget);
+
+    // Two builds, not one rebuild: without distinct keys the second pump
+    // updates the element in place and keeps the first State, so the second
+    // branch would never be built from scratch and the test would be pinning
+    // half of what it claims.
+    expect(tester.state<State>(find.byType(CheckoutScreen)), isNot(underE2e));
   });
 }

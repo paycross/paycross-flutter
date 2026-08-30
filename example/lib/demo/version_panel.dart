@@ -37,8 +37,15 @@ class VersionPanel extends StatefulWidget {
   State<VersionPanel> createState() => _VersionPanelState();
 }
 
+/// What each row shows while the first read is still in flight.
+///
+/// A state of its own rather than a pre-filled "unknown": with the two
+/// rendered the same, a read that never ran and a read that failed looked
+/// identical on screen and in a test.
+const String _pending = '…';
+
 class _VersionPanelState extends State<VersionPanel> {
-  DemoVersions _versions = unknownVersions;
+  DemoVersions? _versions;
 
   @override
   void initState() {
@@ -61,12 +68,15 @@ class _VersionPanelState extends State<VersionPanel> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text('Demo ${_versions.demo}'),
-      Text('Plugin paycross_flutter ${_versions.plugin}'),
-      Text('Native SDK ${_versions.nativeSdk}'),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final versions = _versions;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Demo ${versions?.demo ?? _pending}'),
+        Text('Plugin paycross_flutter ${versions?.plugin ?? _pending}'),
+        Text('Native SDK ${versions?.nativeSdk ?? _pending}'),
+      ],
+    );
+  }
 }
