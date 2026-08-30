@@ -43,7 +43,10 @@ class RunScreen extends StatefulWidget {
 
   /// What is actually minted -- the preset's body, or the editor's edit of it.
   final String body;
-  final Future<MintedSession> Function() mintSession;
+
+  /// Mints [body]. Takes it as an argument rather than closing over it, so
+  /// the screen and its minter cannot disagree about what is being sent.
+  final Future<MintedSession> Function(String body) mintSession;
   final Future<PayCrossResult> Function(String sessionToken) present;
   final HistoryStore history;
   final Future<DemoVersions> Function() readVersions;
@@ -70,7 +73,7 @@ class _RunScreenState extends State<RunScreen> {
   Future<void> _go() async {
     final MintedSession minted;
     try {
-      minted = await widget.mintSession();
+      minted = await widget.mintSession(widget.body);
     } on MinterError catch (problem) {
       // MinterError never carries a credential; see minter.dart.
       if (mounted) {

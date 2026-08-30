@@ -37,7 +37,7 @@ Future<void> runPreset(
       builder: (_) => RunScreen(
         preset: preset,
         body: body,
-        mintSession: () {
+        mintSession: (body) {
           final minter = Minter(credentials: credentials);
           return minter.mint(body).whenComplete(minter.close);
         },

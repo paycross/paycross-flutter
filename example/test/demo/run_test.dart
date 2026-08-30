@@ -48,7 +48,7 @@ Widget _run({
   required Future<PayCrossResult> Function(String) present,
   HistoryStore? history,
   bool e2e = false,
-  Future<MintedSession> Function()? mint,
+  Future<MintedSession> Function(String)? mint,
   Future<DemoVersions> Function()? readVersions,
 }) => MaterialApp(
   home: RunScreen(
@@ -57,7 +57,7 @@ Widget _run({
     e2e: e2e,
     mintSession:
         mint ??
-        () async => const MintedSession(
+        (_) async => const MintedSession(
           id: 'sess-9',
           token: 'a-live-token',
           sentBody: '{}',
@@ -168,7 +168,7 @@ void main() {
     var presented = false;
     await tester.pumpWidget(
       _run(
-        mint: () async => throw const MinterError('POST -> HTTP 401'),
+        mint: (_) async => throw const MinterError('POST -> HTTP 401'),
         present: (_) async {
           presented = true;
           return _success('txn-9');
@@ -307,7 +307,7 @@ void main() {
     final mint = Completer<MintedSession>();
     final paid = Completer<PayCrossResult>();
     await tester.pumpWidget(
-      _run(mint: () => mint.future, present: (_) => paid.future, e2e: true),
+      _run(mint: (_) => mint.future, present: (_) => paid.future, e2e: true),
     );
     await tester.pump();
     // Each stage is pinned before it is swept. Without that the sweep passes
@@ -332,7 +332,7 @@ void main() {
     Future<void> settle(
       String where,
       Future<PayCrossResult> Function(String) present, {
-      Future<MintedSession> Function()? mint,
+      Future<MintedSession> Function(String)? mint,
     }) async {
       // A bare tree first, so each case builds a new State rather than
       // updating the one that already settled.
@@ -361,7 +361,7 @@ void main() {
     await settle(
       'a mint that failed',
       (_) async => _success('txn-9'),
-      mint: () async => throw const MinterError('POST -> HTTP 401'),
+      mint: (_) async => throw const MinterError('POST -> HTTP 401'),
     );
 
     semantics.dispose();
@@ -418,7 +418,7 @@ void main() {
     // button that copied a half-filled report would be worse than none.
     await tester.pumpWidget(
       _run(
-        mint: () async => throw const MinterError('POST -> HTTP 401'),
+        mint: (_) async => throw const MinterError('POST -> HTTP 401'),
         present: (_) async => _success('txn-9'),
       ),
     );
@@ -489,5 +489,37 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('e2eLabel')), findsNothing);
+  });
+
+  testWidgets('the body the screen was given is the body that is minted', (
+    tester,
+  ) async {
+    // `body` is what the editor hands back, and it is the whole point of the
+    // editor: an edited amount that never reached the mint would be a screen
+    // that quietly ran the preset instead of what was typed.
+    String? sent;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RunScreen(
+          preset: _preset,
+          body: '{"amount":2500,"currency":"USD"}',
+          mintSession: (body) async {
+            sent = body;
+            return const MintedSession(
+              id: 'sess-9',
+              token: 'a-live-token',
+              sentBody: '{}',
+            );
+          },
+          present: (_) async => _success('txn-9'),
+          history: HistoryStore(backend: InMemoryHistoryBackend()),
+          readVersions: () async =>
+              (demo: '0.1.0+7', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(sent, '{"amount":2500,"currency":"USD"}');
   });
 }
