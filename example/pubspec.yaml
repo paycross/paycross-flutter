@@ -40,6 +40,15 @@ dependencies:
   # the store sees cannot drift apart.
   package_info_plus: ^10.2.1
 
+  # Injectable Client, and package:http/testing.dart's MockClient is what
+  # every minter test runs against -- so the whole module is covered with no
+  # network and no platform channel.
+  http: ^1.6.0
+
+  # Keychain on iOS, EncryptedSharedPreferences on Android. Nothing else in
+  # this app may hold a credential.
+  flutter_secure_storage: ^11.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
