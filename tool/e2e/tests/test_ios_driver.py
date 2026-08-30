@@ -2047,7 +2047,10 @@ def test_background_goes_home_waits_and_re_activates():
 
     driver(ssh, naps).background(60)
 
-    assert "/session/sess-1/wda/homescreen" in ssh.calls[0]
+    # Unsessioned, and `apps/activate` sessioned: this WDA answers `unknown
+    # command` to either one written the other way round.
+    assert "http://127.0.0.1:8100/wda/homescreen" in ssh.calls[0]
+    assert "/session/" not in ssh.calls[0]
     assert "/wda/activeAppInfo" in ssh.calls[1]
     assert "/session/sess-1/wda/apps/activate" in ssh.calls[2]
     assert payloads_for(ssh, "/wda/apps/activate") == [

@@ -1032,8 +1032,15 @@ class IosDriver(Driver):
         Both halves are verified, for the reason the Android side has: a home
         press that did not take would background nothing, and the cell would
         report that the SDK survived something that never happened.
+
+        The two endpoints have different shapes and this WDA is strict about
+        it, so they are written out rather than made uniform: `/wda/homescreen`
+        is UNSESSIONED and `/wda/apps/activate` is SESSIONED. Measured against
+        the running 16.2.2 on 2026-08-31 -- each answers `unknown command -
+        Unhandled endpoint` to the other's form, and the sessioned homescreen
+        is what failed the first probe run.
         """
-        self._wda("POST", self._session("/wda/homescreen"), {})
+        self._wda("POST", "/wda/homescreen", {})
         self._sleep(BACKGROUND_SETTLE_SECONDS)
         if self._foreground_bundle() == self._bundle:
             raise DriverError("the app is still frontmost after /wda/homescreen")
