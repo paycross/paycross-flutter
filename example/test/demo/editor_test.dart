@@ -220,4 +220,116 @@ void main() {
 
     expect(runs, 2);
   });
+
+  /// The text a keyed field is showing.
+  String fieldText(WidgetTester tester, String key) =>
+      tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
+
+  testWidgets('the boxes open showing what the body already says', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditorScreen(preset: _preset, onRun: (_) async {}),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Empty boxes over a filled body made the screen contradict itself: the
+    // amount said nothing while the body said 1000.
+    final body = jsonDecode(_preset.body) as Map<String, Object?>;
+    expect(fieldText(tester, 'amount'), '${body['amount']}');
+    expect(
+      fieldText(tester, 'customerReference'),
+      (body['customer']! as Map)['merchant_reference'],
+    );
+  });
+
+  testWidgets('clearing the amount is refused, not silently ignored', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+    var ranCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditorScreen(preset: _preset, onRun: (_) async => ranCount++),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('amount')), '2500');
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('amount')), '');
+    await tester.pumpAndSettle();
+
+    // Before this, an empty box left 2500 in the body and ran it anyway.
+    expect(find.textContaining('whole number'), findsOneWidget);
+    await tester.tap(find.text('Run'));
+    await tester.pumpAndSettle();
+    expect(ranCount, 0);
+  });
+
+  testWidgets('clearing the customer reference is refused too', (tester) async {
+    useTallSurface(tester);
+    var ranCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditorScreen(preset: _preset, onRun: (_) async => ranCount++),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('customerReference')), '');
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('cannot be empty'), findsOneWidget);
+    await tester.tap(find.text('Run'));
+    await tester.pumpAndSettle();
+    expect(ranCount, 0);
+  });
+
+  testWidgets('editing the raw body moves the boxes with it', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditorScreen(preset: _preset, onRun: (_) async {}),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('rawBody')),
+      '{"amount":7777,"currency":"GBP",'
+      '"customer":{"merchant_reference":"CUST-9"}}',
+    );
+    await tester.pumpAndSettle();
+
+    // The raw body is the source of truth; the boxes above it are a view of
+    // it, so a hand edit must not leave them showing the old values.
+    expect(fieldText(tester, 'amount'), '7777');
+    expect(fieldText(tester, 'customerReference'), 'CUST-9');
+    expect(find.byKey(const ValueKey('currency-GBP')), findsOneWidget);
+  });
+
+  testWidgets('reset puts the boxes back as well as the body', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditorScreen(preset: _preset, onRun: (_) async {}),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('amount')), '');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('whole number'), findsOneWidget);
+
+    await tester.tap(find.text('Reset to preset'));
+    await tester.pumpAndSettle();
+
+    final body = jsonDecode(_preset.body) as Map<String, Object?>;
+    expect(fieldText(tester, 'amount'), '${body['amount']}');
+    expect(find.textContaining('whole number'), findsNothing);
+  });
 }

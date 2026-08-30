@@ -29,7 +29,24 @@ class _EditorScreenState extends State<EditorScreen> {
   );
   final _amount = TextEditingController();
   final _customer = TextEditingController();
+
+  /// Why the raw body cannot be minted, or null.
   String? _problem;
+
+  /// Why the amount box or the customer box cannot be minted, or null.
+  ///
+  /// Separate from [_problem] because they are shown against their own field
+  /// and because an empty box is a different mistake from a broken body.
+  String? _amountProblem;
+  String? _customerProblem;
+
+  /// True while this screen is writing the boxes from the body.
+  ///
+  /// The boxes are a view of the raw body, so seeding them fires their own
+  /// listeners; without this the seed would be read back as if a human had
+  /// typed it, and an empty box seeded from a body with no amount would
+  /// report itself as a mistake.
+  bool _syncing = false;
 
   /// True from the moment Run is pressed until [EditorScreen.onRun] returns.
   ///
@@ -41,14 +58,13 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   void initState() {
     super.initState();
-    _raw.addListener(_revalidate);
-    _amount.addListener(
-      () => _rewrite((body) => _setAmount(body, _amount.text)),
-    );
-    _customer.addListener(
-      () => _rewrite((body) => _setCustomerReference(body, _customer.text)),
-    );
-    _revalidate();
+    // Assigned rather than set through setState: this runs before the first
+    // build, so there is no frame yet to rebuild.
+    _validateBody();
+    _seedBoxes();
+    _raw.addListener(_onRawChanged);
+    _amount.addListener(_onAmountChanged);
+    _customer.addListener(_onCustomerChanged);
   }
 
   @override
@@ -68,9 +84,63 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
-  void _revalidate() => setState(
-    () => _problem = _decoded == null ? 'The body is not valid JSON.' : null,
-  );
+  void _validateBody() =>
+      _problem = _decoded == null ? 'The body is not valid JSON.' : null;
+
+  /// Writes the boxes from the body, which is the only source of truth here.
+  ///
+  /// Clears their problems too: whatever a human had typed has just been
+  /// replaced by what the body actually says, so the old complaint is stale.
+  void _seedBoxes() {
+    final body = _decoded;
+    if (body == null) return;
+    _syncing = true;
+    final amount = body['amount'];
+    _amount.text = amount is int ? '$amount' : '';
+    final customer = body['customer'];
+    final reference = customer is Map ? customer['merchant_reference'] : null;
+    _customer.text = reference is String ? reference : '';
+    _syncing = false;
+    _amountProblem = null;
+    _customerProblem = null;
+  }
+
+  /// The raw body was edited by hand, so the boxes follow it.
+  void _onRawChanged() => setState(() {
+    _validateBody();
+    _seedBoxes();
+  });
+
+  void _onAmountChanged() {
+    if (_syncing) return;
+    setState(() {
+      final amount = int.tryParse(_amount.text.trim());
+      // Not silently ignored the way an unparsed value used to be: an empty
+      // box over a body that still said 1000 ran 1000 without saying so.
+      _amountProblem = amount == null
+          ? 'A whole number of minor units — 1000 is €10.00.'
+          : null;
+      if (amount != null) _rewrite((body) => body['amount'] = amount);
+    });
+  }
+
+  void _onCustomerChanged() {
+    if (_syncing) return;
+    setState(() {
+      final reference = _customer.text.trim();
+      _customerProblem = reference.isEmpty
+          ? 'A saved card is found by this, so it cannot be empty.'
+          : null;
+      if (reference.isEmpty) return;
+      _rewrite((body) {
+        final customer = body['customer'];
+        if (customer is! Map) return;
+        // Randomise this and the card stored by one run can never be found
+        // by the next.
+        customer['merchant_reference'] = reference;
+      });
+    });
+  }
 
   /// Applies one edit to the decoded body and writes it back.
   ///
@@ -81,46 +151,31 @@ class _EditorScreenState extends State<EditorScreen> {
   /// Removing the listener around the write keeps this out of a loop: the raw
   /// controller's own listener would otherwise re-run validation while this
   /// one is still on the stack.
-  void _rewrite(bool Function(Map<String, Object?> body) edit) {
+  /// Callers are already inside a `setState`, so this does not open its own,
+  /// and it deliberately does not re-seed the boxes: the human is typing in
+  /// one of them, and re-seeding would rewrite what they are part-way through.
+  void _rewrite(void Function(Map<String, Object?> body) edit) {
     final body = _decoded;
-    if (body == null || !edit(body)) return;
-    _raw.removeListener(_revalidate);
+    if (body == null) return;
+    edit(body);
+    _raw.removeListener(_onRawChanged);
     _raw.text = const JsonEncoder.withIndent('  ').convert(body);
-    _raw.addListener(_revalidate);
-    _revalidate();
+    _raw.addListener(_onRawChanged);
+    _validateBody();
   }
 
-  bool _setAmount(Map<String, Object?> body, String typed) {
-    final amount = int.tryParse(typed.trim());
-    if (amount == null) return false;
-    body['amount'] = amount;
-    return true;
-  }
+  void _setCurrency(String currency) =>
+      setState(() => _rewrite((body) => body['currency'] = currency));
 
-  bool _setCustomerReference(Map<String, Object?> body, String typed) {
-    final reference = typed.trim();
-    if (reference.isEmpty) return false;
-    final customer = body['customer'];
-    if (customer is! Map) return false;
-    // The field a saved card is found by. Randomise it and the card stored by
-    // one run can never be found by the next.
-    customer['merchant_reference'] = reference;
-    return true;
-  }
-
-  void _setCurrency(String currency) => _rewrite((body) {
-    body['currency'] = currency;
-    return true;
-  });
-
-  void _setSaveCard(bool save) => _rewrite((body) {
-    if (save) {
-      body['save_card_config'] = {'usage': 'card_on_file'};
-    } else {
-      body.remove('save_card_config');
-    }
-    return true;
-  });
+  void _setSaveCard(bool save) => setState(
+    () => _rewrite((body) {
+      if (save) {
+        body['save_card_config'] = {'usage': 'card_on_file'};
+      } else {
+        body.remove('save_card_config');
+      }
+    }),
+  );
 
   String get _currency {
     final currency = _decoded?['currency'];
@@ -143,11 +198,25 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
+  /// Puts the body and every view of it back to the preset's.
+  ///
+  /// Explicit rather than leaning on the raw controller's listener: a reset
+  /// that only had a complaint about an empty box to clear would change no
+  /// text at all, so the listener would never fire and the complaint would
+  /// stand over a body that no longer deserved it.
   void _reset() {
-    _amount.clear();
-    _customer.clear();
+    _raw.removeListener(_onRawChanged);
     _raw.text = widget.preset.body;
+    _raw.addListener(_onRawChanged);
+    setState(() {
+      _validateBody();
+      _seedBoxes();
+    });
   }
+
+  /// Whether what is on screen can be minted at all.
+  bool get _runnable =>
+      _problem == null && _amountProblem == null && _customerProblem == null;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -159,9 +228,11 @@ class _EditorScreenState extends State<EditorScreen> {
           key: const ValueKey('amount'),
           controller: _amount,
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Amount in minor units',
-            border: OutlineInputBorder(),
+            errorText: _amountProblem,
+            errorMaxLines: 2,
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
@@ -188,13 +259,15 @@ class _EditorScreenState extends State<EditorScreen> {
           controller: _customer,
           autocorrect: false,
           enableSuggestions: false,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Customer reference',
             helperText:
-                'What a saved card is found by. Leave alone to keep '
-                'the preset\'s.',
+                'What a saved card is found by. The card-on-file presets '
+                'pin it on purpose.',
             helperMaxLines: 2,
-            border: OutlineInputBorder(),
+            errorText: _customerProblem,
+            errorMaxLines: 2,
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 8),
@@ -231,7 +304,7 @@ class _EditorScreenState extends State<EditorScreen> {
           spacing: 12,
           children: [
             FilledButton(
-              onPressed: _problem == null && !_running ? _run : null,
+              onPressed: _runnable && !_running ? _run : null,
               child: const Text('Run'),
             ),
             OutlinedButton(
