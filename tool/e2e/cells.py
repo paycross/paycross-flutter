@@ -283,13 +283,24 @@ _CURRENCY = re.compile(r"^[A-Z]{3}$")
 #: whole and never split on ':' -- an `unrecognized(<raw>)` token may itself
 #: contain colons. An empty `<txn>` is allowed; the app emits one when the
 #: session never reached a transaction.
+#:
+#: The two shapes that carry a transaction id share one trailing `:<txn>`,
+#: factored out here so it can be a named capture. `verify.match_label` reads
+#: it for a `<any>` cell, which names no id of its own and so has nothing else
+#: to cross-check against the merchant API. `result:cancelled` and `error:...`
+#: carry no id and the group is None for them, which is the honest answer:
+#: there was never one to read, as distinct from an empty one the app emitted
+#: because the session reached no transaction.
 LABEL_RE = re.compile(
-    r"^(result:success:[^\s]*"
+    r"^(?:"
+    r"(?:result:success"
     r"|result:failure:"
-    r"(retry|change_method|restart|do_not_retry|contact_support|unrecognized\(.*\))"
-    r":[^\s]*"
+    r"(?:retry|change_method|restart|do_not_retry|contact_support"
+    r"|unrecognized\(.*\))"
+    r"):(?P<txn>[^\s]*)"
     r"|result:cancelled"
-    r"|error:[A-Za-z]+)$"
+    r"|error:[A-Za-z]+"
+    r")$"
 )
 
 #: Expectations that are not a literal label.

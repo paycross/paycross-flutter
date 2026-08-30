@@ -429,23 +429,52 @@ def test_saved_card_used_is_separate_from_saved_card_saved():
 
 
 @pytest.mark.parametrize(
-    "template, actual, ok",
+    "template, actual, ok, captured",
     [
-        ("<none>", None, True),
-        ("<none>", "result:cancelled", False),
-        ("<any>", "result:cancelled", True),
-        ("<any>", "result:failure:retry:txn-1", True),
-        ("<any>", "not a label", False),
-        ("<any>", None, False),
+        ("<none>", None, True, None),
+        ("<none>", "result:cancelled", False, None),
+        ("<any>", "result:cancelled", True, None),
+        ("<any>", "result:failure:retry:txn-1", True, "txn-1"),
+        ("<any>", "result:success:txn-9", True, "txn-9"),
+        # The app emits an empty one when the session never reached a
+        # transaction, and that is not the same as there being none to read.
+        ("<any>", "result:success:", True, ""),
+        ("<any>", "error:resultUnknown", True, None),
+        ("<any>", "not a label", False, None),
+        ("<any>", None, False, None),
     ],
 )
-def test_a_sentinel_decides_whether_a_label_had_to_appear(template, actual, ok):
-    matched, captured = verify.match_label(template, actual)
+def test_a_sentinel_decides_whether_a_label_had_to_appear(
+    template, actual, ok, captured
+):
+    assert verify.match_label(template, actual) == (ok, captured)
 
-    assert matched is ok
-    # Neither sentinel captures: `<any>` records the label it measured in
-    # result.json rather than cross-checking an id it never named.
-    assert captured is None
+
+def test_a_discovery_cell_captures_the_id_it_reports():
+    # `<any>` used to capture nothing, so the id reaching
+    # verify_label_transaction was always None and the check returned on its
+    # first line. Every discovery cell in the matrix could therefore report a
+    # transaction id that names nothing and still pass -- which happened:
+    # D2's session_expired_server_submit measured
+    # `result:failure:restart:3a9c6d3b-...` against a session whose merchant
+    # record held `"transactions": []`, and it took reading merchant.json by
+    # hand to notice.
+    _, captured = verify.match_label(
+        "<any>", "result:failure:restart:3a9c6d3b-0000-0000-0000-000000000000"
+    )
+
+    assert captured == "3a9c6d3b-0000-0000-0000-000000000000"
+    assert verify.verify_label_transaction(session(txns=[]), captured) != []
+
+
+def test_an_unrecognized_recovery_may_hold_colons_and_the_id_still_comes_out():
+    # `unrecognized(<raw>)` wraps whatever the app could not parse, so the id
+    # cannot be found by splitting on ':'.
+    _, captured = verify.match_label(
+        "<any>", "result:failure:unrecognized(weird:thing):txn-1"
+    )
+
+    assert captured == "txn-1"
 
 
 def test_a_stored_credentials_of_the_wrong_shape_is_a_problem_not_a_crash():

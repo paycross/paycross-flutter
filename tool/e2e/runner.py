@@ -54,6 +54,7 @@ from . import evidence, tree, verify
 from .cells import (
     ARG_ACTIONS,
     BARE_ACTIONS,
+    LABEL_SENTINELS,
     TEARDOWN,
     Action,
     Card,
@@ -702,6 +703,11 @@ def run_cell(
     #: declared a marker says the behaviour did not happen, which is a
     #: finding of its own.
     tolerated_crash_lines: list[str] = []
+    #: What a DISCOVERY cell's transaction-id cross-check said. Recorded
+    #: rather than asserted, because such a cell named no label to be held to
+    #: -- but an id that names nothing is worth seeing, and this is where it
+    #: becomes visible without failing a cell for a question it never asked.
+    label_transaction_notes: list[str] = []
     reached_the_end = False
     authoring = False
 
@@ -919,7 +925,21 @@ def run_cell(
                 # short never reached the state it describes, so a mismatch
                 # here is the first failure's consequence, not a finding.
                 problems += verify.verify_merchant(resource, expected.merchant)
-                problems += verify.verify_label_transaction(resource, transaction_id)
+                # Where the id goes depends on whether the cell named a
+                # label. A pinned cell asserts it. A discovery cell RECORDS
+                # it -- `<any>` is a licence to record rather than assert,
+                # and that has to cover the id as well as the label, or the
+                # cells already measured turn red on a question they were
+                # never written to answer. What it may not do is stay
+                # invisible: before `<any>` captured, the id here was always
+                # None, the check returned on its first line, and a discovery
+                # cell could report a transaction that names nothing and
+                # pass. Two of D2's did.
+                said = verify.verify_label_transaction(resource, transaction_id)
+                if expected.label in LABEL_SENTINELS:
+                    label_transaction_notes += said
+                else:
+                    problems += said
 
         try:
             # Before the next cell's launch(), which is where the iOS console
@@ -973,6 +993,7 @@ def run_cell(
                 "problems": problems,
                 "screenshots_skipped": screenshots_skipped,
                 "teardown_replayed": teardown_replayed,
+                "label_transaction_notes": label_transaction_notes,
                 "tolerated_crash_markers": list(cell.tolerated_crash_markers),
                 "tolerated_crash_lines": [
                     _redacted(line.strip(), *secrets) for line in tolerated_crash_lines

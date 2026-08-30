@@ -2876,3 +2876,70 @@ def test_a_real_crash_still_fails_the_cell_that_declared_the_other_marker(tmp_pa
         "crash: 08-28 12:00:04.000 E AndroidRuntime: FATAL EXCEPTION: main"
     ]
     assert result_json(tmp_path)["tolerated_crash_lines"] == [FORCED_FINISH]
+
+
+# --- Plan B D3: a discovery cell records its id rather than hiding it -------
+
+
+def discovery_cell(tmp_path, label="<any>"):
+    """A cell that asserts the session but not which label appeared."""
+    body = textwrap.dedent(CELL.format(id="control")).replace(
+        'expected:\n  label: "result:success:<txn>"\n',
+        f'expected:\n  label: "{label}"\n',
+    )
+    directory = tmp_path / "cells"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(body, encoding="utf-8")
+    return directory
+
+
+#: A session the merchant API knows about that holds no transaction at all --
+#: the shape D2's session_expired_server_submit came back with.
+EMPTY_SESSION = {"sess-0": {"id": "sess-0", "status": "completed", "transactions": []}}
+
+
+def test_a_discovery_cell_records_a_phantom_id_and_still_passes(tmp_path):
+    # `<any>` is a licence to record rather than assert, and that has to stay
+    # true of the id as well as of the label -- otherwise the fix turns every
+    # already-measured discovery cell red on a question they were never
+    # written to answer. What must not survive is the id being invisible.
+    driver = FakeDriver(labels=["result:failure:restart:txn-ghost"])
+
+    report = run(
+        discovery_cell(tmp_path),
+        tmp_path,
+        driver,
+        sandbox=FakeSandbox(sessions=EMPTY_SESSION),
+    )
+
+    written = result_json(tmp_path)
+    assert written["transaction_id"] == "txn-ghost"
+    assert any("txn-ghost" in note for note in written["label_transaction_notes"])
+    assert not any("txn-ghost" in p for p in report.results[0].problems)
+
+
+def test_a_discovery_cell_whose_id_checks_out_records_nothing(tmp_path):
+    driver = FakeDriver(labels=["result:success:txn-1"])
+
+    report = run(discovery_cell(tmp_path), tmp_path, driver)
+
+    assert report.results[0].passed, report.results[0].problems
+    assert result_json(tmp_path)["label_transaction_notes"] == []
+    assert result_json(tmp_path)["transaction_id"] == "txn-1"
+
+
+def test_a_pinned_cell_still_fails_on_a_phantom_id(tmp_path):
+    # The other half of the same rule, and the reason a discovery cell cannot
+    # simply be pinned later: the pin fails the very check `<any>` records.
+    driver = FakeDriver(labels=["result:success:txn-ghost"])
+
+    report = run(
+        discovery_cell(tmp_path, label="result:success:<txn>"),
+        tmp_path,
+        driver,
+        sandbox=FakeSandbox(sessions=EMPTY_SESSION),
+    )
+
+    assert not report.results[0].passed
+    assert any("label_transaction" in p for p in report.results[0].problems)
+    assert result_json(tmp_path)["label_transaction_notes"] == []

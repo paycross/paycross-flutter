@@ -96,12 +96,29 @@ def match_label(template: str, actual: str | None) -> tuple[bool, str | None]:
     """Compares a label against a cell's expectation.
 
     Three shapes. `<none>` passes only when nothing was rendered. `<any>`
-    passes on any well-formed contract label and captures nothing -- it is a
-    discovery cell's expectation, and the label it measured is recorded in
-    result.json rather than compared. Anything else is a literal, in which
-    `<txn>` is a capture: a transaction id is minted by the server, so a cell
-    can never name one, and `verify_label_transaction` cross-checks the
-    captured value against the merchant API instead.
+    passes on any well-formed contract label -- it is a discovery cell's
+    expectation, and the label it measured is recorded in result.json rather
+    than compared. Anything else is a literal, in which `<txn>` is a capture:
+    a transaction id is minted by the server, so a cell can never name one,
+    and `verify_label_transaction` cross-checks the captured value against
+    the merchant API instead.
+
+    `<any>` captures too, and did not used to. Because it captured nothing,
+    the id reaching `verify_label_transaction` was always None and that check
+    returned on its first line -- so every discovery cell in the matrix could
+    report a transaction id naming nothing and still pass. Not hypothetical:
+    D2's `session_expired_server_submit` measured
+    `result:failure:restart:3a9c6d3b-...` on Android and `...:71dfcbf5-...`
+    on iOS against sessions whose merchant record held `"transactions": []`,
+    and both cells passed. It took reading merchant.json by hand to notice.
+
+    What the caller does with the captured id is where the two part company:
+    for a literal the mismatch is a problem, and for `<any>` the runner
+    RECORDS it instead, so a discovery cell still discovers but can no longer
+    hide a phantom id. The corollary is worth stating, because Phase 3 walks
+    into it: a cell whose id does not check out cannot later be pinned to
+    `result:...:<txn>`, because the pin would fail the very check `<any>` was
+    skipping.
 
     `LABEL_RE` is imported rather than restated -- unlike `MERCHANT_CHECKS`,
     which is deliberately kept equal to `cells.MERCHANT_KEYS` by a test. Two
@@ -113,7 +130,8 @@ def match_label(template: str, actual: str | None) -> tuple[bool, str | None]:
     if actual is None:
         return False, None
     if template == ANY_LABEL:
-        return bool(LABEL_RE.fullmatch(actual)), None
+        found = LABEL_RE.fullmatch(actual)
+        return bool(found), found.group("txn") if found else None
     if TXN_PLACEHOLDER not in template:
         return template == actual, None
     head, _, tail = template.partition(TXN_PLACEHOLDER)
