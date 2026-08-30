@@ -575,11 +575,45 @@ def test_expecting_no_label_without_the_action_that_looks_is_refused(tmp_path):
     assert "no_result" in message
 
 
-def test_looking_for_no_label_the_cell_does_not_expect_is_refused(tmp_path):
+def test_a_literal_label_with_nothing_that_captures_one_is_refused(tmp_path):
+    # `wait_result` is the only action that sets the label the expectation is
+    # compared against, so a cell expecting one without it cannot pass -- it
+    # would reach the verdict with `label` still None and fail on a device.
     body = CONTROL.replace("  - wait_result 120\n", "  - expect no_result\n")
 
     message = expect_rejected(tmp_path, body)
-    assert "does not expect" in message
+    assert "wait_result" in message
+
+
+def test_expecting_no_label_while_still_waiting_for_one_is_refused(tmp_path):
+    # The other half of the same rule, and the sharper one: `wait_result`
+    # RAISES when no label turns up, so a cell holding one can never reach a
+    # verdict with `label` None. Expecting `<none>` beside it is a cell that
+    # cannot pass either way -- it fails in the driver if the label is absent
+    # and on the expectation if it is not.
+    body = CONTROL.replace('label: "result:success:<txn>"', 'label: "<none>"')
+    body = body.replace("  - tap_pay\n", "  - tap_pay\n  - expect no_result\n")
+
+    message = expect_rejected(tmp_path, body)
+    assert "wait_result" in message
+
+
+def test_a_label_captured_before_an_absence_is_asserted_is_allowed(tmp_path):
+    # The two-phase shape `session_expired_server` needs: a first phase that
+    # produces a label (the cancel) and a second that must produce none (a
+    # dead session re-presented). The label expectation describes the LAST
+    # `wait_result`, and `expect no_result` is an independent assertion about
+    # what comes after it -- so a literal label and an absence check are not
+    # in conflict, and the runner checks the absence on its own verdict.
+    body = CONTROL.replace(
+        "  - wait_result 120\n",
+        "  - wait_result 120\n  - relaunch\n  - expect no_result\n",
+    )
+
+    cell = cells.load_cell(write(tmp_path, "control.yaml", body))
+
+    assert cell.expected_for("android").label == "result:success:<txn>"
+    assert ("expect", "no_result") in [(a.verb, a.arg) for a in cell.actions]
 
 
 def test_a_platform_override_alone_can_require_the_no_result_action(tmp_path):

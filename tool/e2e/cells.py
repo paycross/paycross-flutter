@@ -464,6 +464,32 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
     terminal variant has no `cancel_form` to reach a label with -- and it is
     exactly the shape sub-project #2 will produce as it fixes one platform
     before the other.
+
+    `no_result` used to be checked as that same pair and is not, because the
+    two directions turned out to be asking about different things. What the
+    label expectation describes is the LAST `wait_result`; `expect no_result`
+    is a separate assertion about a moment that may come after it. Requiring
+    every platform to expect `<none>` merely because the cell looks for an
+    absence somewhere forbade the two-phase shape `session_expired_server`
+    needs -- cancel, capture `result:cancelled`, then re-present a dead
+    session and prove nothing resolves.
+
+    What replaces it is the rule that was really wanted, stated over
+    `wait_result` instead of over the action that looks:
+
+    * `wait_result` is the only action that sets a label, so any expectation
+      that is not `<none>` needs one, or the cell reaches its verdict with
+      `label` still None and fails on a device.
+    * `wait_result` RAISES when no label arrives, so a cell expecting
+      `<none>` must not hold one -- with it the cell cannot pass either way,
+      failing in the driver if the label is absent and on the expectation if
+      it is not.
+
+    Together those still catch the divergence the old pair was aimed at: a
+    cell where one platform expects `<none>` and another expects a literal
+    demands both the presence and the absence of a `wait_result`, so one of
+    the two rules fires. And nothing passes silently, because `expect
+    no_result` carries its own verdict at run time whatever the label says.
     """
     verbs = [(a.verb, a.arg) for a in cell.actions]
     seen = [(p, cell.expected_for(p)) for p in cell.platforms]
@@ -473,11 +499,6 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
             ("expect", "rearmed"),
             lambda e: e.rearmed,
             "expects a re-armed sheet",
-        ),
-        (
-            ("expect", "no_result"),
-            lambda e: e.label == NO_LABEL,
-            f"expects label {NO_LABEL!r}",
         ),
     ):
         wanting = [p for p, e in seen if holds(e)]
@@ -494,6 +515,34 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
                 "The action list is shared by every platform, so it runs "
                 "there too and answers falsy"
             )
+
+    silent = [p for p, e in seen if e.label == NO_LABEL]
+    looks_for_silence = ("expect", "no_result") in verbs
+    if silent and not looks_for_silence:
+        raise CellError(
+            f"{where}: {silent} expects label {NO_LABEL!r}, but the cell has "
+            "no expect 'no_result' action, so nothing would ever look"
+        )
+
+    waits = any(verb == "wait_result" for verb, _ in verbs)
+    if silent and waits:
+        raise CellError(
+            f"{where}: {silent} expects label {NO_LABEL!r}, but the cell runs "
+            "wait_result, which raises rather than answering None. Such a "
+            "cell cannot pass either way"
+        )
+    # Gated on the absence check being present, which keeps this exactly as
+    # wide as the rule it replaces. The invariant is true of every cell --
+    # only `wait_result` sets a label -- but stated unconditionally it also
+    # rejects a cell built to fail before the verdict is ever reached, and
+    # several tests use one of those as a double. Widening it is a separate
+    # change with its own fixtures to fix.
+    speaking = [p for p, e in seen if e.label != NO_LABEL]
+    if looks_for_silence and speaking and not waits:
+        raise CellError(
+            f"{where}: {speaking} expects a label, but the cell has no "
+            "wait_result action, so nothing would ever capture one"
+        )
 
 
 def load_cell(path: Path) -> Cell:

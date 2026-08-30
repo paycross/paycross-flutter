@@ -222,8 +222,10 @@ here so it is not retried.
 
 ## The pins
 
-Six of the seven `<any>` cells measured the same label twice and are now
-literals in the cell files, so the matrix asserts where it used to record.
+Seven of the eight `<any>` cells are now assertions rather than recordings.
+Six measured the same label twice and became literals; the seventh
+(`session_expired_server`) was restructured instead, because what it had
+measured was an absence rather than a label.
 "Twice" means either two runs on one platform (the android-only airplane
 cells) or the same label on both platforms — both are independent
 observations of one behaviour.
@@ -330,26 +332,63 @@ says the SDK called that a retryable failure. When
 is fixed the cell will go red, and that red is the fix arriving — the cell's
 own comment says so. Leaving `<any>` would have let the fix land unremarked.
 
-### `session_expired_server` is not pinned, and cannot pass as it is written
+### `session_expired_server`: rebuilt as two phases, and it now passes
 
-It produced no label at all, on either platform, so there is no literal to
-pin — and the reason is structural rather than a defect in the SDK: the cell's
-action list stops at `present_token`, so nothing downstream can resolve a
-label, while `expected.label: "<any>"` requires one. **As authored it is a
-guaranteed red on both platforms in every future D2 run.**
+As authored it could never pass. Its actions stopped at `present_token`, so
+nothing downstream could resolve a label, while `expected.label: "<any>"`
+demanded one — a guaranteed red on both platforms in every run, with the real
+measurement buried in a driver timeout message rather than stated as an
+assertion.
 
-The runner's vocabulary already has the answer — `expect no_result` paired
-with `label: "<none>"`, a pairing `cells.py` enforces in both directions — but
-it is not a two-line change. The runner overwrites the recorded label on
-*every* `wait_result`, and this cell has an earlier one that records
-`result:cancelled` after the cancel; `<none>` only works if that is dropped
-too, which costs the cell its proof that the cancel produced a label.
+It now asserts both halves it exists for, in two phases:
 
-Left for Phase 3 on purpose, and for a second reason:
-`session_expired_server_submit` may supersede it. If the SDK turns out to
-refuse at submit, folding the two cells into one is likely better than
-converting this one — and deciding that before the submit measurement was in
-would have been a guess.
+```yaml
+actions:
+  - paste_token, type_card, tap_pay, expect rearmed, cancel_form
+  - wait_result 120          # phase 1: the cancel produced result:cancelled
+  - wait_expired 1400, relaunch, present_token
+  - expect no_result         # phase 2: a dead session resolves nothing
+expected:
+  label: "result:cancelled"
+  rearmed: true
+  merchant: {session_status: expired, txn_count: 1, txn_status: failed, no_succeeded_txn: true}
+```
+
+`wait_result 120` is now the *only* `wait_result`, so the label expectation
+compares against it directly — what used to be an intermediate the label check
+ignored is the label check. And `expect no_result` turns the payable-sheet
+measurement into an assertion: green while the behaviour holds, red when it
+changes.
+
+**This needed a rule change in `cells.py`.** `expect no_result` used to force
+`label: "<none>"` on every platform, which forbade capturing a label earlier in
+the same cell — so the two-phase shape would not load at all. The two
+directions were asking about different things: the label expectation describes
+the LAST `wait_result`, while `expect no_result` is a separate assertion about
+a moment that may come after it. That pairing is replaced by the rule that was
+really wanted, stated over `wait_result` instead:
+
+- an expectation that is not `<none>` needs a `wait_result`, or nothing ever
+  captures a label;
+- an expectation that *is* `<none>` must not have one, because `wait_result`
+  raises rather than answering None.
+
+Together those still catch the divergence the old pair was aimed at — a cell
+where one platform expects `<none>` and another a literal demands both the
+presence and the absence of a `wait_result` — and nothing passes silently,
+because `expect no_result` carries its own verdict at run time.
+
+**Proved by replay, on both recorded runs of this cell** (it ran in the two
+main passes only, not in the reruns or the pin runs): both PASS, with
+`result:cancelled`, `rearmed: true` and the full merchant block.
+
+Phase 2 is proved by the recorded evidence too, and proved *more* strongly
+than a live run would. `wait_no_label` polls `tree.label_from_tree` with
+`LABEL_PREFIXES`; `wait_label` polls the identical predicate. The recorded run
+spent **90 s** on that predicate after `present_token` and reported "no
+contract label within 90.0s" on both platforms — so 90 s of nothing is on
+record, and `expect no_result` asks for 60. A live rerun would have tested a
+weaker claim, at ~30 minutes a platform.
 
 ## The discovery cells, both platforms
 
@@ -364,7 +403,7 @@ platform's behaviour will not be surprised by the other.
 | `error_malformed_token` | `result:failure:restart:` (empty `<txn>`) | `result:failure:restart:` (empty `<txn>`) | yes | yes |
 | `session_expired_jwt` | `result:failure:restart:` (empty `<txn>`) | `result:failure:restart:` (empty `<txn>`) | yes | yes |
 | `timeout_provider_never_answers` | `result:failure:retry:<txn>` | `result:failure:retry:<txn>` | yes | yes |
-| `session_expired_server` | no label; payable sheet | no label; payable sheet | yes | **no — see above** |
+| `session_expired_server` | no label; payable sheet | no label; payable sheet | yes | restructured — see above |
 | `session_expired_server_submit` | `result:failure:restart:<txn>` | `result:failure:restart:<txn>` | yes | **no — the `<txn>` names no transaction** |
 | `airplane_during_challenge` | `result:failure:retry:<txn>` | *(android only, R6)* | — | yes |
 | `airplane_during_polling` | `result:failure:retry:<txn>` | *(android only, R6)* | — | yes |
