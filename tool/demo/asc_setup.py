@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 API = "https://api.appstoreconnect.apple.com"
 
@@ -30,7 +30,11 @@ TOKEN_LIFETIME_SECONDS = 1200
 
 REQUEST_TIMEOUT_SECONDS = 60
 
-Transport = Callable[[str, str, dict, bytes | None], tuple[int, bytes]]
+# `Optional[bytes]` rather than `bytes | None`: this alias is evaluated at import
+# time, and the Mac that runs the live commands has only Python 3.9, where PEP 604
+# unions in a runtime expression raise TypeError. The annotations below are strings
+# (`from __future__ import annotations`) and can keep the modern spelling.
+Transport = Callable[[str, str, dict, Optional[bytes]], tuple[int, bytes]]
 
 
 class AscError(RuntimeError):
