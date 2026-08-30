@@ -1298,6 +1298,84 @@ def test_save_card_says_so_when_the_session_never_rendered_a_toggle():
     assert "Save this card" in str(excinfo.value)
 
 
+# -- select_saved_card --------------------------------------------------------
+
+#: The saved-card sheet, dumped from the simulator on 2026-08-31. The first one
+#: taken in this campaign, on either platform.
+#:
+#: What it settles: the picker's rows are `Button`s whose accessible name is
+#: SwiftUI's concatenation of the row's children -- `"Visa •••• 0000, 12/28"`,
+#: brand, four U+2022, last4, then the expiry after a comma. There is no
+#: accessibility identifier anywhere in the picker, so that label is the only
+#: handle, which is D5's iOS accessibility finding stated as a fixture.
+SAVED_SHEET_IOS = (FIXTURES / "ios-saved-card-sheet.xml").read_text()
+
+#: The same sheet once the stored card is chosen: the fresh-card fields are
+#: gone, which is what `select_saved_card` verifies against.
+SAVED_SHEET_IOS_CHOSEN = SAVED_SHEET_IOS.replace('name="cardNumber"', 'name="gone"')
+assert SAVED_SHEET_IOS_CHOSEN != SAVED_SHEET_IOS
+
+
+class SelectFakeSsh(FakeSsh):
+    """Serves the unselected sheet until a tap arrives, then the selected one."""
+
+    def __init__(self, switches=True):
+        super().__init__()
+        self.tapped = False
+        self.switches = switches
+
+    def __call__(self, command, *, stdin=None):
+        if "/wda/tap" in command:
+            self.tapped = True
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            chosen = self.tapped and self.switches
+            sheet = SAVED_SHEET_IOS_CHOSEN if chosen else SAVED_SHEET_IOS
+            return source_response(sheet)
+        return super().__call__(command, stdin=stdin)
+
+
+def test_select_saved_card_taps_the_stored_row_and_not_the_new_card_row():
+    # Both rows are Buttons of the same size in the same list. The stored one
+    # is told apart by the four U+2022 bullets in its label -- `"\(brand
+    # .displayName) •••• \(last4)"` -- which the "Use a new card" row has not.
+    ssh = SelectFakeSsh()
+
+    driver(ssh).select_saved_card()
+
+    # The stored row is at (20, 232, 382, 277); "Use a new card" is 52pt below.
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 201.0, "y": 254.0}]
+
+
+def test_select_saved_card_raises_rather_than_paying_with_a_fresh_card():
+    """The failure mode worth spending code on.
+
+    A `select_saved_card` that cannot verify the switch must raise. If it
+    returned quietly the cell would type a CVV into the FRESH form, submit a
+    blank card, and report a saved-card payment -- and `saved_card_used` is the
+    only assertion that would notice, an hour into a matrix run.
+    """
+    ssh = SelectFakeSsh(switches=False)  # the tap lands, nothing changes
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).select_saved_card(timeout=0)
+
+    assert "still showing the new-card form" in str(excinfo.value)
+
+
+def test_select_saved_card_says_so_when_no_stored_card_is_offered():
+    # `saved_cards: {show: all}` missing from the session, or the customer has
+    # no cards. A cell-authoring or setup fault, named as one rather than
+    # timing out against a row that was never going to be there.
+    ssh = FakeSsh()  # the ordinary ACS fixture: no picker at all
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).select_saved_card(timeout=0)
+
+    assert "no stored-card row" in str(excinfo.value)
+
+
 # -- wait_saved_card ----------------------------------------------------------
 
 
@@ -2155,7 +2233,6 @@ NOT_LANDED_YET = [
     ("kill_activity", ()),
     ("dont_keep_activities", (True,)),
     ("tap_google_pay", ()),
-    ("select_saved_card", ()),
     ("wait_google_pay", (30,)),
     ("wait_no_google_pay", (20,)),
 ]

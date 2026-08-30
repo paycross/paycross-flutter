@@ -166,8 +166,7 @@ def test_every_store_cell_ticks_the_box_before_it_types_the_card(store, _pay):
     cell = cells.load_cell(D5 / f"{store}.yaml")
     verbs = [a.verb for a in cell.actions]
     assert verbs.index("save_card") < verbs.index("type_card"), (
-        f"{store}: typing first raises a keyboard that makes the iOS toggle "
-        "unreachable"
+        f"{store}: typing first raises a keyboard that makes the iOS toggle unreachable"
     )
 
 

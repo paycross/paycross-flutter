@@ -1143,6 +1143,61 @@ class IosDriver(Driver):
                 "store nothing"
             )
 
+    def select_saved_card(self, *, timeout: float = 30) -> None:
+        """Chooses the first stored card, and proves the form switched.
+
+        Matched on the four U+2022 bullets in the row's label, because that is
+        the only handle there is: `SavedCardPicker` (CardFormView.swift:230-276)
+        sets no accessibility identifier on anything, so the rows are plain
+        `Button`s and SwiftUI's concatenation of their children --
+        `"Visa •••• 0000, 12/28"` -- is what reaches the tree. The "Use a new
+        card" row sits directly below at the same size and has no bullets,
+        which is what separates the two.
+
+        The verification is the point. `cardNumber` is in the tree before the
+        selection and gone after it, because the two branches of the form are
+        mutually exclusive (`state.source.isNewCard`). Without that check a
+        selection that silently failed would leave the cell typing its CVV into
+        the FRESH form, submitting a blank card, and reporting a saved-card
+        payment -- with `saved_card_used` the only assertion that would ever
+        notice, an hour into a matrix run. So this raises rather than returns.
+        """
+        row = self._poll(
+            lambda nodes: next(
+                (
+                    n
+                    for n in nodes
+                    if SAVED_CARD_BULLETS in n.identifier and self._on_screen(n)
+                ),
+                None,
+            ),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        if row is None:
+            raise DriverError(
+                f"no stored-card row on the sheet within {timeout}s: the "
+                "session's options are missing saved_cards, or this customer "
+                "has no stored card"
+            )
+        self._tap_node(row)
+        self._sleep(SETTLE_SECONDS)
+
+        switched = self._poll(
+            lambda nodes: (
+                True if not self._matches_in(nodes, CARD_NUMBER, True) else None
+            ),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        if switched is None:
+            raise DriverError(
+                f"after tapping the stored card at {row.centre} the sheet is "
+                f"still showing the new-card form ({CARD_NUMBER!r} is present); "
+                "the CVV would be typed into a fresh card and the payment would "
+                "not use the stored one"
+            )
+
     def wait_saved_card(self, timeout: float = 30) -> bool:
         """Whether the sheet is offering a stored card.
 
