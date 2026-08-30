@@ -148,6 +148,29 @@ def test_every_store_cell_renders_the_box_and_ticks_it(store, _pay):
     assert cell.expected.merchant.get("saved_card_saved") is True, store
 
 
+@pytest.mark.parametrize("store, _pay", PAIRS)
+def test_every_store_cell_ticks_the_box_before_it_types_the_card(store, _pay):
+    """Not the obvious order, and measured rather than chosen.
+
+    `type_card` ends with the CVV, which raises a numeric pad over the bottom
+    ~35% of the iOS sheet, and nothing on this build dismisses that pad.
+    `IosDriver.save_card` has to `scroll_to` the toggle -- it sits at y=840 on
+    an 874-tall screen -- and `scroll_to` drags from y = height * 0.75, which
+    is inside the pad, so every swipe is swallowed and the toggle is
+    unreachable. Ticking first means there is no pad.
+
+    Safe on Android too, and for a reason rather than by luck: both platforms
+    compose the control from the SESSION (`canSaveCard` / `allowsSaving`), not
+    from card-entry state, so it is on screen before anything is typed.
+    """
+    cell = cells.load_cell(D5 / f"{store}.yaml")
+    verbs = [a.verb for a in cell.actions]
+    assert verbs.index("save_card") < verbs.index("type_card"), (
+        f"{store}: typing first raises a keyboard that makes the iOS toggle "
+        "unreachable"
+    )
+
+
 @pytest.mark.parametrize("_store, pay", PAIRS)
 def test_every_pay_cell_asks_for_the_snapshot_and_selects_from_it(_store, pay):
     """`saved_cards: {show: all}` (R4), then look, then choose, then the CVV.

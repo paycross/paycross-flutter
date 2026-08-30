@@ -24,10 +24,21 @@ session:
       usage: card_on_file
     customer:
       merchant_reference: "CUST-E2E-D5-CHALLENGE"
+# `save_card` runs BEFORE `type_card`, which is not the obvious order and is
+# not negotiable. Typing ends with the CVV, which raises a numeric pad over the
+# bottom ~35% of the iOS sheet, and nothing on this build dismisses that pad
+# (measured in D0, restated in IosDriver.dismiss_keyboard). `scroll_to` drags
+# from y = height * 0.75, which is INSIDE the pad, so the swipe is swallowed
+# and the toggle -- which sits below the fold at y=840 of 874 -- can never be
+# reached. Ticking first means there is no pad to fight.
+#
+# Safe on both platforms because the control is composed from the SESSION
+# (`allowsSaving` / `canSaveCard`), not from card-entry state, so it is on
+# screen before a single digit is typed.
 actions:
   - paste_token
-  - type_card
   - save_card
+  - type_card
   - tap_pay
   - acs:approve
   - wait_result 180
