@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +11,7 @@ import 'package:paycross_demo/e2e_label.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
 import '../automation_screen_test.dart' show spokenLabels;
+import 'presets_test.dart' show legacyLabelPrefixes;
 
 final _preset = demoPresets.first;
 
@@ -257,6 +260,90 @@ void main() {
           .flagsCollection
           .isLiveRegion,
       isTrue,
+    );
+
+    semantics.dispose();
+  });
+
+  testWidgets('nothing the screen says reads as a build without the define', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+
+    void sweep(String where) {
+      final spoken = spokenLabels(tester);
+      // Without this the sweep goes quietly vacuous the day the tree stops
+      // producing labels: zero nodes pass every prefix.
+      expect(spoken, isNotEmpty, reason: where);
+      for (final label in spoken) {
+        for (final prefix in legacyLabelPrefixes) {
+          expect(
+            label.startsWith(prefix),
+            isFalse,
+            reason: '$where -- "$label" starts with "$prefix".',
+          );
+        }
+      }
+    }
+
+    // A12 is a rule about the whole screen, not about `humanOutcome` alone:
+    // `Driver.no_label_error` scans the accessibility tree, and it runs when
+    // the runner could NOT find a label -- so the two in-flight stages are
+    // the ones that matter most, and a settled screen alone would miss them.
+    final mint = Completer<MintedSession>();
+    final paid = Completer<PayCrossResult>();
+    await tester.pumpWidget(
+      _run(mint: () => mint.future, present: (_) => paid.future, e2e: true),
+    );
+    await tester.pump();
+    // Each stage is pinned before it is swept. Without that the sweep passes
+    // by never reaching the frame it means to check, which is how a mutation
+    // to this very string went unnoticed the first time.
+    expect(find.text('Minting a session…'), findsOneWidget);
+    sweep('while minting');
+
+    mint.complete(
+      const MintedSession(id: 'sess-9', token: 'a-live-token', sentBody: '{}'),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Waiting for the payment sheet…'), findsOneWidget);
+    sweep('while waiting for the sheet');
+
+    paid.complete(_success('txn-9'));
+    await tester.pumpAndSettle();
+    expect(find.text('Done.'), findsOneWidget);
+    sweep('when done');
+
+    Future<void> settle(
+      String where,
+      Future<PayCrossResult> Function(String) present, {
+      Future<MintedSession> Function()? mint,
+    }) async {
+      // A bare tree first, so each case builds a new State rather than
+      // updating the one that already settled.
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(_run(present: present, mint: mint, e2e: true));
+      await tester.pumpAndSettle();
+      sweep(where);
+    }
+
+    await settle(
+      'a refusal',
+      (_) async => const PayCrossFailure(recovery: RecoveryDoNotRetry()),
+    );
+    await settle('a cancellation', (_) async => const PayCrossCancelled());
+    await settle(
+      'an integration problem',
+      (_) async => throw const PayCrossIntegrationError(
+        PayCrossErrorCode.resultUnknown,
+        'The app was killed mid-flight.',
+      ),
+    );
+    await settle(
+      'a mint that failed',
+      (_) async => _success('txn-9'),
+      mint: () async => throw const MinterError('POST -> HTTP 401'),
     );
 
     semantics.dispose();
