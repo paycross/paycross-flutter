@@ -2,6 +2,13 @@
 // The lint's own fix does not compile: Dart forbids a private NAMED
 // parameter, so `this._x` cannot appear in a `{...}` list, and one of these
 // fields holds a credential.
+//
+// File-level rather than one line-level ignore per field: the lint is
+// reported on the initializer list, not on the parameters, and `dart format`
+// pulls a comment written above the first initializer up onto the `}) :`
+// line, where it applies to that line instead. Every initializer but the
+// first can be suppressed narrowly; the first cannot, so the narrow form
+// does not hold.
 
 import 'dart:convert';
 import 'dart:math';
@@ -138,15 +145,18 @@ class Minter {
     http.Client? client,
     DateTime Function() now = DateTime.now,
     String Function() newIdempotencyKey = randomIdempotencyKey,
+    Duration timeout = _requestTimeout,
   }) : _credentials = credentials,
        _client = client ?? http.Client(),
        _now = now,
-       _newIdempotencyKey = newIdempotencyKey;
+       _newIdempotencyKey = newIdempotencyKey,
+       _timeout = timeout;
 
   final Credentials _credentials;
   final http.Client _client;
   final DateTime Function() _now;
   final String Function() _newIdempotencyKey;
+  final Duration _timeout;
 
   String? _accessToken;
   DateTime _accessTokenDeadline = DateTime.utc(1970);
@@ -244,10 +254,13 @@ class Minter {
 
   Future<http.Response> _run(http.Request request) async {
     try {
-      final streamed = await _client.send(request).timeout(_requestTimeout);
-      return http.Response.fromStream(streamed);
-    } on MinterError {
-      rethrow;
+      // One deadline over both legs. `send` completes when the headers land,
+      // so a deadline on it alone leaves the body read untimed and a phone
+      // that lost signal mid-response waiting as long as the socket lives.
+      return await _client
+          .send(request)
+          .then(http.Response.fromStream)
+          .timeout(_timeout);
     } catch (error) {
       // The exception type is safe to name; its message is not always, so it
       // goes through the same scrub as a response body.
