@@ -1,0 +1,75 @@
+# The shopper actually PAYS into a session the server has already expired.
+#
+# `session_expired_server` measured what happens up to `present_token` and
+# found something its own comment did not predict: on BOTH platforms the sheet
+# opens fully and stays payable. That run's `10-wait_result-failed.uix` is
+# element-for-element identical to `09-present_token.uix` -- card number,
+# expiry, CVV and a live Pay button, no error banner -- on iOS session
+# 01a0513f-13ea-7166-8347-b478886bb5ed and android session
+# 01a05154-829e-73ad-b5eb-16ea593c9fcb, both already `expired`.
+#
+# So the interesting question is one action further on than that cell goes: a
+# customer shown a payable form on a dead session will fill it in and press
+# Pay. This cell does exactly that and records what comes back.
+#
+# Two authoring choices, both deliberate.
+#
+# THE CARD IS THE APPROVE PAN. A decline PAN would keep the cell shaped like
+# its sibling, but it cannot reach `result:success:` -- any authorization that
+# got through would decline because the card declines, so the one outcome that
+# matters most (money moving on a session the server had already closed) would
+# be invisible. The approve card is what makes that case legible. If the SDK
+# refuses correctly no authorization is attempted and the PAN never mattered
+# anyway; the PAN only starts to matter in exactly the case worth catching.
+#
+# THERE IS NO DECLINE-AND-REARM SET-UP. The sibling opens with one to make its
+# `<txn>` non-empty and tell itself apart from `session_expired_jwt`; this cell
+# needs no such thing, only a server-expired session, so it waits one out and
+# submits into the corpse. A first draft kept the sibling's opening AND the
+# approve PAN, which cannot work: the set-up payment simply SUCCEEDED, there
+# was no re-arm to observe, `cancel_form` found no sheet, and the session
+# reached `completed` -- which can never go on to expire. (iOS run
+# 20260830-100336, session 01a05220-d801-7352-9632-bf1c1174cfb4, txn
+# df9b2fde-bde0-4f3a-988f-a13d282e686a succeeded.) Recorded so it is not
+# retried.
+#
+# `wait_expired` is what keeps the TOKEN alive while the SESSION dies: an open
+# session re-mints on every GET, so polling refreshes the token on the way.
+# Measured 2026-08-30: the JWT lives 900 s and the session 1200 s, so without
+# that refresh the token would die 300 s before the session and this cell
+# would measure session_expired_jwt instead.
+#
+# What each outcome means, decided before the run so the answer is not fitted
+# to it:
+#   - a clean `result:failure:restart:` or a re-arm with a banner = correct,
+#     no finding; the SDK refused at the only moment it could.
+#   - a hang, a crash, or `result:failure:retry:` = a finding.
+#   - `result:success:` = a serious finding.
+#
+# txn_count is deliberately NOT asserted: whether a submit on a dead session
+# creates a transaction at all is part of what is being measured, and
+# asserting either number would decide the question instead of asking it.
+# no_succeeded_txn IS asserted, because no reading of the flow makes money
+# moving on an expired session correct -- and with the approve PAN that
+# assertion has teeth.
+id: session_expired_server_submit
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - wait_expired 1400
+  - relaunch
+  - present_token
+  - type_card
+  - tap_pay
+  - wait_result 90
+expected:
+  label: "<any>"
+  merchant:
+    session_status: expired
+    no_succeeded_txn: true
