@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:paycross_demo/demo/history.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/run.dart';
+import 'package:paycross_demo/demo/version_panel.dart';
 import 'package:paycross_demo/e2e_label.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
@@ -32,11 +34,22 @@ class _ThrowingHistoryBackend implements HistoryBackend {
       throw StateError('no store');
 }
 
+/// A history whose write never answers, which is what a store wedged behind
+/// a stuck platform channel looks like from Dart.
+class _HangingHistoryBackend implements HistoryBackend {
+  @override
+  Future<List<String>> read() async => const <String>[];
+
+  @override
+  Future<void> write(List<String> entries) => Completer<void>().future;
+}
+
 Widget _run({
   required Future<PayCrossResult> Function(String) present,
   HistoryStore? history,
   bool e2e = false,
   Future<MintedSession> Function()? mint,
+  Future<DemoVersions> Function()? readVersions,
 }) => MaterialApp(
   home: RunScreen(
     preset: _preset,
@@ -51,8 +64,9 @@ Widget _run({
         ),
     present: present,
     history: history ?? HistoryStore(backend: InMemoryHistoryBackend()),
-    readVersions: () async =>
-        (demo: '0.1.0+7', plugin: '0.1.0', nativeSdk: 'unknown'),
+    readVersions:
+        readVersions ??
+        () async => (demo: '0.1.0+7', plugin: '0.1.0', nativeSdk: 'unknown'),
   ),
 );
 
@@ -347,5 +361,88 @@ void main() {
     );
 
     semantics.dispose();
+  });
+
+  testWidgets('a version read that never answers still shows the outcome', (
+    tester,
+  ) async {
+    // Bookkeeping must never gate the result of a payment that has already
+    // happened. The outcome is on screen before the version read is even
+    // asked for; what the read gates is only the bug report.
+    await tester.pumpWidget(
+      _run(
+        present: (_) async => _success('txn-9'),
+        readVersions: () => Completer<DemoVersions>().future,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Approved — 1000 EUR, transaction txn-9'), findsOneWidget);
+    expect(find.byKey(const ValueKey('copyBugReport')), findsNothing);
+
+    // And the read is not allowed to hang for good: the timeout hands back
+    // "unknown" versions, so the report becomes copyable anyway.
+    await tester.pump(const Duration(seconds: 10));
+
+    expect(find.byKey(const ValueKey('copyBugReport')), findsOneWidget);
+  });
+
+  testWidgets('a history write that never answers still shows the outcome', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _run(
+        present: (_) async => _success('txn-9'),
+        history: HistoryStore(backend: _HangingHistoryBackend()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Approved — 1000 EUR, transaction txn-9'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 10));
+
+    // The entry exists in memory whether or not it reached the store, so the
+    // report is copyable once the write has been given up on.
+    expect(find.byKey(const ValueKey('copyBugReport')), findsOneWidget);
+  });
+
+  testWidgets('a mint that failed offers no bug report to copy', (
+    tester,
+  ) async {
+    // There is no session and no entry, so there is nothing to quote. A
+    // button that copied a half-filled report would be worse than none.
+    await tester.pumpWidget(
+      _run(
+        mint: () async => throw const MinterError('POST -> HTTP 401'),
+        present: (_) async => _success('txn-9'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('HTTP 401'), findsOneWidget);
+    expect(find.byKey(const ValueKey('copyBugReport')), findsNothing);
+  });
+
+  testWidgets('a version read that throws is reported as unknown, not lost', (
+    tester,
+  ) async {
+    final backend = InMemoryHistoryBackend();
+    await tester.pumpWidget(
+      _run(
+        present: (_) async => _success('txn-9'),
+        readVersions: () async => throw StateError('no package info'),
+        history: HistoryStore(backend: backend),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Approved — 1000 EUR, transaction txn-9'), findsOneWidget);
+    final stored = HistoryEntry.fromJson(
+      jsonDecode(backend.entries.single) as Map<String, Object?>,
+    );
+    expect(stored.demoVersion, 'unknown');
+    expect(stored.pluginVersion, 'unknown');
+    expect(stored.nativeSdkVersion, 'unknown');
   });
 }

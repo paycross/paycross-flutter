@@ -10,6 +10,18 @@ import 'outcome.dart';
 import 'presets.dart';
 import 'version_panel.dart';
 
+/// How long the two bookkeeping steps after a payment get before the screen
+/// stops waiting on them.
+///
+/// Neither is bounded by anything else: a platform channel with nothing behind
+/// it never answers rather than failing. Without this the "Copy bug report"
+/// button would simply never appear, and nobody would know why.
+///
+/// Deliberately not applied to `present`, which the plugin forbids bounding --
+/// a shorter deadline there abandons a live payment while the native SDK keeps
+/// polling, and the card may still be charged.
+const Duration _bookkeepingTimeout = Duration(seconds: 5);
+
 /// Mint, pay, show what happened.
 ///
 /// Every platform edge is a constructor argument: the mint, the payment, the
@@ -93,6 +105,18 @@ class _RunScreenState extends State<RunScreen> {
       human = humanError(problem);
     }
 
+    if (!mounted) return;
+    // The outcome, the moment it is known and before anything else is asked
+    // for. What follows is bookkeeping -- a version read and a store write --
+    // and a payment that may have taken money must not wait on either, nor be
+    // lost to one that never answers.
+    setState(() {
+      _stage = 'Done.';
+      _contractLabel = label;
+      _human = human;
+      _transactionId = transactionId;
+    });
+
     final versions = await _versionsOrUnknown();
     final entry = HistoryEntry(
       at: DateTime.now(),
@@ -107,13 +131,9 @@ class _RunScreenState extends State<RunScreen> {
     await _remember(entry);
 
     if (!mounted) return;
-    setState(() {
-      _stage = 'Done.';
-      _contractLabel = label;
-      _human = human;
-      _transactionId = transactionId;
-      _entry = entry;
-    });
+    // Only now: the bug report quotes the versions, so the button appears
+    // once there is a complete entry behind it.
+    setState(() => _entry = entry);
   }
 
   /// Writes the run to History, and never lets that failure lose the outcome.
@@ -124,7 +144,7 @@ class _RunScreenState extends State<RunScreen> {
   /// payment sheet…" with no way to tell a hang from a completed charge.
   Future<void> _remember(HistoryEntry entry) async {
     try {
-      await widget.history.append(entry);
+      await widget.history.append(entry).timeout(_bookkeepingTimeout);
     } catch (_) {
       // Nothing to say on screen: the entry is held in memory either way, so
       // the outcome card and its bug report render unchanged.
@@ -133,8 +153,10 @@ class _RunScreenState extends State<RunScreen> {
 
   Future<DemoVersions> _versionsOrUnknown() async {
     try {
-      return await widget.readVersions();
+      return await widget.readVersions().timeout(_bookkeepingTimeout);
     } catch (_) {
+      // A throw and a read that never answers are the same thing to this
+      // screen, and "unknown" is the honest rendering of both.
       return unknownVersions;
     }
   }
