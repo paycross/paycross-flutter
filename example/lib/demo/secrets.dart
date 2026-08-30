@@ -102,13 +102,29 @@ class SecretStore {
   }
 
   Future<void> write(Credentials credentials) async {
-    await _backend.write(_clientIdKey, credentials.clientId);
-    await _backend.write(_clientSecretKey, credentials.clientSecret);
-    final merchantId = credentials.googlePayMerchantId;
-    if (merchantId == null || merchantId.isEmpty) {
-      await _backend.delete(_googlePayKey);
-    } else {
-      await _backend.write(_googlePayKey, merchantId);
+    try {
+      await _backend.write(_clientIdKey, credentials.clientId);
+      await _backend.write(_clientSecretKey, credentials.clientSecret);
+      final merchantId = credentials.googlePayMerchantId;
+      if (merchantId == null || merchantId.isEmpty) {
+        await _backend.delete(_googlePayKey);
+      } else {
+        await _backend.write(_googlePayKey, merchantId);
+      }
+    } catch (_) {
+      // Three keys, written in turn, so a failure part-way can leave a new
+      // id beside the old secret. That pair is worse than an empty store:
+      // it reads back as configured, so nothing sends the human to Settings,
+      // and it can never authenticate. "Not configured" is the only state
+      // this class can still promise, and the guarded read already knows how
+      // to answer it.
+      try {
+        await forget();
+      } catch (_) {
+        // The store is beyond reach entirely. The write's own failure is the
+        // one worth reporting, so let it be the one that escapes.
+      }
+      rethrow;
     }
   }
 
