@@ -129,6 +129,35 @@ void main() {
       expect(tokenCalls, 1);
     });
 
+    test('is still reused one second inside the margin', () async {
+      var tokenCalls = 0;
+      final minter = Minter(
+        credentials: _credentials,
+        now: () => clock,
+        newIdempotencyKey: () => 'idem',
+        client: MockClient((request) async {
+          if (request.url.path.endsWith('/token')) {
+            tokenCalls++;
+            return tokenResponse(clock.add(const Duration(hours: 1)));
+          }
+          return sessionResponse();
+        }),
+      );
+
+      await minter.mint('{"amount":1000}');
+      // One second short of the 3360 s of usable life. The test below pins
+      // the other side of the same boundary; without this one a margin of any
+      // size at all would pass it.
+      clock = clock.add(const Duration(seconds: 3359));
+      await minter.mint('{"amount":1000}');
+
+      expect(tokenCalls, 1);
+      // Above 300 s the refresh fires inside the gateway's 3300 s cache
+      // window: the same token comes back, its `exp` has not moved, and the
+      // client asks again at once -- a busy loop rather than a stale token.
+      expect(tokenRefreshMargin, lessThan(const Duration(seconds: 300)));
+    });
+
     test('is replaced a full margin before it dies', () async {
       var tokenCalls = 0;
       final minter = Minter(
@@ -379,12 +408,20 @@ void main() {
       expect(minted.sentBody, contains('DEMO-'));
     });
 
-    test('a body that is not an object is refused before it is sent', () {
+    test('a body that is not an object is refused before it is sent', () async {
       final minter = minterOver(
         recording((request, index) => sessionResponse()),
       );
 
-      expect(() => minter.mint('not json at all'), throwsA(isA<MinterError>()));
+      // Awaited, so `sent` is read after the mint has finished failing
+      // rather than while it is still on its way to the wire.
+      await expectLater(
+        minter.mint('not json at all'),
+        throwsA(isA<MinterError>()),
+      );
+      // Valid JSON, still not a session: this one reaches the second guard,
+      // which the unparseable body above never gets as far as.
+      await expectLater(minter.mint('[1, 2, 3]'), throwsA(isA<MinterError>()));
       expect(sent, isEmpty);
     });
 

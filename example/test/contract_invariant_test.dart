@@ -75,6 +75,12 @@ void main() {
       expect(filesSpellingALabel(scratch), isEmpty);
     });
 
+    test('a longer word that merely ends in one is not', () {
+      write('longer.dart', "const id = 'myresult:x';\nvar swallowerror = 1;\n");
+
+      expect(filesSpellingALabel(scratch), isEmpty);
+    });
+
     test('a label in a string or a doc comment is', () {
       write('spoken.dart', "const outcome = 'result:success:\$id';\n");
       write('commented.dart', '/// Renders error:sessionExpired.\n');
