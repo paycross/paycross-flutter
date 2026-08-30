@@ -1,0 +1,44 @@
+# The same store, on the card that raises a 3-D Secure challenge.
+#
+# A second customer rather than a second card on the first one. Two customers
+# means each session's selector offers exactly ONE row, so "the first stored
+# card" is never ambiguous and `select_saved_card` never has to guess which
+# of two the cell meant.
+#
+# The pairing with saved_card_1_save is what makes this cell worth running:
+# storing a card is a field on the submit, and a submit that goes through an
+# authentication round trip before it is authorized is a different code path
+# from one that does not. If the box only survives the frictionless path,
+# this is the cell that says so.
+id: saved_card_3_challenge_save
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+  options:
+    save_card_config:
+      usage: card_on_file
+    customer:
+      merchant_reference: "CUST-E2E-D5-CHALLENGE"
+actions:
+  - paste_token
+  - type_card
+  - save_card
+  - tap_pay
+  - acs:approve
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    saved_card_saved: true
+    threeds:
+      outcome: authenticated
+      flow: challenge
+      liability_shifted: true

@@ -461,6 +461,33 @@ class AndroidDriver(Driver):
         self._key(_KEYCODE_BACK)  # drop the IME so the Pay button is reachable
         self._sleep(SETTLE_SECONDS)
 
+    def type_cvv(self, cvv: str) -> None:
+        """Fills the CVV field and nothing else.
+
+        The saved-card branch of the form is a prompt and one field
+        (`CardFormScreen.SavedCardCvvInput`), so `type_card` cannot serve: its
+        first act is to clear a card-number field that is not on this screen,
+        and it would raise looking for it.
+
+        The field itself is the same one -- both branches render `CvvField`,
+        so `CVV` is one matcher rather than two. What differs is the
+        validation behind it: the saved-card branch passes `CardType.UNKNOWN`,
+        which is three digits whatever the stored card's brand is.
+
+        No clearing pass. The field starts empty on this path, and a DEL sweep
+        would be the one way to lose digits that are about to be asked for
+        again.
+        """
+        self._tap_desc(CVV)
+        self._sleep(SETTLE_SECONDS)
+        self._input_text(cvv)
+        self._sleep(SETTLE_SECONDS)
+        # The numeric pad covers the Pay button's bounds, and `tap_pay` taps a
+        # centre rather than pressing a control -- behind the pad that lands on
+        # a digit key. `type_card` ends the same way for the same reason.
+        self._key(_KEYCODE_BACK)
+        self._sleep(SETTLE_SECONDS)
+
     def tap_pay(self, amount_text: str) -> None:
         self._tap_text(f"Pay {amount_text}")
 

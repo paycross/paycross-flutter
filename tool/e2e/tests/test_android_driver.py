@@ -391,6 +391,46 @@ def test_verify_pan_reports_what_the_field_actually_reads():
     assert "formatter" not in message
 
 
+# -- type_cvv -----------------------------------------------------------------
+
+
+def test_type_cvv_fills_the_cvv_field_and_touches_nothing_else():
+    # The saved-card form is a prompt and one field. `type_card`'s clearing
+    # pass would find no card-number field to clear and raise, and its other
+    # three fields do not exist on this screen at all -- which is why this is
+    # its own action rather than a flag on that one.
+    form = (FIXTURES / "android-rearmed.uix").read_text()
+    shell = FakeShell(tree=form)
+    naps = []
+
+    driver(shell, naps).type_cvv("123")
+
+    text = " | ".join(shell.argv_text())
+    assert "shell input text 123" in text
+    # The same content-desc the fresh form uses: CardFormScreen renders the
+    # same CvvField on both branches, so there is one matcher, not two.
+    assert android.CVV == "CVV input"
+    # Nothing else typed and nothing else cleared. A stray DEL here would
+    # eat digits the shopper is about to be asked for again.
+    assert text.count("input text") == 1
+    assert "input keyevent 67" not in text
+
+
+def test_type_cvv_drops_the_ime_so_the_pay_button_is_reachable():
+    # The numeric pad covers the bottom of the sheet, and `tap_pay` matches the
+    # Pay button by its text and taps the centre of its bounds. Behind the pad
+    # that tap types a digit instead. `type_card` ends the same way and for the
+    # same reason.
+    form = (FIXTURES / "android-rearmed.uix").read_text()
+    shell = FakeShell(tree=form)
+
+    driver(shell).type_cvv("123")
+
+    argv = shell.argv_text()
+    typed = argv.index("shell input text 123")
+    assert f"shell input keyevent {android._KEYCODE_BACK}" in argv[typed:]
+
+
 # -- paste_token --------------------------------------------------------------
 
 
@@ -1118,7 +1158,6 @@ NOT_LANDED_YET = [
     ("rotate", ()),
     ("kill_activity", ()),
     ("dont_keep_activities", (True,)),
-    ("type_cvv", ("123",)),
     ("tap_google_pay", ()),
     ("select_saved_card", ()),
     ("save_card", ()),

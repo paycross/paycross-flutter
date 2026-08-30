@@ -1,0 +1,45 @@
+# Pay again with the card the previous cell stored, re-entering the CVV.
+#
+# `saved_cards: {show: "all"}` is what makes the backend put the customer's
+# cards into the session snapshot at all -- omit it and `saved_cards` comes
+# back empty however many cards the customer has
+# (SessionDataService.php:227-243). Expired cards are filtered there and
+# re-checked at submit, which is why the stored card's 12/28 expiry matters.
+#
+# Neither SDK auto-selects a stored card, deliberately, so the selection is
+# an explicit action. `saved_card_used` asserts the submit really carried
+# `card.saved_uuid` rather than a re-typed PAN -- the one thing a screenshot
+# of a filled form could never tell you.
+#
+# The `card:` block is still required by the loader and the PAN is never
+# typed here: `type_cvv` reads `card.cvv` and nothing else. It names the same
+# PAN as the cell that stored it so a reader can see which card is being
+# re-used.
+id: saved_card_2_pay
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+  options:
+    saved_cards:
+      show: all
+    customer:
+      merchant_reference: "CUST-E2E-D5-INSTANT"
+actions:
+  - paste_token
+  - expect saved_card
+  - select_saved_card
+  - type_cvv
+  - tap_pay
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    saved_card_used: true

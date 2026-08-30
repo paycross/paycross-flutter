@@ -968,6 +968,31 @@ class IosDriver(Driver):
         self.dismiss_keyboard(required=False)
         self._sleep(SETTLE_SECONDS)
 
+    def type_cvv(self, cvv: str) -> None:
+        """Fills the CVV field and nothing else.
+
+        `cvvField` is declared once in `CardFormView` and rendered by both
+        branches of the form, identifier included, so this reuses `type_card`'s
+        matcher rather than adding a saved-card variant of it. What differs is
+        behind the field: on the saved-card path `cvvBrand` is forced to
+        `.unknown`, which is three digits whatever the stored card's brand is.
+
+        Nothing is read back. It is a `SecureField`, so WDA reports its value
+        masked or empty however many digits went in -- a read-back would either
+        always fail or pass on the bullets, which is worse. The Pay button's
+        own enablement is what says the field validated, and `tap_pay` is where
+        that is found out.
+        """
+        self.tap_identifier(CVV)
+        self._sleep(SETTLE_SECONDS)
+        self._keys(cvv)
+        self._sleep(SETTLE_SECONDS)
+        # The same bargain `type_card` strikes: tried, because the pad covers
+        # the bottom of the sheet, and not required, because on this build
+        # nothing dismisses it and on the form it covers nothing that matters.
+        self.dismiss_keyboard(required=False)
+        self._sleep(SETTLE_SECONDS)
+
     def tap_pay(self, amount_text: str) -> None:
         # The amount is in the label, but payButton is a real identifier, so
         # unlike Android there is nothing to compute here.

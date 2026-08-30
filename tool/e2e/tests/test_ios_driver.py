@@ -1160,6 +1160,53 @@ def test_type_card_settles_between_the_taps_and_the_keystrokes():
     assert naps == [0.5] * 9
 
 
+# -- type_cvv -----------------------------------------------------------------
+
+
+def test_type_cvv_fills_the_cvv_field_and_touches_nothing_else():
+    # Literally the same view as the fresh form's: `cvvField` is declared once
+    # in CardFormView and rendered by both branches, identifier and all. So
+    # there is one matcher here, not a saved-card variant of one.
+    ssh = FakeSsh()
+    d = driver(ssh)
+    tapped = []
+    d.tap_identifier = lambda name, **kw: tapped.append(name)
+
+    d.type_cvv("123")
+
+    assert tapped == ["cvv"]
+    assert typed_strings(ssh) == ["123"]
+
+
+def test_type_cvv_tries_the_keyboard_away_without_failing_the_cell_over_it():
+    # Same bargain `type_card` strikes, and for the same measured reason: the
+    # numeric pad has no Done key and nothing on this build dismisses it, but
+    # on the form it covers nothing that matters. A cell must not die here.
+    ssh = KeyboardFakeSsh(clears_on_tap=False)
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.type_cvv("123")
+
+    keys_at = max(i for i, c in enumerate(ssh.calls) if "/wda/keys" in c)
+    dismiss_at = next(i for i, c in enumerate(ssh.calls) if "keyboard/dismiss" in c)
+    assert dismiss_at > keys_at
+
+
+def test_type_cvv_does_not_read_the_digits_back():
+    # A SecureField (CardFormView.swift:112), so WDA reports its value masked
+    # or empty whatever was typed. A read-back here would either always fail or
+    # -- worse -- pass on the bullets and prove nothing. The Pay button's own
+    # enablement is what says the field validated, and `tap_pay` finds out.
+    ssh = FakeSsh()
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.type_cvv("123")
+
+    assert not any("/wda/element" in c for c in ssh.calls)
+
+
 # -- paste_token --------------------------------------------------------------
 
 
@@ -1959,7 +2006,6 @@ NOT_LANDED_YET = [
     ("rotate", ()),
     ("kill_activity", ()),
     ("dont_keep_activities", (True,)),
-    ("type_cvv", ("123",)),
     ("tap_google_pay", ()),
     ("select_saved_card", ()),
     ("save_card", ()),
