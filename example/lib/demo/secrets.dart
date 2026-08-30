@@ -39,17 +39,34 @@ abstract interface class SecretBackend {
 class SecureStorageBackend implements SecretBackend {
   const SecureStorageBackend([this._storage = const FlutterSecureStorage()]);
 
+  /// Keeps the Keychain item on the device that wrote it.
+  ///
+  /// The iOS half of the same decision `data_extraction_rules.xml` makes on
+  /// Android. The plugin's default accessibility lets an item travel to a
+  /// new device on a restore, where it belongs to a different install of
+  /// this app; the `_this_device` variants do not. `first_unlock` rather
+  /// than `unlocked` because `main` reads the merchant id before the app is
+  /// on screen, which can be before the human has unlocked the phone.
+  ///
+  /// Passed on reads and deletes too, not writes alone, so every query
+  /// describes the same item the write created.
+  static const IOSOptions iosOptions = IOSOptions(
+    accessibility: KeychainAccessibility.first_unlock_this_device,
+  );
+
   final FlutterSecureStorage _storage;
 
   @override
-  Future<String?> read(String key) => _storage.read(key: key);
+  Future<String?> read(String key) =>
+      _storage.read(key: key, iOptions: iosOptions);
 
   @override
   Future<void> write(String key, String value) =>
-      _storage.write(key: key, value: value);
+      _storage.write(key: key, value: value, iOptions: iosOptions);
 
   @override
-  Future<void> delete(String key) => _storage.delete(key: key);
+  Future<void> delete(String key) =>
+      _storage.delete(key: key, iOptions: iosOptions);
 }
 
 /// A [SecretBackend] in a Map. Tests only.

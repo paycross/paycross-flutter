@@ -2,12 +2,35 @@
 <!-- Android 12+ device-to-device transfer is not governed by
      android:allowBackup, so opting out of cloud backup is only half the
      job. The encrypted preferences are worthless on another device: their
-     KeyStore key never leaves the one they were written on. -->
+     KeyStore key never leaves the one they were written on.
+
+     Four files, not one. flutter_secure_storage 11 splits its state across
+     the ciphertext, the wrapped key and two config markers, and a restore
+     that brought back some but not the KeyStore key would leave the plugin
+     reading a blob it cannot decrypt. The names come from the plugin's own
+     source: FlutterSecureStorageConfig.DEFAULT_PREF_NAME,
+     getEffectiveKeyStoragePrefsName(), and NamespacedConfigSource's
+     namespaced and LEGACY_GLOBAL_CONFIG_NAME forms. The colon is really
+     part of that filename. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="FlutterSecureStorage.xml" />
+        <exclude domain="sharedpref" path="FlutterSecureKeyStorage.xml" />
+        <exclude
+            domain="sharedpref"
+            path="FlutterSecureStorageConfiguration:FlutterSecureStorage.xml" />
+        <exclude
+            domain="sharedpref"
+            path="FlutterSecureStorageConfiguration.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="FlutterSecureStorage.xml" />
+        <exclude domain="sharedpref" path="FlutterSecureKeyStorage.xml" />
+        <exclude
+            domain="sharedpref"
+            path="FlutterSecureStorageConfiguration:FlutterSecureStorage.xml" />
+        <exclude
+            domain="sharedpref"
+            path="FlutterSecureStorageConfiguration.xml" />
     </device-transfer>
 </data-extraction-rules>

@@ -1,3 +1,4 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 
@@ -38,6 +39,19 @@ class _FailOneWriteBackend implements SecretBackend {
 }
 
 void main() {
+  test('the Keychain item stays on the device that wrote it', () {
+    // The iOS mirror of the Android backup exclusion. An item written with
+    // the plugin's default accessibility migrates to a new device on a
+    // restore, where it belongs to a different install of the app --
+    // exactly what data_extraction_rules.xml stops on the other platform.
+    // `first_unlock` rather than `unlocked` so a launch before the first
+    // manual unlock can still read it.
+    expect(
+      SecureStorageBackend.iosOptions.accessibility,
+      KeychainAccessibility.first_unlock_this_device,
+    );
+  });
+
   test('an empty store reads as "not configured"', () async {
     final store = SecretStore(backend: InMemorySecretBackend());
 
