@@ -145,7 +145,7 @@ jobs:
   # The example app's own tests are not repeated here; the linux job above
   # already runs them, and the label contract only needs proving once.
   e2e-unit:
-    name: E2E runner unit tests
+    name: Runner and release-tool unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -166,7 +166,7 @@ jobs:
           ruff format --check --config tool/e2e/ruff.toml tool/e2e
 
       - name: Test the runner
-        run: python -m pytest tool/e2e/tests -q
+        run: python -m pytest tool/e2e/tests tool/demo/tests -q
 
   # macOS only proves the thing Linux cannot: that the generated Swift and the
   # hand-written iOS implementation actually agree. PR-only, because that
