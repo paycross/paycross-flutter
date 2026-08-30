@@ -355,6 +355,10 @@ void main() {
       ),
     );
     await settle(
+      'an unexpected throw',
+      (_) async => throw MissingPluginException('no implementation found'),
+    );
+    await settle(
       'a mint that failed',
       (_) async => _success('txn-9'),
       mint: () async => throw const MinterError('POST -> HTTP 401'),
@@ -444,5 +448,46 @@ void main() {
     expect(stored.demoVersion, 'unknown');
     expect(stored.pluginVersion, 'unknown');
     expect(stored.nativeSdkVersion, 'unknown');
+  });
+
+  testWidgets('an unexpected throw from the sheet is shown, not swallowed', (
+    tester,
+  ) async {
+    // The plugin documents that only a PayCrossIntegrationError escapes
+    // `presentPayment`, and MissingPluginException is the counterexample it
+    // cannot rule out: it is not a PlatformException, so the plugin's own
+    // guard does not convert it. Unhandled, it left the screen on "Waiting
+    // for the payment sheet…" forever after a payment that may have charged.
+    await tester.pumpWidget(
+      _run(
+        present: (_) async =>
+            throw MissingPluginException('no implementation found'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'The payment sheet failed unexpectedly: MissingPluginException',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Done.'), findsOneWidget);
+  });
+
+  testWidgets('an unexpected throw carries no contract label', (tester) async {
+    // There is no outcome to name, so there is nothing the runner could
+    // honestly compare. A label invented here would be a cell that passed on
+    // a run that never reached the sheet.
+    await tester.pumpWidget(
+      _run(
+        present: (_) async =>
+            throw MissingPluginException('no implementation found'),
+        e2e: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('e2eLabel')), findsNothing);
   });
 }

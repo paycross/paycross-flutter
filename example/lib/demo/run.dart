@@ -103,6 +103,20 @@ class _RunScreenState extends State<RunScreen> {
     } on PayCrossIntegrationError catch (problem) {
       label = labelForError(problem);
       human = humanError(problem);
+    } catch (problem) {
+      // The plugin documents that only a PayCrossIntegrationError escapes
+      // `presentPayment`, and its own guard converts PlatformException. This
+      // arm is for what that guard cannot see -- a MissingPluginException on
+      // a build where the plugin did not register, say. Unhandled, it left
+      // the screen on "Waiting for the payment sheet…" for good, after a
+      // payment that may have charged.
+      //
+      // The type only, never the message: this text is stored and copied,
+      // and nothing promises what an unknown exception's message carries.
+      //
+      // No contract label: there is no outcome to name, and inventing one
+      // would let a cell pass on a run that never reached the sheet.
+      human = 'The payment sheet failed unexpectedly: ${problem.runtimeType}';
     }
 
     if (!mounted) return;
