@@ -50,13 +50,14 @@ def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
         assert tail and tail[-1][0] in TERMINAL_VERBS, cell.id
         for verb, off in sorted(TEARDOWN):
             if any(v == verb and a == "on" for v, a in actions):
-                assert (verb, off) in actions, (
-                    f"{cell.id}: turns {verb} on and never off"
-                )
+                assert (
+                    verb,
+                    off,
+                ) in actions, f"{cell.id}: turns {verb} on and never off"
         if any(v == "wait" for v, _ in actions):
-            assert "expired" in cell.id or "jwt" in cell.id, (
-                f"{cell.id}: a bare `wait` is only for the two expiry recipes"
-            )
+            assert (
+                "expired" in cell.id or "jwt" in cell.id
+            ), f"{cell.id}: a bare `wait` is only for the two expiry recipes"
         for pan in APPROVING_PANS:
             assert pan not in text, f"{cell.id} uses {pan}, which approves on TEST"
         if "no_succeeded_txn" in expected.merchant:
@@ -69,7 +70,7 @@ def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
         # this loop and the assertion would be dead code.
         if not expected.label.startswith("result:success"):
             assert "no_succeeded_txn" in expected.merchant, cell.id
-        assert "airplane" not in verbs or platform == "android", (
-            f"{cell.id}: airplane mode does not exist on the iOS simulator"
-        )
+        assert (
+            "airplane" not in verbs or platform == "android"
+        ), f"{cell.id}: airplane mode does not exist on the iOS simulator"
     return loaded
