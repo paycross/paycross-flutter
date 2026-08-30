@@ -962,6 +962,24 @@ def run_cell(
                 log, driver.package, cell.tolerated_crash_markers
             )
             problems += [f"crash: {line.strip()}" for line in faults]
+            # A cell that declares a marker is a cell whose whole purpose is to
+            # provoke it, so its ABSENCE is a finding rather than a quiet
+            # success. Measured on the rig 2026-08-31 and this is why the check
+            # exists: `settings put global always_finish_activities 1` writes
+            # the setting and reads back as `1`, and on API 35 the activity
+            # manager ignores it until the next boot -- so the cell turned the
+            # developer option "on", measured an ordinary payment, and PASSED.
+            # It is the same shape as the airplane broadcast that flipped a
+            # setting while the radios stayed up, and the same answer: prove
+            # the behaviour, not the request.
+            if cell.tolerated_crash_markers and not tolerated_crash_lines:
+                problems.append(
+                    "tolerated_crash_markers: the cell declared "
+                    f"{list(cell.tolerated_crash_markers)} and none of it ever "
+                    "appeared in the log, so the behaviour the cell was written "
+                    "to observe did not happen and whatever it measured was "
+                    "something else"
+                )
 
     problems = [_redacted(problem, *secrets) for problem in problems]
     result = CellResult(

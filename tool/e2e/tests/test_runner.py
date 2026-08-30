@@ -2943,3 +2943,31 @@ def test_a_pinned_cell_still_fails_on_a_phantom_id(tmp_path):
     assert not report.results[0].passed
     assert any("label_transaction" in p for p in report.results[0].problems)
     assert result_json(tmp_path)["label_transaction_notes"] == []
+
+
+def test_a_declared_marker_that_never_appears_fails_the_cell(tmp_path):
+    # The trap this closes, measured on the rig 2026-08-31: `settings put
+    # global always_finish_activities 1` writes the setting and reads back as
+    # `1`, and on API 35 the activity manager IGNORES it until the next boot.
+    # So the cell turned the developer option "on", measured an ordinary
+    # payment, and PASSED -- a green cell that observed nothing. A cell that
+    # declares a marker is a cell whose whole purpose is to provoke it, so its
+    # absence is a finding rather than a quiet success.
+    driver = logging(KeepsNoActivities(labels=["result:success:txn-1"]), "all quiet\n")
+
+    report = run(keeping_no_activities(tmp_path, declared=True), tmp_path, driver)
+
+    assert not report.results[0].passed
+    problems = report.results[0].problems
+    assert any(
+        "Force finishing activity" in p and "did not happen" in p for p in problems
+    ), problems
+    assert result_json(tmp_path)["tolerated_crash_lines"] == []
+
+
+def test_a_cell_declaring_nothing_is_not_held_to_that_rule(tmp_path):
+    driver = logging(KeepsNoActivities(labels=["result:success:txn-1"]), "all quiet\n")
+
+    report = run(keeping_no_activities(tmp_path, declared=False), tmp_path, driver)
+
+    assert report.results[0].passed, report.results[0].problems

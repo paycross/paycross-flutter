@@ -1,0 +1,45 @@
+# The process dies with the sheet up, and the shopper relaunches.
+#
+# No result is delivered, BY DESIGN: the pending Dart call lives in the
+# isolate and the isolate dies with the process. `<none>` is how a cell says
+# that, and `expect no_result` is what looks. The transaction is left where
+# the challenge left it and must never become an authorization.
+#
+# Killing during the challenge rather than during the submit, because the
+# submit is a race and the challenge is a steady state.
+#
+# `kill_activity` ends the PROCESS on both platforms -- `am force-stop` on
+# Android rather than `am kill`, which only takes processes that are safe to
+# kill and would have done nothing to a foreground one with the SDK's activity
+# on top. The verb's name is Phase 0's; what it does is what a low-memory kill
+# does.
+#
+# Measured on iOS: the app comes back to its own first screen with no result
+# on it, and the session is still open with its transaction at
+# threeds_challenge_requested. That is the honest outcome to record and NOT a
+# defect in itself -- but note what it means for a merchant, which is that a
+# shopper can kill the app mid-challenge and the app will never learn what
+# happened. The reconciliation duty is server-side, and the report says so.
+id: kill_process_during_challenge
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - expect acs
+  - kill_activity
+  - relaunch
+  - expect no_result
+expected:
+  label: "<none>"
+  merchant:
+    session_status: open
+    txn_count: 1
+    no_succeeded_txn: true

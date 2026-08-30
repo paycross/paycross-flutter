@@ -1,0 +1,44 @@
+# Backgrounding for a minute in the middle of a bank challenge, then coming
+# back and approving it. The rule for this dimension is the spec's: exactly
+# one result, no crash, and merchant state consistent with what the shopper
+# saw -- the last of which is the merchant block below.
+#
+# `expect acs` waits for the challenge page without answering it, so the
+# background lands with the page up rather than racing the tap.
+#
+# Nothing here looks for anything on the card form while the challenge is up,
+# and that is deliberate independence rather than a constraint: R12 predicted
+# the rest of the tree would be gone behind `accessibilityViewIsModal`, and
+# MEASURING IT DISPROVED THAT -- with the challenge on screen this cell's own
+# `04-expect.uix` carries `amount`, `cardNumber`, `cvv` and `payButton` all
+# `visible="true"` beside `threeDSCancel`. The cell would read the same either
+# way, which is why nothing had to change when the prediction turned out to be
+# wrong.
+#
+# `background` resumes the EXISTING task rather than launching: on Android via
+# monkey with no force-stop, on iOS via `apps/activate` and never a launch,
+# which for XCUIApplication would be terminate-then-launch and would take the
+# console capture -- and criterion 3's only evidence -- with it.
+id: background_during_challenge
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - expect acs
+  - background 60
+  - acs:approve
+  - wait_result 240
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded

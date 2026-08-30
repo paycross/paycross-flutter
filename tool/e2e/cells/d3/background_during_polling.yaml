@@ -1,0 +1,39 @@
+# Backgrounding for a minute while the SDK is polling for the result, after
+# the challenge has already been approved.
+#
+# The poll may well finish DURING the background window, and the cell does not
+# care which way that falls. What it asserts is that exactly one result
+# arrives and that the merchant agrees with it, which holds either way -- a
+# result delivered to a backgrounded app and one delivered on resume are both
+# passes, and two results or none would be the finding.
+#
+# 60 s is deliberate, not arbitrary. The iOS deadline is measured on a
+# `ContinuousClock` (PaymentFlowRunner:26-38), which keeps running while the
+# process is suspended, against `FlowLimits.pollDeadline = 480 s`
+# (PaymentFlowReducer.swift:8-15) -- so background time is spent out of the
+# poll's own budget. A minute leaves seven. A background longer than 480 s
+# would eat the deadline outright; that case is a documented risk in the
+# report (R13) rather than a cell, because a cell asserting a timeout would
+# be asserting the clock rather than the SDK.
+id: background_during_polling
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - acs:approve
+  - background 60
+  - wait_result 300
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
