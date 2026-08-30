@@ -1,0 +1,26 @@
+# A blank token. The only integration error whose mapping is not in doubt:
+# both plugins check it natively before anything else, ahead of even the
+# not-configured guard -- PayCrossPlugin.swift:59-61 and
+# PayCrossPlugin.kt:126-130 -- and both answer paycross_invalid_token.
+#
+# The field is empty on a cold start, so this cell simply presses Pay. The
+# session it minted goes unused, and asserting txn_count 0 on it is what
+# proves the SDK refused before touching the backend at all.
+id: error_blank_token
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - tap_example_pay
+  - wait_result 60
+expected:
+  label: "error:invalidToken"
+  merchant:
+    session_status: open
+    txn_count: 0
+    no_succeeded_txn: true

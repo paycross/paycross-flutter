@@ -669,12 +669,13 @@ def test_close_is_a_no_op_for_a_driver_with_nothing_to_release():
 
 
 def test_the_d3_actions_are_declared_and_refuse_rather_than_no_op():
+    # `airplane` is no longer among them: D2 needs a real network cut, and
+    # this driver implements one. The rest still belong to D3.
     d = driver(FakeShell())
 
     for call in (
         lambda: d.background(5),
         d.rotate,
-        lambda: d.airplane(True),
         d.kill_activity,
     ):
         with pytest.raises(NotImplementedError):
@@ -785,8 +786,8 @@ def test_relaunch_on_android_is_exactly_launch():
     # Nothing on this side is truncated by a launch, so there is nothing for a
     # relaunch to preserve. The base implementation is the whole answer.
     # Two launches' worth: FakeShell pops one output per call, and a launch
-    # spends four -- boot, locale, force-stop, monkey.
-    shell = FakeShell("1\n", "en-US\n", "", "", "1\n", "en-US\n", "", "")
+    # spends five -- boot, locale, airplane, force-stop, monkey.
+    shell = FakeShell("1\n", "en-US\n", "0\n", "", "", "1\n", "en-US\n", "0\n", "", "")
     made = driver(shell)
 
     made.launch()
@@ -885,3 +886,251 @@ def test_cancel_form_confirms_without_waiting_for_the_acs_page():
     assert "shell input keyevent 4" in shell.argv_text()
     assert taps(shell) == ["shell input tap 50 420"]
     assert not any(android.ACS_TITLE in c for c in shell.argv_text())
+
+
+# -- present_token, tap_example_pay, enter_token -------------------------------
+
+
+def token_screen_without_the_form(token: str) -> str:
+    """The example's own screen: its field and its Pay, and no sheet behind it.
+
+    What a cell using `present_token` actually sees. The SDK is expected to
+    refuse the token, so the card form is never going to appear -- which is
+    the one thing `screen()` above cannot say, since it always carries one.
+    """
+    return (
+        "<hierarchy>"
+        f'<node class="android.widget.EditText" text="{token}" content-desc=""'
+        ' bounds="[0,0][100,50]"/>'
+        '<node class="android.view.View" text="" content-desc="Pay"'
+        ' bounds="[0,60][100,100]"/>'
+        "</hierarchy>"
+    )
+
+
+def test_present_token_does_not_wait_for_a_card_form_that_will_never_come(tmp_path):
+    # `paste_token` ends by giving the sheet 60 s. For a token the SDK is
+    # expected to refuse there is no sheet coming, so that wait spends a
+    # minute and then reports "the card form never appeared" instead of the
+    # label the app has been showing the whole time.
+    path = tmp_path / "token"
+    path.write_text(TOKEN)
+    shell = FakeShell(tree=token_screen_without_the_form(TOKEN))
+
+    driver(shell).present_token(path)
+
+    # The example's Pay is the last thing it does; nothing waits after it.
+    assert taps(shell)[-1] == "shell input tap 50 80"
+    assert shell.calls[-1] == ["shell", "input", "tap", "50", "80"]
+
+
+def test_present_token_enters_the_token_exactly_as_paste_token_does(tmp_path):
+    path = tmp_path / "token"
+    path.write_text(TOKEN)
+    shell = FakeShell(tree=token_screen_without_the_form(TOKEN))
+
+    driver(shell).present_token(path)
+
+    carried = [
+        (argv, s) for argv, s in zip(shell.calls, shell.stdins, strict=True) if s
+    ]
+    assert carried == [(["shell"], f"input text {TOKEN}\n")]
+    assert not any(TOKEN in " ".join(argv) for argv in shell.calls)
+
+
+def test_present_token_still_refuses_something_that_is_not_a_token(tmp_path):
+    path = tmp_path / "token"
+    path.write_text("not a token; rm -rf /sdcard")
+    shell = FakeShell()
+
+    with pytest.raises(DriverError, match="JWT"):
+        driver(shell).present_token(path)
+
+    assert shell.calls == []
+
+
+def test_tap_example_pay_matches_the_content_desc_not_the_sheets_text():
+    # A Flutter widget surfaces as content-desc with an empty text, and the
+    # SDK's own Compose Pay does the opposite.
+    shell = FakeShell(
+        tree=sheet(
+            ("Pay €10.00", "", "[0,0][100,40]"),
+            ("", "Pay", "[0,60][100,100]"),
+        )
+    )
+
+    driver(shell).tap_example_pay()
+
+    assert taps(shell) == ["shell input tap 50 80"]
+
+
+def test_enter_token_types_the_literal_verbatim():
+    shell = FakeShell(tree=screen())
+
+    driver(shell).enter_token("not.a.real.token")
+
+    assert "shell input text not.a.real.token" in shell.argv_text()
+
+
+def test_enter_token_never_reads_a_file(tmp_path):
+    # Deliberately not through `read_token`: what the SDK does with something
+    # that is *not* a credential is the whole point of the cells that use
+    # this. A literal that looks like a path is typed, not opened.
+    missing = str(tmp_path / "absent.token")
+    shell = FakeShell(tree=screen())
+
+    driver(shell).enter_token(missing)
+
+    assert f"shell input text {missing}" in shell.argv_text()
+
+
+def test_enter_token_takes_a_literal_that_paste_token_would_refuse(tmp_path):
+    # `paste_token` refuses anything that is not JWT-shaped, because a mint
+    # that answered with an error document would otherwise be typed as though
+    # it were a credential. `enter_token` exists to type exactly that.
+    path = tmp_path / "token"
+    path.write_text("short")
+    shell = FakeShell(tree=screen())
+
+    with pytest.raises(DriverError, match="JWT"):
+        driver(shell).paste_token(path)
+
+    driver(FakeShell(tree=screen())).enter_token("short")
+
+
+# -- airplane -----------------------------------------------------------------
+
+
+def test_airplane_cuts_the_network_and_reads_the_setting_back():
+    shell = FakeShell("", "1\n")
+    naps = []
+
+    driver(shell, naps).airplane(True)
+
+    assert shell.argv_text() == [
+        "shell cmd connectivity airplane-mode enable",
+        "shell settings get global airplane_mode_on",
+    ]
+    assert naps == [android.AIRPLANE_SETTLE_SECONDS]
+
+
+def test_airplane_off_asks_for_disable_and_expects_zero():
+    shell = FakeShell("", "0\n")
+
+    driver(shell).airplane(False)
+
+    assert shell.argv_text() == [
+        "shell cmd connectivity airplane-mode disable",
+        "shell settings get global airplane_mode_on",
+    ]
+
+
+def test_airplane_quotes_what_the_toggle_itself_said():
+    # On API < 30 the service is not there and `cmd` says so, while the
+    # read-back then reports a perfectly ordinary '0'. Without the toggle's own
+    # answer the message describes the symptom and hides the cause.
+    shell = FakeShell("cmd: Can't find service: connectivity\n", "0\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).airplane(True)
+
+    assert "Can't find service: connectivity" in str(excinfo.value)
+
+
+def test_airplane_bounds_the_device_text_it_quotes():
+    # Driver messages reach stdout and `problems`; a wedged adb answering with
+    # a screenful must not become the failure line.
+    shell = FakeShell("x" * 4000, "y" * 4000)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).airplane(True)
+
+    message = str(excinfo.value)
+    assert "x" * android.QUOTED_DEVICE_TEXT_CHARS in message
+    assert "x" * (android.QUOTED_DEVICE_TEXT_CHARS + 1) not in message
+    assert "y" * (android.QUOTED_DEVICE_TEXT_CHARS + 1) not in message
+
+
+def test_airplane_refuses_a_cut_that_did_not_take():
+    # `cmd connectivity` rather than `settings put` plus a broadcast: that
+    # broadcast needs a system permission, and without it the setting flips
+    # while the radios stay up -- so a cell would report that the SDK
+    # "survived a network cut" having measured nothing at all.
+    shell = FakeShell("", "0\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).airplane(True)
+
+    assert "meaningless" in str(excinfo.value)
+
+
+def test_launch_refuses_a_device_a_previous_cell_left_in_airplane_mode():
+    # Neither a failure nor an exception turns it off again, and every cell
+    # after it would fail for that reason while looking like an SDK finding.
+    shell = FakeShell("1\n", "en-US\n", "1\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).launch()
+
+    message = str(excinfo.value)
+    assert "airplane mode" in message
+    assert "airplane-mode disable" in message
+    # Nothing was started: the interleaved control fails here too, which is
+    # exactly right -- this is a rig fault.
+    assert not any("monkey" in c for c in shell.argv_text())
+
+
+# -- wait_acs -----------------------------------------------------------------
+
+
+def test_wait_acs_waits_for_the_page_without_answering_it():
+    shell = FakeShell(
+        tree=sheet(
+            (android.ACS_TITLE, "", "[0,0][100,40]"),
+            ("approve", "", "[0,200][100,240]"),
+        )
+    )
+
+    assert driver(shell).wait_acs(timeout=5) is True
+    assert taps(shell) == []
+
+
+def test_wait_acs_says_which_page_never_came():
+    shell = FakeShell(tree=sheet(("something else", "", "[0,0][100,40]")))
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).wait_acs(timeout=0)
+
+    assert "sandbox ACS page" in str(excinfo.value)
+
+
+# -- the vocabulary that later dimensions fill in ------------------------------
+
+
+#: Everything `cells.py` accepts today whose driver method belongs to a later
+#: dimension, with the arguments `runner._perform` calls it with. Declared on
+#: `Driver` and raising, rather than simply absent: `run_cell` reads
+#: NotImplementedError as a cell-authoring fault and spends no control check on
+#: it, where an AttributeError reads as a device problem -- and two of those in
+#: a row abort a forty-minute matrix as a rig fault.
+NOT_LANDED_YET = [
+    ("background", (5,)),
+    ("rotate", ()),
+    ("kill_activity", ()),
+    ("dont_keep_activities", (True,)),
+    ("type_cvv", ("123",)),
+    ("tap_google_pay", ()),
+    ("select_saved_card", ()),
+    ("save_card", ()),
+    ("wait_google_pay", (30,)),
+    ("wait_no_google_pay", (20,)),
+    ("wait_saved_card", (30,)),
+]
+
+
+@pytest.mark.parametrize("name, args", NOT_LANDED_YET)
+def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
+    d = driver(FakeShell())
+
+    with pytest.raises(NotImplementedError):
+        getattr(d, name)(*args)

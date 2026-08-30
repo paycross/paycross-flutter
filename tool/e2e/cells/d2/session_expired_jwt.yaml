@@ -1,0 +1,65 @@
+# The token is past its own `exp` while its session is still open.
+#
+# The two clocks differ on purpose: config('payments.session_ttl') puts the
+# JWT's exp at mint + 900 s (PaymentSession.php:127,138) while the session's
+# expires_at is mint + 1200 s -- session_ttl + session_grace_period, both
+# env-overridable, so re-read config/payments.php if this cell ever starts
+# timing out (PaymentSession.php, the `creating` hook). Waiting out the
+# difference is the only way to reach this state, and it is why `wait` exists
+# at all.
+#
+# iOS checks isExpired() at PaymentSheet.swift:49-51 -- before `present` on
+# line 65 -- so NO SHEET EVER APPEARS. `present_token` is used rather than
+# `paste_token` for exactly that reason: waiting 60 s for a card form that is
+# never coming would report "the card form never appeared" instead of the
+# label already on screen.
+#
+# MEASURED 2026-08-29/30, and PINNED: `result:failure:restart:` with an
+# EMPTY transaction field, on BOTH platforms -- the expected `restart`, and
+# identical to what error_malformed_token measures. The literal carries no
+# <txn> placeholder because the emptiness is the half that tells this cell
+# apart from session_expired_server, and a placeholder would accept an id.
+#
+# Distinguished from its sibling `session_expired_server` by <txn>: this
+# session holds no transaction, so the label's transaction field is empty.
+# Only one of the two can name a transaction.
+#
+# The timing at the other end does not fit, and `session_status` is no longer
+# asserted because of it. `wait 960` plus `wait_result 90` is 1050 s of the
+# session's own 1200 s, leaving ~150 s for the launch, the present and the
+# runner's merchant read -- and on this rig those cost nearer 370 s. MEASURED
+# 2026-08-30: the cell took 1420 s against a 1050 s action list, the read
+# landed past expires_at, and the session read `expired`. It had won the same
+# race twice before, so the cell was flaky roughly one run in three.
+#
+# The point is that BOTH readings are legitimate. The cell waits out the JWT's
+# 900 s and then reads a session that dies at 1200 s, so the read may land
+# either side of 1200 s and the server-side status is whichever it happened to
+# catch. It is incidental to what this cell measures -- the JWT-expiry path --
+# and asserting it was asserting a coin flip.
+#
+# Relaxing it loses nothing. `txn_count: 0` is what tells this cell apart from
+# session_expired_server, which holds one transaction, and the pinned label's
+# EMPTY <txn> says the same thing a second way. `session_status` only restated
+# which of the two clocks ran out first -- the one fact the rig cannot deliver
+# on time -- so asserting it made a green cell depend on how busy the emulator
+# was. The label and the transaction count are the measurement and both are
+# still asserted.
+id: session_expired_jwt
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - wait 960
+  - present_token
+  - wait_result 90
+expected:
+  label: "result:failure:restart:"
+  merchant:
+    txn_count: 0
+    no_succeeded_txn: true

@@ -20,6 +20,15 @@ APPROVING_PANS = ("4111111111153055", "4111111111150069", "4111111111150127")
 #: A cell ends by looking for an outcome, one way or the other.
 TERMINAL_VERBS = ("wait_result", "expect")
 
+#: A cell that turns one of these on must turn it off again. Neither is undone
+#: by a failure, and both poison every cell that follows -- which the drivers'
+#: launch guards then report as a rig fault, correctly but expensively.
+#:
+#: Defined in `cells` rather than here: `run_cell` replays these when a cell
+#: dies before reaching its own teardown, and the runner cannot import from
+#: the test tree. Two copies would be two rules.
+TEARDOWN = cells.TEARDOWN
+
 
 def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
     loaded = cells.load_cells(directory, platform)
@@ -31,9 +40,24 @@ def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
     for cell in loaded:
         text = cell.path.read_text(encoding="utf-8")
         expected = cell.expected_for(platform)
+        actions = [(a.verb, a.arg) for a in cell.actions]
         verbs = {a.verb for a in cell.actions}
 
-        assert cell.actions[-1].verb in TERMINAL_VERBS, cell.id
+        # Only teardown may follow the action that reads the outcome.
+        tail = list(actions)
+        while tail and tail[-1] in TEARDOWN:
+            tail.pop()
+        assert tail and tail[-1][0] in TERMINAL_VERBS, cell.id
+        for verb, off in sorted(TEARDOWN):
+            if any(v == verb and a == "on" for v, a in actions):
+                assert (
+                    verb,
+                    off,
+                ) in actions, f"{cell.id}: turns {verb} on and never off"
+        if any(v == "wait" for v, _ in actions):
+            assert "expired" in cell.id or "jwt" in cell.id, (
+                f"{cell.id}: a bare `wait` is only for the two expiry recipes"
+            )
         for pan in APPROVING_PANS:
             assert pan not in text, f"{cell.id} uses {pan}, which approves on TEST"
         if "no_succeeded_txn" in expected.merchant:

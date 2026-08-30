@@ -54,7 +54,17 @@ BARE_ACTIONS = frozenset(
 #: *non-result*: something true of the screen or of the merchant state that
 #: Dart is never told about.
 EXPECTATIONS = frozenset(
-    {"rearmed", "no_result", "google_pay", "no_google_pay", "saved_card"}
+    {
+        "rearmed",
+        "no_result",
+        # Waits for the sandbox ACS page without tapping an outcome, which is
+        # what `acs:<outcome>` would do. The cell that cuts the network during
+        # a challenge has to observe the page and then leave it alone.
+        "acs",
+        "google_pay",
+        "no_google_pay",
+        "saved_card",
+    }
 )
 
 #: A literal a cell may type into the token field. Two constraints, each for
@@ -115,10 +125,33 @@ ARG_ACTIONS = MappingProxyType(
             "at most 200 characters of A-Z a-z 0-9 . _ ~ -",
         ),
         "expect": (_is_expectation, f"one of {sorted(EXPECTATIONS)}"),
+        # Spends time and nothing else. There is exactly one reason a cell
+        # needs this and it is not slowness: a session token's JWT `exp` is
+        # mint + 900 s while its session's `expires_at` is mint + 1200 s
+        # (session_ttl + session_grace_period, both env-overridable), so the
+        # only way to present a token that is expired while its session is
+        # still open is to wait out the difference. `cell_rules` refuses it
+        # anywhere else.
+        "wait": (_is_positive_seconds, "a positive number of seconds"),
         "wait_expired": (_is_positive_seconds, "a positive number of seconds"),
         "wait_result": (_is_positive_seconds, "a positive number of seconds"),
     }
 )
+
+
+#: Rig settings a cell may change, each paired with the action that puts it
+#: back. Neither is undone by the end of a cell, by a failure or by an
+#: exception: they change the DEVICE rather than the app, and left on they
+#: fail every cell that follows -- including the interleaved control, so the
+#: run aborts as a rig fault two cells later.
+#:
+#: Read by two places that have to agree. `tests/cell_rules` refuses a cell
+#: that turns one on without declaring the off, and lets only these follow the
+#: action that reads the outcome; `runner` replays the off when a cell dies
+#: before reaching it. Here rather than beside the authoring rules because the
+#: runner cannot import from the test tree, and because which settings outlive
+#: a cell is a fact about the grammar rather than about how cells are written.
+TEARDOWN = frozenset({("airplane", "off"), ("dont_keep_activities", "off")})
 
 
 def _is_non_empty_str(value: Any) -> bool:
@@ -276,11 +309,15 @@ class Cell:
         platforms diverge they diverge in one merchant field at a time, and
         restating the other five in every override is how they drift apart.
 
-        No shipped cell has an override. The mechanism was added for a
-        divergence in `failure.recovery` that the live runs disproved -- both
-        platforms answer `change_method` for authentication_failed -- so this
-        path has unit coverage and no live coverage. D2 is expected to be its
-        first real user.
+        No shipped cell has an override, D2 included. The mechanism was
+        added for a divergence in `failure.recovery` that the live runs
+        disproved -- both platforms answer `change_method` for
+        authentication_failed -- so this path has unit coverage and no live
+        coverage. D2 was expected to be its first real user and is not: where
+        the platforms may diverge it records the label per platform (`<any>`)
+        rather than asserting two different ones, which is what a dimension
+        does before anything has measured it. An override lands in Phase 3 if
+        a live run shows one is needed.
         """
         override = self.overrides.get(platform)
         if not override:
@@ -411,8 +448,8 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
     Over every platform the cell declares, never the unmerged base. A cell
     whose base says `rearmed: false` and whose `expected.android` says true
     would otherwise load cleanly and fail on a device twenty minutes later --
-    and `expected_for`'s own docstring says D2 is the override mechanism's
-    first real user, so this is the dimension that would find out.
+    and D2 is the dimension that would find out, being the first with cells
+    whose two platforms are expected to answer differently.
 
     The two directions are deliberately asymmetric, because **one action list
     is shared by every platform the cell runs on**. Any platform expecting a
@@ -427,6 +464,32 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
     terminal variant has no `cancel_form` to reach a label with -- and it is
     exactly the shape sub-project #2 will produce as it fixes one platform
     before the other.
+
+    `no_result` used to be checked as that same pair and is not, because the
+    two directions turned out to be asking about different things. What the
+    label expectation describes is the LAST `wait_result`; `expect no_result`
+    is a separate assertion about a moment that may come after it. Requiring
+    every platform to expect `<none>` merely because the cell looks for an
+    absence somewhere forbade the two-phase shape `session_expired_server`
+    needs -- cancel, capture `result:cancelled`, then re-present a dead
+    session and prove nothing resolves.
+
+    What replaces it is the rule that was really wanted, stated over
+    `wait_result` instead of over the action that looks:
+
+    * `wait_result` is the only action that sets a label, so any expectation
+      that is not `<none>` needs one, or the cell reaches its verdict with
+      `label` still None and fails on a device.
+    * `wait_result` RAISES when no label arrives, so a cell expecting
+      `<none>` must not hold one -- with it the cell cannot pass either way,
+      failing in the driver if the label is absent and on the expectation if
+      it is not.
+
+    Together those still catch the divergence the old pair was aimed at: a
+    cell where one platform expects `<none>` and another expects a literal
+    demands both the presence and the absence of a `wait_result`, so one of
+    the two rules fires. And nothing passes silently, because `expect
+    no_result` carries its own verdict at run time whatever the label says.
     """
     verbs = [(a.verb, a.arg) for a in cell.actions]
     seen = [(p, cell.expected_for(p)) for p in cell.platforms]
@@ -436,11 +499,6 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
             ("expect", "rearmed"),
             lambda e: e.rearmed,
             "expects a re-armed sheet",
-        ),
-        (
-            ("expect", "no_result"),
-            lambda e: e.label == NO_LABEL,
-            f"expects label {NO_LABEL!r}",
         ),
     ):
         wanting = [p for p, e in seen if holds(e)]
@@ -457,6 +515,34 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
                 "The action list is shared by every platform, so it runs "
                 "there too and answers falsy"
             )
+
+    silent = [p for p, e in seen if e.label == NO_LABEL]
+    looks_for_silence = ("expect", "no_result") in verbs
+    if silent and not looks_for_silence:
+        raise CellError(
+            f"{where}: {silent} expects label {NO_LABEL!r}, but the cell has "
+            "no expect 'no_result' action, so nothing would ever look"
+        )
+
+    waits = any(verb == "wait_result" for verb, _ in verbs)
+    if silent and waits:
+        raise CellError(
+            f"{where}: {silent} expects label {NO_LABEL!r}, but the cell runs "
+            "wait_result, which raises rather than answering None. Such a "
+            "cell cannot pass either way"
+        )
+    # Gated on the absence check being present, which keeps this exactly as
+    # wide as the rule it replaces. The invariant is true of every cell --
+    # only `wait_result` sets a label -- but stated unconditionally it also
+    # rejects a cell built to fail before the verdict is ever reached, and
+    # several tests use one of those as a double. Widening it is a separate
+    # change with its own fixtures to fix.
+    speaking = [p for p, e in seen if e.label != NO_LABEL]
+    if looks_for_silence and speaking and not waits:
+        raise CellError(
+            f"{where}: {speaking} expects a label, but the cell has no "
+            "wait_result action, so nothing would ever capture one"
+        )
 
 
 def load_cell(path: Path) -> Cell:

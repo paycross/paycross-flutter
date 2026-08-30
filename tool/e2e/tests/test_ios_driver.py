@@ -1804,3 +1804,174 @@ def test_an_unreadable_locale_is_not_a_reason_to_refuse_a_rig():
     )
 
     ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+
+# -- present_token, tap_example_pay, enter_token -------------------------------
+
+
+def test_present_token_does_not_wait_for_a_sheet_that_will_never_open(
+    tmp_path, monkeypatch
+):
+    # R9: on iOS a malformed or expired token is refused at
+    # PaymentSheet.swift:42-51, before `present` on line 65, so no sheet ever
+    # appears. `paste_token`'s wait for one would spend a minute and then
+    # report "payButton never appeared" instead of the label the app has been
+    # showing the whole time.
+    monkeypatch.setattr(ios, "SCREEN_TIMEOUT_SECONDS", 0)
+    no_sheet = SOURCE_XML.replace('name="payButton"', 'name="notTheSheet"')
+    ssh = FakeSsh(xml=no_sheet)
+    d = driver(ssh)
+    tapped = []
+    d.tap_identifier = lambda name, **kw: tapped.append(name)
+
+    d.present_token(token_file(tmp_path))
+
+    assert tapped == ["Paste", "Pay"]
+    # And the same screen still fails `paste_token`, which is the difference.
+    other = driver(FakeSsh(xml=no_sheet))
+    other.tap_identifier = lambda name, **kw: None
+    with pytest.raises(DriverError, match="payButton"):
+        other.paste_token(token_file(tmp_path))
+
+
+def test_present_token_pastes_exactly_as_paste_token_does(tmp_path):
+    ssh = FakeSsh()
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.present_token(token_file(tmp_path))
+
+    # The token travels on stdin and never reaches either command line.
+    assert not any(TOKEN in command for command in ssh.calls)
+    carried = [s for s in ssh.stdins if s]
+    # Copied in, then cleared: left alone the pasteboard outlives the cell and
+    # anything on the simulator can read it.
+    assert carried == [TOKEN.encode("utf-8"), b" "]
+
+
+def test_present_token_still_refuses_something_that_is_not_a_token(tmp_path):
+    ssh = FakeSsh()
+
+    with pytest.raises(DriverError, match="JWT"):
+        driver(ssh).present_token(token_file(tmp_path, '{"error": "unauthorized"}'))
+
+    assert ssh.calls == []
+
+
+def test_tap_example_pay_matches_the_identifier_and_not_the_challenge_bar():
+    ssh = FakeSsh()
+    d = driver(ssh)
+    seen = []
+    d.tap_identifier = lambda name, **kw: seen.append((name, kw))
+
+    d.tap_example_pay()
+
+    assert seen == [(ios.EXAMPLE_PAY, {"identifier_only": True})]
+
+
+def test_enter_token_types_the_literal_verbatim():
+    ssh = FakeSsh()
+
+    driver(ssh).enter_token("not.a.real.token")
+
+    assert payloads_for(ssh, "/wda/keys") == [{"value": list("not.a.real.token")}]
+
+
+def test_enter_token_never_reads_a_file(tmp_path):
+    # Deliberately not through `read_token`: what the SDK does with something
+    # that is *not* a credential is the whole point of the cells that use it.
+    missing = str(tmp_path / "absent.token")
+    ssh = FakeSsh()
+
+    driver(ssh).enter_token(missing)
+
+    assert payloads_for(ssh, "/wda/keys") == [{"value": list(missing)}]
+
+
+def test_enter_token_takes_a_literal_that_paste_token_would_refuse(tmp_path):
+    with pytest.raises(DriverError, match="JWT"):
+        driver(FakeSsh()).paste_token(token_file(tmp_path, "short"))
+
+    driver(FakeSsh()).enter_token("short")
+
+
+def test_enter_token_taps_the_field_before_it_types():
+    # The field only takes keys once it is focused, and it is the one element
+    # whose accessible name is not stable -- see `_is_token_field`.
+    ssh = FakeSsh()
+    naps = []
+
+    driver(ssh, naps).enter_token("abc")
+
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 201.0, "y": 266.0}]
+    assert naps == [ios.SETTLE_SECONDS, ios.SETTLE_SECONDS]
+
+
+# -- airplane and wait_acs ----------------------------------------------------
+
+
+def test_airplane_refuses_and_says_why(tmp_path):
+    # R6: the simulator shares the host's network, and every route to cutting
+    # it -- Network Link Conditioner, pfctl -- needs sudo or the GUI. The
+    # runner reads NotImplementedError as an authoring fault and spends no
+    # control check on it, which is right: every network-cut cell is
+    # `platforms: [android]`.
+    with pytest.raises(NotImplementedError) as excinfo:
+        driver(FakeSsh()).airplane(True)
+
+    assert "simulator" in str(excinfo.value)
+
+
+def test_wait_acs_waits_for_the_challenge_bar_without_answering_it():
+    # R12: during a challenge `ThreeDSWebViewController` sets
+    # accessibilityViewIsModal, so the rest of the tree is gone; the nav bar's
+    # title is "Payment", which says nothing. `threeDSCancel` exists for a
+    # challenge and only for a challenge.
+    ssh = FakeSsh()
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: pytest.fail("wait_acs must not tap")
+
+    assert d.wait_acs(timeout=5) is True
+    assert payloads_for(ssh, "/wda/tap") == []
+
+
+def test_wait_acs_says_which_page_never_came():
+    no_challenge = SOURCE_XML.replace('name="threeDSCancel"', 'name="notTheBar"')
+    ssh = FakeSsh(xml=no_challenge)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).wait_acs(timeout=0)
+
+    assert ios.THREE_DS_CANCEL in str(excinfo.value)
+
+
+# -- the vocabulary that later dimensions fill in ------------------------------
+
+
+#: Everything `cells.py` accepts today whose driver method belongs to a later
+#: dimension, with the arguments `runner._perform` calls it with. Declared on
+#: `Driver` and raising, rather than simply absent: `run_cell` reads
+#: NotImplementedError as a cell-authoring fault and spends no control check on
+#: it, where an AttributeError reads as a device problem -- and two of those in
+#: a row abort a forty-minute matrix as a rig fault.
+NOT_LANDED_YET = [
+    ("background", (5,)),
+    ("rotate", ()),
+    ("kill_activity", ()),
+    ("dont_keep_activities", (True,)),
+    ("type_cvv", ("123",)),
+    ("tap_google_pay", ()),
+    ("select_saved_card", ()),
+    ("save_card", ()),
+    ("wait_google_pay", (30,)),
+    ("wait_no_google_pay", (20,)),
+    ("wait_saved_card", (30,)),
+]
+
+
+@pytest.mark.parametrize("name, args", NOT_LANDED_YET + [("airplane", (True,))])
+def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
+    d = driver(FakeSsh())
+
+    with pytest.raises(NotImplementedError):
+        getattr(d, name)(*args)

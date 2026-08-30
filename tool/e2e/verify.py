@@ -154,11 +154,16 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
 
     A key that is absent is not asserted. A key present with a null value
     asserts the field is absent. The two are genuinely different, and the
-    distinction is the reason `failure_recovery: null` is expressible at all
-    -- though no shipped cell needs it today. It was written for a reading of
-    authentication_failed that the live runs disproved: both platforms return
-    `change_method`. Kept because "this field must not be there" is an
-    assertion a decline cell will want, not because D0 makes it.
+    distinction is the reason `failure_recovery: null` is expressible at all.
+    It was written for a reading of authentication_failed that the live runs
+    disproved -- both platforms return `change_method` -- and kept because
+    "this field must not be there" is an assertion a decline cell will want.
+
+    D2 is the dimension that wants it: `acs_invalid_cvv` asserts
+    `network_decline_code: null`, because a CVV failure carries a scheme-
+    specific alphanumeric (Visa's N7) rather than an ISO 8583 decline code,
+    so `canonical.go` deliberately attaches none. An absent key there would
+    have asserted nothing at all.
     """
     problems: list[str] = []
     latest = _latest(resource)

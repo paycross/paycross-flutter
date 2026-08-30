@@ -1,0 +1,42 @@
+# The commonest real-world decline, and a RETRYABLE one: the server answers
+# recovery=change_method, so the sheet does not resolve -- it re-arms the form
+# with a banner and waits. Dart is told nothing at all until the shopper acts,
+# which is why this cell observes the predicate and then leaves by hand.
+#
+# PAN-driven: sandbox `magicPANs` keys on the last four digits, and 0002 is
+# OutcomeDoNotHonor (scenarios.go:21). No 3DS is involved, so no threeds_result
+# is asserted.
+#
+# Visa, so no network_advice_code: canonical.go attaches the Merchant Advice
+# Code only in a Mastercard range. The decline code is ISO 8583 05.
+#
+# Sub-project #2 (re-arm fixes, ios#14 / android#23) is expected to make this
+# resolve terminally. Updating this file is part of that work, not a failure
+# of this one.
+id: decline_do_not_honor
+platforms: [android, ios]
+card:
+  pan: "4111111111150002"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - expect rearmed
+  - cancel_form
+  - wait_result 120
+expected:
+  label: "result:cancelled"
+  rearmed: true
+  merchant:
+    session_status: open
+    txn_count: 1
+    txn_status: failed
+    no_succeeded_txn: true
+    failure_code: do_not_honor
+    failure_recovery: change_method
+    network_decline_code: "05"
