@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/home.dart';
+import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_demo/main.dart' as app;
@@ -14,6 +15,8 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 // ignore: implementation_imports
 import 'package:paycross_flutter/src/generated/paycross_api.g.dart' as g;
 
+import 'demo/_surface.dart';
+
 /// Records the configuration `main` builds. Nothing here reaches a platform.
 class _RecordingHost extends g.PayCrossHostApi {
   g.PcConfiguration? lastConfiguration;
@@ -21,6 +24,24 @@ class _RecordingHost extends g.PayCrossHostApi {
   @override
   Future<void> configure(g.PcConfiguration configuration) async =>
       lastConfiguration = configuration;
+}
+
+/// A store whose reads wait on [gate], so a link can arrive while a tile tap
+/// is still reading -- the window the two entrances share.
+class _SlowBackend implements SecretBackend {
+  final Completer<void> gate = Completer<void>();
+
+  @override
+  Future<String?> read(String key) async {
+    await gate.future;
+    return null;
+  }
+
+  @override
+  Future<void> write(String key, String value) async {}
+
+  @override
+  Future<void> delete(String key) async {}
 }
 
 /// A store whose reads throw, standing in for a device whose Keychain or
@@ -151,6 +172,45 @@ void main() {
     // second route underneath this one, and one pop would land on it rather
     // than on Home. A link can arrive while a run is already open, which is
     // the one thing a tile on Home cannot do.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsScreen), findsNothing);
+    expect(find.byType(HomeScreen), findsOneWidget);
+  });
+
+  testWidgets('a link arriving during a tap starts nothing', (tester) async {
+    useTallSurface(tester);
+    final links = StreamController<Uri>();
+    addTearDown(links.close);
+    final backend = _SlowBackend();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: app.DemoHome(
+          links: links.stream,
+          store: SecretStore(backend: backend),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The tap goes in through Home, the link goes in through DemoHome, and
+    // the two carry different flags -- so the only thing that can refuse the
+    // link here is the guard inside `runPreset` itself.
+    await tester.tap(find.text(demoPresets.first.name));
+    await tester.pump();
+
+    links.add(
+      Uri.parse('paycross-flutter-demo://run?preset=Frictionless%203DS'),
+    );
+    await tester.pump();
+
+    backend.gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
     await tester.pageBack();
     await tester.pumpAndSettle();
 

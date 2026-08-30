@@ -21,11 +21,28 @@ Future<MintedSession> mintWithCredentials(
   return minter.mint(body).whenComplete(minter.close);
 }
 
+/// True while [runPreset] is reading the credentials for a run.
+///
+/// Top-level because there are two entrances to a run -- a preset tile on
+/// Home and a `paycross-flutter-demo://run` link -- and one app. A flag on
+/// Home guards the tiles against each other and leaves a link free to land
+/// inside the same window; on a cold Keychain that window is long enough for
+/// the second entrance to mint a second live session against the same
+/// credentials and stack a second Run screen on the first.
+///
+/// It covers the read and stops there. Held until the pushed route had been
+/// popped instead, no run could ever be started from the screen the last one
+/// pushed, and a widget test that pushes without popping would leak it into
+/// the next test.
+@visibleForTesting
+bool runInFlight = false;
+
 /// Reads the stored credentials and pushes a run, or pushes Settings.
 ///
 /// Top-level, and the only path to a run: the preset tiles call it and so
 /// does the deep link, so "not configured routes to Settings" is written
-/// once and cannot be true of one entry point and false of the other.
+/// once and cannot be true of one entry point and false of the other, and
+/// [runInFlight] is one guard rather than one per entrance.
 ///
 /// A null **or failed** read means "not configured". Routing to Settings is
 /// what a colleague can act on; minting anyway would fail later with an
@@ -38,7 +55,14 @@ Future<void> runPreset(
   Future<MintedSession> Function(Credentials, String body) mintWith =
       mintWithCredentials,
 }) async {
-  final credentials = await store.read();
+  if (runInFlight) return;
+  runInFlight = true;
+  // Cleared through `whenComplete` the way `mintWithCredentials` closes its
+  // minter above, rather than in a `try`/`finally` block: a local assigned
+  // inside a `try` cannot be promoted out of its nullable type afterwards.
+  final credentials = await store.read().whenComplete(() {
+    runInFlight = false;
+  });
   if (!context.mounted) return;
   if (credentials == null) {
     await Navigator.of(
