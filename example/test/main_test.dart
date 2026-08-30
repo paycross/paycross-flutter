@@ -1,0 +1,92 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/secrets.dart';
+import 'package:paycross_demo/main.dart' as app;
+import 'package:paycross_flutter/paycross_flutter.dart';
+// The generated Pigeon client is deliberately not exported (see
+// `lib/paycross_flutter.dart`), and `PayCross.debugHostApi` takes it. A test
+// is the one place allowed to reach for it, and this is the only way to read
+// back what `main` handed to `configure`.
+// ignore: implementation_imports
+import 'package:paycross_flutter/src/generated/paycross_api.g.dart' as g;
+
+/// Records the configuration `main` builds. Nothing here reaches a platform.
+class _RecordingHost extends g.PayCrossHostApi {
+  g.PcConfiguration? lastConfiguration;
+
+  @override
+  Future<void> configure(g.PcConfiguration configuration) async =>
+      lastConfiguration = configuration;
+}
+
+/// A store whose reads throw, standing in for a device whose Keychain or
+/// KeyStore is unavailable at launch.
+class _ThrowingBackend implements SecretBackend {
+  @override
+  Future<String?> read(String key) async => throw StateError('no keychain');
+
+  @override
+  Future<void> write(String key, String value) async =>
+      throw StateError('no keychain');
+
+  @override
+  Future<void> delete(String key) async => throw StateError('no keychain');
+}
+
+void main() {
+  late _RecordingHost host;
+
+  setUp(() {
+    host = _RecordingHost();
+    PayCross.debugHostApi = host;
+  });
+
+  tearDown(() => app.mainSecretStore = const SecretStore());
+
+  testWidgets('the demo build configures with the stored merchant id', (
+    tester,
+  ) async {
+    final backend = InMemorySecretBackend();
+    await SecretStore(backend: backend).write(
+      const Credentials(
+        clientId: 'id-1',
+        clientSecret: 'secret-1',
+        googlePayMerchantId: 'gp-1',
+      ),
+    );
+    app.mainSecretStore = SecretStore(backend: backend);
+
+    await app.main();
+    await tester.pump();
+
+    expect(host.lastConfiguration?.googlePayMerchantId, 'gp-1');
+    expect(host.lastConfiguration?.environment, g.PcEnvironment.sandbox);
+  });
+
+  testWidgets('a store with no merchant id configures with null', (
+    tester,
+  ) async {
+    final backend = InMemorySecretBackend();
+    await SecretStore(
+      backend: backend,
+    ).write(const Credentials(clientId: 'id-1', clientSecret: 'secret-1'));
+    app.mainSecretStore = SecretStore(backend: backend);
+
+    await app.main();
+    await tester.pump();
+
+    expect(host.lastConfiguration?.googlePayMerchantId, isNull);
+  });
+
+  testWidgets('a store that throws configures with null and does not fail', (
+    tester,
+  ) async {
+    app.mainSecretStore = SecretStore(backend: _ThrowingBackend());
+
+    await app.main();
+    await tester.pump();
+
+    expect(host.lastConfiguration, isNotNull);
+    expect(host.lastConfiguration?.googlePayMerchantId, isNull);
+    expect(tester.takeException(), isNull);
+  });
+}

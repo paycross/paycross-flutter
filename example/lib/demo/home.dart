@@ -1,18 +1,30 @@
 import 'package:flutter/material.dart';
 
-import 'version_panel.dart';
+import 'settings.dart';
 
 /// Where an ordinary build lands.
 ///
 /// Grows a preset list in a later step; today it is the app's identity, the
-/// one thing a colleague must know about it (sandbox, always) and the
-/// versions a bug report needs.
+/// one thing a colleague must know about it (sandbox, always) and the way to
+/// Settings, which is where the credentials and the versions a bug report
+/// needs now live.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('PayCross Demo')),
+    appBar: AppBar(
+      title: const Text('PayCross Demo'),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.settings),
+          tooltip: 'Settings',
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+          ),
+        ),
+      ],
+    ),
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: const [
@@ -20,8 +32,6 @@ class HomeScreen extends StatelessWidget {
           'Sandbox only. This build talks to the PayCross TEST environment '
           'and has no way to reach production.',
         ),
-        SizedBox(height: 24),
-        VersionPanel(),
       ],
     ),
   );
