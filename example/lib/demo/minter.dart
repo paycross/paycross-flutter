@@ -3,12 +3,13 @@
 // parameter, so `this._x` cannot appear in a `{...}` list, and one of these
 // fields holds a credential.
 //
-// File-level rather than one line-level ignore per field: the lint is
-// reported on the initializer list, not on the parameters, and `dart format`
-// pulls a comment written above the first initializer up onto the `}) :`
-// line, where it applies to that line instead. Every initializer but the
-// first can be suppressed narrowly; the first cannot, so the narrow form
-// does not hold.
+// File-level rather than one line-level ignore per field, and that is a
+// readability call, not a limitation: an `// ignore:` on its own line
+// between the `})` and the `:` does attach to the first initializer and does
+// survive `dart format`. It just costs four of them -- `_credentials`,
+// `_now`, `_newIdempotencyKey` and `_timeout` -- which buries a six-line
+// initializer list under comments for one lint that the whole constructor
+// answers the same way.
 
 import 'dart:convert';
 import 'dart:math';
@@ -63,8 +64,7 @@ class MintedSession {
 
 /// A v4 UUID from the platform's secure RNG.
 ///
-/// Nine lines instead of a dependency, and injectable so the 401 test can
-/// prove the replay reuses the key rather than minting a second session.
+/// Nine lines instead of a dependency.
 String randomUuidV4() {
   final random = Random.secure();
   final bytes = List<int>.generate(16, (_) => random.nextInt(256));
@@ -148,6 +148,8 @@ class Minter {
     required Credentials credentials,
     http.Client? client,
     DateTime Function() now = DateTime.now,
+    // Injected by the 401 test, which is what proves the retry replays the
+    // one key rather than minting a second session.
     String Function() newIdempotencyKey = randomUuidV4,
     Duration timeout = _requestTimeout,
   }) : _credentials = credentials,

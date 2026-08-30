@@ -76,7 +76,10 @@ void main() {
     });
 
     test('a longer word that merely ends in one is not', () {
-      write('longer.dart', "const id = 'myresult:x';\nvar swallowerror = 1;\n");
+      write(
+        'longer.dart',
+        "const id = 'myresult:x';\nconst tag = 'swallowerror:x';\n",
+      );
 
       expect(filesSpellingALabel(scratch), isEmpty);
     });
