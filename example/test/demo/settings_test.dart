@@ -16,6 +16,38 @@ Widget _settings({
   ),
 );
 
+/// Stores like the in-memory backend but fails the one operation a test
+/// names -- which is what an iOS Keychain without the entitlement and an
+/// Android KeyStore whose key is gone both look like from Dart.
+class _FailingBackend implements SecretBackend {
+  _FailingBackend({this.onWrite = false, this.onDelete = false});
+
+  final bool onWrite;
+  final bool onDelete;
+  final Map<String, String> entries = <String, String>{};
+
+  @override
+  Future<String?> read(String key) async => entries[key];
+
+  @override
+  Future<void> write(String key, String value) async {
+    if (onWrite) throw StateError('no keychain');
+    entries[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    if (onDelete) throw StateError('no keychain');
+    entries.remove(key);
+  }
+}
+
+String _message(WidgetTester tester) =>
+    tester.widget<Text>(find.byKey(const ValueKey('settingsMessage'))).data!;
+
+String _fieldText(WidgetTester tester, String key) =>
+    tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
+
 void main() {
   testWidgets('stores what is typed', (tester) async {
     final backend = InMemorySecretBackend();
@@ -79,7 +111,7 @@ void main() {
     await tester.tap(find.text('Verify credentials'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Minted session sess-9.'), findsOneWidget);
+    expect(_message(tester), contains('Minted session sess-9.'));
   });
 
   testWidgets('a failed verify shows the reason and never the secret', (
@@ -158,6 +190,128 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('restart the app'), findsOneWidget);
+  });
+
+  testWidgets('a save that fails says so and keeps what was typed', (
+    tester,
+  ) async {
+    final backend = _FailingBackend(onWrite: true);
+    await tester.pumpWidget(_settings(store: SecretStore(backend: backend)));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'id-1');
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'secret-1',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(_message(tester), contains('save'));
+    expect(_message(tester), contains('StateError'));
+    expect(_message(tester), isNot(contains('secret-1')));
+    // Still on screen to try again with: a failed write is the one moment a
+    // human must not have to retype a secret.
+    expect(_fieldText(tester, 'clientSecret'), 'secret-1');
+  });
+
+  testWidgets('a forget that fails says so and does not clear the fields', (
+    tester,
+  ) async {
+    final backend = _FailingBackend(onDelete: true);
+    backend.entries['paycross_demo_client_id'] = 'id-1';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    await tester.pumpWidget(_settings(store: SecretStore(backend: backend)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Forget credentials'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(_message(tester), contains('forget'));
+    expect(_message(tester), contains('StateError'));
+    // Emptying the fields here would tell the human the credentials are gone
+    // while they are still in the store.
+    expect(_fieldText(tester, 'clientId'), 'id-1');
+  });
+
+  testWidgets('verify says only "Verified" when what is typed is stored', (
+    tester,
+  ) async {
+    final backend = InMemorySecretBackend();
+    backend.entries['paycross_demo_client_id'] = 'id-1';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    await tester.pumpWidget(
+      _settings(
+        store: SecretStore(backend: backend),
+        verify: (_) async => 'Minted session sess-9.',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Verify credentials'));
+    await tester.pumpAndSettle();
+
+    expect(_message(tester), contains('Verified'));
+    expect(_message(tester), isNot(contains('Save')));
+  });
+
+  testWidgets('verify says to press Save when what is typed is not stored', (
+    tester,
+  ) async {
+    final backend = InMemorySecretBackend();
+    backend.entries['paycross_demo_client_id'] = 'id-1';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    await tester.pumpWidget(
+      _settings(
+        store: SecretStore(backend: backend),
+        verify: (_) async => 'Minted session sess-9.',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Verify mints with what is on screen, so an edited secret that verifies
+    // is still not the one the app will use on the next launch.
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'secret-2',
+    );
+    await tester.tap(find.text('Verify credentials'));
+    await tester.pumpAndSettle();
+
+    expect(_message(tester), contains('press Save'));
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Verify credentials'));
+    await tester.pumpAndSettle();
+
+    // And it stops saying so once they have, which is what proves the screen
+    // tracks the save rather than only the first read.
+    expect(_message(tester), contains('Verified'));
+    expect(_message(tester), isNot(contains('press Save')));
+  });
+
+  testWidgets('a failed verify never claims the credentials are verified', (
+    tester,
+  ) async {
+    final backend = InMemorySecretBackend();
+    backend.entries['paycross_demo_client_id'] = 'id-1';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    await tester.pumpWidget(
+      _settings(
+        store: SecretStore(backend: backend),
+        verify: (_) async =>
+            throw const MinterError('POST /payment-sessions -> HTTP 401'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Verify credentials'));
+    await tester.pumpAndSettle();
+
+    expect(_message(tester), isNot(contains('Verified')));
   });
 
   testWidgets('says the app is sandbox-only', (tester) async {

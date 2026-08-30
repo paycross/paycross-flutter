@@ -60,6 +60,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _busy = false;
   String? _message;
 
+  /// What the store is believed to hold, so "Verify credentials" can say
+  /// whether what was just proven is also what the next launch will use.
+  ///
+  /// After a write or a delete that threw, this goes back to null rather than
+  /// staying as it was: `SecretStore.write` and `forget` touch three keys in
+  /// turn, so a failure part-way leaves a store this screen can no longer
+  /// describe -- and null is both the honest answer and the one a guarded
+  /// read will most likely give, since it needs the id and the secret to
+  /// return anything at all.
+  Credentials? _stored;
+
   @override
   void initState() {
     super.initState();
@@ -78,10 +89,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final stored = await widget.store.read();
     if (!mounted || stored == null) return;
     setState(() {
+      _stored = stored;
       _clientId.text = stored.clientId;
       _clientSecret.text = stored.clientSecret;
       _googlePay.text = stored.googlePayMerchantId ?? '';
     });
+  }
+
+  /// Whether what is on screen is what the store holds.
+  ///
+  /// Nothing stored counts as a difference: there is something to save. The
+  /// merchant id is compared too even though minting does not use it, because
+  /// an unsaved change to it is lost just as quietly as an unsaved secret.
+  bool _matchesStored(Credentials typed) {
+    final stored = _stored;
+    return stored != null &&
+        stored.clientId == typed.clientId &&
+        stored.clientSecret == typed.clientSecret &&
+        stored.googlePayMerchantId == typed.googlePayMerchantId;
   }
 
   Credentials get _typed => Credentials(
@@ -93,18 +118,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
   );
 
   Future<void> _save() async {
-    await widget.store.write(_typed);
+    final typed = _typed;
+    String said;
+    Credentials? nowStored;
+    try {
+      await widget.store.write(typed);
+      nowStored = typed;
+      said = 'Saved.';
+    } catch (problem) {
+      // Only the type: the thing that failed to be written is a credential,
+      // and a store's exception is free to quote what it was handed.
+      said = 'Could not save: ${problem.runtimeType}';
+    }
     if (!mounted) return;
-    setState(() => _message = 'Saved.');
+    setState(() {
+      _stored = nowStored;
+      _message = said;
+    });
   }
 
   Future<void> _forget() async {
-    await widget.store.forget();
+    String said;
+    var forgotten = false;
+    try {
+      await widget.store.forget();
+      forgotten = true;
+      said = 'Forgotten.';
+    } catch (problem) {
+      said = 'Could not forget: ${problem.runtimeType}';
+    }
     if (!mounted) return;
-    _clientId.clear();
-    _clientSecret.clear();
-    _googlePay.clear();
-    setState(() => _message = 'Forgotten.');
+    // Only on success: emptying the fields after a delete that threw would
+    // tell the human the credentials are gone while they are still there.
+    if (forgotten) {
+      _clientId.clear();
+      _clientSecret.clear();
+      _googlePay.clear();
+    }
+    setState(() {
+      _stored = null;
+      _message = said;
+    });
   }
 
   Future<void> _verify() async {
@@ -112,9 +166,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _busy = true;
       _message = null;
     });
+    final typed = _typed;
     String said;
     try {
-      said = await widget.verifyCredentials(_typed);
+      final minted = await widget.verifyCredentials(typed);
+      // Verify mints with what is on screen, not with what is stored, and
+      // deliberately does not save -- the mint is a throwaway. So a human who
+      // edits a field, verifies and walks away has proven a credential the
+      // next launch will not use. This line is the only thing that says so.
+      said = _matchesStored(typed)
+          ? '$minted Verified.'
+          : '$minted Verified — press Save to keep them.';
     } on MinterError catch (problem) {
       // MinterError never carries a credential -- see minter.dart's
       // _safeToEcho -- so this is safe to put on screen verbatim.
