@@ -79,6 +79,36 @@ void main() {
     newIdempotencyKey: () => 'idem-${sent.length}',
   );
 
+  group('the throwaway verification mint', () {
+    MockClient happyPath() => recording((request, index) {
+      if (request.url.path.endsWith('/token')) {
+        return tokenResponse(clock.add(const Duration(hours: 1)));
+      }
+      return sessionResponse();
+    });
+
+    test('reports the session it minted', () async {
+      final said = await mintThrowawaySession(
+        _credentials,
+        client: happyPath(),
+      );
+
+      expect(said, contains('sess-1'));
+      // A real body, substituted -- not a template shipped as-is.
+      expect(sent.last.body, isNot(contains('{{timestamp}}')));
+    });
+
+    test('leaves an injected client open for whoever owns it', () async {
+      final spy = _ClosingSpy(happyPath());
+
+      await mintThrowawaySession(_credentials, client: spy);
+
+      // The seam exists so a test can drive this without a socket; closing
+      // the caller's client would make it useless for a second call.
+      expect(spy.closed, isFalse);
+    });
+  });
+
   group('the bearer token', () {
     test('is fetched once and reused inside its lifetime', () async {
       final minter = minterOver(

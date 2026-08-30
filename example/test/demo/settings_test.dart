@@ -451,6 +451,31 @@ void main() {
     expect(_fieldText(tester, 'clientSecret'), 'secret-1');
   });
 
+  testWidgets('the outcome line announces itself to a screen reader', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      _settings(store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    // The message appears in place, with no focus change and nothing to
+    // navigate to, so without this a screen-reader user gets no word that
+    // the button they just pressed did anything at all.
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('settingsMessage')))
+          .flagsCollection
+          .isLiveRegion,
+      isTrue,
+    );
+    semantics.dispose();
+  });
+
   testWidgets('says the app is sandbox-only', (tester) async {
     await tester.pumpWidget(
       _settings(store: SecretStore(backend: InMemorySecretBackend())),

@@ -139,6 +139,37 @@ Object? _withoutSessionParam(Object? value) {
       .toString();
 }
 
+/// One session, minted and immediately abandoned, to prove a credential.
+///
+/// This is the only end-to-end check of `endpoints.dart` there is: a host
+/// that does not resolve surfaces on the first person's phone as a message
+/// they can read and report, rather than at build time.
+///
+/// Each call mints a NEW session rather than replaying the last -- [Minter]
+/// generates a fresh `Idempotency-Key` per call -- so verifying twice leaves
+/// two abandoned sandbox sessions and proves the credentials twice.
+///
+/// [client] exists so a test can drive this without a socket. Passing one
+/// also makes it the caller's to close: the minter closes only a client it
+/// made itself.
+Future<String> mintThrowawaySession(
+  Credentials credentials, {
+  http.Client? client,
+}) async {
+  final minter = Minter(credentials: credentials, client: client);
+  try {
+    final minted = await minter.mint(
+      '{"amount":100,"currency":"EUR","transaction_type":"sale",'
+      '"merchant_reference":"DEMO-VERIFY-{{timestamp}}",'
+      '"return_url":"https://merchant.example.com/payment/return",'
+      '"success_url":"https://merchant.example.com/payment/success"}',
+    );
+    return 'Minted session ${minted.id}.';
+  } finally {
+    minter.close();
+  }
+}
+
 /// A thin merchant-API client: one M2M token, mint, read.
 ///
 /// This is the merchant-backend step of the flow, performed in-app for

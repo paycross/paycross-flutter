@@ -13,28 +13,6 @@ import 'version_panel.dart';
 /// message they can read and report.
 typedef VerifyCredentials = Future<String> Function(Credentials credentials);
 
-/// The real check: one session, minted and immediately abandoned.
-///
-/// Each tap mints a new session rather than replaying the last one -- the
-/// minter generates a fresh `Idempotency-Key` per call -- so tapping twice
-/// leaves two abandoned sandbox sessions and proves the credentials twice.
-Future<String> mintThrowawaySession(Credentials credentials) async {
-  final minter = Minter(credentials: credentials);
-  try {
-    final minted = await minter.mint(
-      '{"amount":100,"currency":"EUR","transaction_type":"sale",'
-      '"merchant_reference":"DEMO-VERIFY-{{timestamp}}",'
-      '"return_url":"https://merchant.example.com/payment/return",'
-      '"success_url":"https://merchant.example.com/payment/success"}',
-    );
-    return 'Minted session ${minted.id}.';
-  } finally {
-    // This minter owns its http client -- nothing was injected -- so the
-    // socket stays open until somebody closes it.
-    minter.close();
-  }
-}
-
 /// Where the credentials are entered, checked and forgotten.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -156,6 +134,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() => _message = unusable);
       return;
     }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
     String said;
     Credentials? nowStored;
     try {
@@ -169,12 +151,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     if (!mounted) return;
     setState(() {
+      _busy = false;
       _stored = nowStored;
       _message = said;
     });
   }
 
   Future<void> _forget() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
     String said;
     var forgotten = false;
     try {
@@ -193,6 +180,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _googlePay.clear();
     }
     setState(() {
+      _busy = false;
       _stored = null;
       _message = said;
     });
@@ -308,7 +296,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         if (_message != null) ...[
           const SizedBox(height: 20),
-          Text(_message!, key: const ValueKey('settingsMessage')),
+          Semantics(
+            liveRegion: true,
+            child: Text(_message!, key: const ValueKey('settingsMessage')),
+          ),
         ],
         const SizedBox(height: 32),
         VersionPanel(readVersions: widget.readVersions),
