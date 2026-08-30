@@ -61,6 +61,11 @@ class _SlowBackend implements SecretBackend {
 }
 
 void main() {
+  // `runInFlight` is top-level, so a test that ends while a read is still in
+  // flight leaves it set and the next test silently cannot start a run at
+  // all. Reset rather than tearDown: it also covers a test that dies.
+  setUp(() => runInFlight = false);
+
   testWidgets('says the app is sandbox-only', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
     await tester.pumpAndSettle();

@@ -66,6 +66,10 @@ void main() {
   setUp(() {
     host = _RecordingHost();
     PayCross.debugHostApi = host;
+    // `runInFlight` is top-level, so a test that ends while a read is still in
+    // flight leaves it set and the next test silently cannot start a run at
+    // all. Reset rather than tearDown: it also covers a test that dies.
+    runInFlight = false;
   });
 
   tearDown(() => app.mainSecretStore = const SecretStore());
