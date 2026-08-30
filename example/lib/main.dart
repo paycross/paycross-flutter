@@ -126,6 +126,10 @@ class _DemoHomeState extends State<DemoHome> {
 
   Future<void> _run(BuildContext context, Preset preset) async {
     if (_busy) return;
+    // Anything pushed over Home -- a Run screen a tile started, Settings, the
+    // editor -- makes Home no longer the current route; `_busy` only knows
+    // about runs this widget started.
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
     _busy = true;
     try {
       await runPreset(

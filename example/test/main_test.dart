@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/home.dart';
+import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/presets.dart';
+import 'package:paycross_demo/demo/run.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_demo/main.dart' as app;
@@ -177,6 +179,54 @@ void main() {
 
     expect(find.byType(SettingsScreen), findsNothing);
     expect(find.byType(HomeScreen), findsOneWidget);
+  });
+
+  testWidgets('a link arriving over a run a tile started starts nothing', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+    final links = StreamController<Uri>();
+    addTearDown(links.close);
+    final backend = InMemorySecretBackend();
+    backend.entries['paycross_demo_client_id'] = 'id-1';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    var mints = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: app.DemoHome(
+          links: links.stream,
+          store: SecretStore(backend: backend),
+          mintWith: (credentials, body) async {
+            mints++;
+            return const MintedSession(
+              id: 'sess-9',
+              token: 'a-live-token',
+              sentBody: '{}',
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(demoPresets.first.name));
+    await tester.pumpAndSettle();
+    expect(find.byType(RunScreen), findsOneWidget);
+    expect(mints, 1);
+
+    // The run on screen was started by a tile, so DemoHome's own flag knows
+    // nothing about it and the read guard cleared long ago. Home is no longer
+    // the current route, and that is what has to refuse this link.
+    links.add(
+      Uri.parse('paycross-flutter-demo://run?preset=Frictionless%203DS'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(mints, 1);
+    expect(find.byType(RunScreen), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 10));
   });
 
   testWidgets('a link arriving during a tap starts nothing', (tester) async {

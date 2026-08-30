@@ -21,6 +21,14 @@ Future<MintedSession> mintWithCredentials(
   return minter.mint(body).whenComplete(minter.close);
 }
 
+/// How long the credential read gets before a run gives up on it.
+///
+/// A platform store with nothing behind it does not fail, it never answers --
+/// the same shape `run.dart` bounds its bookkeeping against. Unbounded, one
+/// wedged Keychain would leave [runInFlight] set for the rest of the process
+/// and neither entrance could start a run again.
+const Duration _credentialReadTimeout = Duration(seconds: 5);
+
 /// True while [runPreset] is reading the credentials for a run.
 ///
 /// Top-level because there are two entrances to a run -- a preset tile on
@@ -44,9 +52,9 @@ bool runInFlight = false;
 /// once and cannot be true of one entry point and false of the other, and
 /// [runInFlight] is one guard rather than one per entrance.
 ///
-/// A null **or failed** read means "not configured". Routing to Settings is
-/// what a colleague can act on; minting anyway would fail later with an
-/// HTTP 401 that reads as a backend problem.
+/// A null read, a failed one, or one that never answers all mean "not
+/// configured". Routing to Settings is what a colleague can act on; minting
+/// anyway would fail later with an HTTP 401 that reads as a backend problem.
 Future<void> runPreset(
   BuildContext context,
   Preset preset,
@@ -57,12 +65,12 @@ Future<void> runPreset(
 }) async {
   if (runInFlight) return;
   runInFlight = true;
-  // Cleared through `whenComplete` the way `mintWithCredentials` closes its
-  // minter above, rather than in a `try`/`finally` block: a local assigned
-  // inside a `try` cannot be promoted out of its nullable type afterwards.
-  final credentials = await store.read().whenComplete(() {
-    runInFlight = false;
-  });
+  final credentials = await store
+      .read()
+      .timeout(_credentialReadTimeout, onTimeout: () => null)
+      .whenComplete(() {
+        runInFlight = false;
+      });
   if (!context.mounted) return;
   if (credentials == null) {
     await Navigator.of(

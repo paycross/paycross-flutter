@@ -27,6 +27,19 @@ class _ThrowingBackend implements SecretBackend {
   Future<void> delete(String key) async {}
 }
 
+/// A store whose reads never answer at all, which is what a wedged Keychain
+/// looks like from Dart: not a failure, just silence.
+class _HangingBackend implements SecretBackend {
+  @override
+  Future<String?> read(String key) => Completer<String?>().future;
+
+  @override
+  Future<void> write(String key, String value) async {}
+
+  @override
+  Future<void> delete(String key) async {}
+}
+
 /// A store whose reads wait on [gate], so a test can tap again while the
 /// first read is still in flight -- which on a cold Keychain is a real
 /// window, not a theoretical one.
@@ -259,6 +272,30 @@ void main() {
     // Drain the two bookkeeping timeouts the pushed Run screen started
     // against platform stores that never answer under `flutter test`.
     await tester.pump(const Duration(seconds: 10));
+  });
+
+  testWidgets('a store that never answers routes to Settings, not a wedge', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(store: SecretStore(backend: _HangingBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(demoPresets.first.name));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+
+    // Silence is treated as "not configured": the same place a null read
+    // goes, because it is the same thing a colleague can act on.
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    // And the app-wide guard is not left set, or nothing could start a run
+    // again for the rest of the process.
+    expect(runInFlight, isFalse);
   });
 
   testWidgets('Home lays out and scrolls at ordinary phone width', (
