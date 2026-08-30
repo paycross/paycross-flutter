@@ -2304,14 +2304,45 @@ def test_the_expect_table_agrees_with_the_drivers_own_defaults():
     # explicitly. That makes this table the value really used and the driver
     # defaults a courtesy to a direct caller -- but the pair must stay equal
     # or a message would name a number no wait ever spent.
+    #
+    # Swept from the table rather than named one predicate at a time, so an
+    # expectation that arrives with a mismatched default is caught by the test
+    # that already exists instead of by the one nobody remembered to write.
+    #
+    # Only a LITERAL default is compared, and two kinds of signature are
+    # skipped on purpose. `Driver`'s own declarations carry no default --
+    # they raise before a timeout could matter -- and neither do the iOS
+    # overrides that refuse D4; `rearmed` and `no_result` are served by
+    # `wait_rearmed` and `wait_no_label`, which take the deadline without one
+    # by design, and `wait_no_label` is not even spelled `wait_no_result`. A
+    # sweep that insisted on all six would fail on three signatures that are
+    # right.
+    #
+    # Both skips are silent, which is how a sweep ends up checking nothing at
+    # all -- so `checked` is asserted against the pairs that must be in it.
     import inspect
 
     from tool.e2e.drivers.android import AndroidDriver
     from tool.e2e.drivers.ios import IosDriver
 
+    checked = set()
     for driver_class in (AndroidDriver, IosDriver):
-        default = inspect.signature(driver_class.wait_acs).parameters["timeout"].default
-        assert default == runner.EXPECT_TIMEOUT_SECONDS["acs"], driver_class
+        for expectation, seconds in runner.EXPECT_TIMEOUT_SECONDS.items():
+            method = getattr(driver_class, f"wait_{expectation}", None)
+            if method is None:
+                continue
+            timeout = inspect.signature(method).parameters.get("timeout")
+            if timeout is None or timeout.default is inspect.Parameter.empty:
+                continue
+            assert timeout.default == seconds, (driver_class, expectation)
+            checked.add((driver_class.__name__, expectation))
+
+    assert checked == {
+        ("AndroidDriver", "acs"),
+        ("AndroidDriver", "google_pay"),
+        ("AndroidDriver", "no_google_pay"),
+        ("IosDriver", "acs"),
+    }
 
 
 # --- D2: the new action branches --------------------------------------------

@@ -1945,6 +1945,29 @@ def test_wait_acs_says_which_page_never_came():
     assert ios.THREE_DS_CANCEL in str(excinfo.value)
 
 
+# -- D4: the wallet this platform does not have -------------------------------
+
+
+@pytest.mark.parametrize(
+    "name, args",
+    [
+        ("tap_google_pay", ()),
+        ("wait_google_pay", (30,)),
+        ("wait_no_google_pay", (20,)),
+    ],
+)
+def test_the_google_pay_vocabulary_refuses_and_says_it_is_android_only(name, args):
+    # Overridden here rather than left to `Driver`'s declaration for the same
+    # reason `airplane` is: the refusal names the platform's own reason. The
+    # iOS SDK has no wallet at all, and Apple Pay is an explicit campaign
+    # non-goal -- so a D4 cell must be `platforms: [android]`, and a cell that
+    # forgets is an authoring fault that spends no control check.
+    with pytest.raises(NotImplementedError) as excinfo:
+        getattr(driver(FakeSsh()), name)(*args)
+
+    assert "Android-only" in str(excinfo.value)
+
+
 # -- the vocabulary that later dimensions fill in ------------------------------
 
 
@@ -1960,11 +1983,8 @@ NOT_LANDED_YET = [
     ("kill_activity", ()),
     ("dont_keep_activities", (True,)),
     ("type_cvv", ("123",)),
-    ("tap_google_pay", ()),
     ("select_saved_card", ()),
     ("save_card", ()),
-    ("wait_google_pay", (30,)),
-    ("wait_no_google_pay", (20,)),
     ("wait_saved_card", (30,)),
 ]
 

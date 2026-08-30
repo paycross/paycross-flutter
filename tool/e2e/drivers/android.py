@@ -98,6 +98,14 @@ CARD_NUMBER = "Card number input"
 EXPIRY = "Expiry date input"
 CVV = "CVV input"
 CARDHOLDER = "Cardholder name input"
+
+#: Rendered by Google Play services, not by the SDK -- so it moves with the
+#: GMS version and with the device locale. The SDK's own testTag is invisible
+#: to uiautomator because testTagsAsResourceId is never set; that is filed
+#: upstream, and until it lands this is the only handle there is. Confirmed
+#: against this campaign's own dumps, most recently 2026-08-30.
+GOOGLE_PAY_DESC = "Pay with GPay"
+
 ACS_TITLE = "Sandbox 3DS Challenge"
 CANCEL_TITLE = "Cancel Payment?"
 CANCEL_CONFIRM = "Yes, Cancel"
@@ -464,6 +472,19 @@ class AndroidDriver(Driver):
     def tap_pay(self, amount_text: str) -> None:
         self._tap_text(f"Pay {amount_text}")
 
+    def tap_google_pay(self, **kw) -> None:
+        # Tapped by bounds: the node carrying the description is a
+        # non-clickable wrapper, because the click handler lives on the
+        # AndroidView rather than on a Compose node. `**kw` reaches `_find`'s
+        # timeout, exactly as `_tap_text` and `_tap_desc` pass theirs -- the
+        # runner never uses it, and a test that means to reach the deadline
+        # would otherwise spend thirty real seconds getting there.
+        self._tap(
+            self._find(
+                tree.find_content_desc, GOOGLE_PAY_DESC, "the Google Pay button", **kw
+            ).centre
+        )
+
     def wait_label(
         self,
         timeout: float,
@@ -514,6 +535,38 @@ class AndroidDriver(Driver):
             interval,
         )
         return found is not None
+
+    def wait_google_pay(self, timeout: float = 30) -> bool:
+        found = self._poll(
+            lambda nodes: bool(tree.find_content_desc(nodes, GOOGLE_PAY_DESC)) or None,
+            timeout,
+            2,
+        )
+        return found is not None
+
+    def wait_no_google_pay(self, timeout: float = 20) -> bool:
+        """True only if the button is absent for the WHOLE window.
+
+        Absence has to be waited out rather than waited for. Readiness is a
+        LaunchedEffect that runs after the session loads and after an
+        asynchronous isReadyToPay (PaymentActivity.kt), so a button that is
+        merely late would satisfy a single look -- and this expectation would
+        then pass on every session, which is the one thing it must never do.
+
+        Written out rather than expressed through `_poll`, which answers as
+        soon as its `look` finds something: here finding something is the
+        answer False, and finding nothing has to keep going. Tolerating a
+        refused dump while the deadline is live is the one rule it does share,
+        because a device that will not dump is not a device with no button.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            live = time.monotonic() < deadline
+            if tree.find_content_desc(self._nodes(tolerate=live), GOOGLE_PAY_DESC):
+                return False
+            if not live:
+                return True
+            self._sleep(2)
 
     # -- evidence ------------------------------------------------------------
 
