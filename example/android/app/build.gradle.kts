@@ -5,8 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "com.paycross.paycross_flutter_example"
-    compileSdk = flutter.compileSdkVersion
+    namespace = "com.paycross.flutterdemo"
+    // flutter_secure_storage 11.0.0 declares compileSdk 37 and the AAR
+    // metadata check refuses to build against anything lower, while Flutter
+    // 3.44.8 still defaults to 36. `maxOf` rather than a flat 37 so this
+    // corrects itself the day Flutter's own default catches up, instead of
+    // pinning the example one API behind it forever.
+    compileSdk = maxOf(flutter.compileSdkVersion, 37)
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -15,7 +20,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.paycross.paycross_flutter_example"
+        applicationId = "com.paycross.flutterdemo"
         // flutter.minSdkVersion is 24 on the Flutter versions this plugin
         // supports, which is what the plugin itself requires. A merchant app
         // pinned lower must raise minSdk to 24 explicitly.

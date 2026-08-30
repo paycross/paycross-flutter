@@ -1,5 +1,10 @@
-name: paycross_flutter_example
-description: "Demonstrates how to use the paycross_flutter plugin."
+name: paycross_demo
+description: "PayCross Demo: mint sandbox sessions and run payment scenarios against the paycross_flutter plugin."
+# Independent of the plugin's version on purpose -- this is the demo app's
+# own release train, and both release scripts pass --build-name/--build-number
+# derived from the demo-vX.Y.Z tag. Without a version: line here every build
+# is 1.0.0+1, which App Store Connect rejects on the second upload.
+version: 0.1.0+1
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -28,6 +33,30 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+
+  # Reads CFBundleShortVersionString/CFBundleVersion on iOS and
+  # versionName/versionCode on Android -- the same two fields the release
+  # scripts set from the tag, so the version Settings shows and the version
+  # the store sees cannot drift apart.
+  package_info_plus: ^10.2.1
+
+  # Injectable Client, and package:http/testing.dart's MockClient is what
+  # every minter test runs against -- so the whole module is covered with no
+  # network and no platform channel.
+  http: ^1.6.0
+
+  # Keychain on iOS, EncryptedSharedPreferences on Android. Nothing else in
+  # this app may hold a credential.
+  flutter_secure_storage: ^11.0.0
+
+  # History only. It holds ids, outcomes and versions -- never a token, and
+  # never a credential, which is why this is not the secure store.
+  shared_preferences: ^2.5.5
+
+  # Its floor is exactly this plugin's -- Flutter >=3.44.0, Dart ^3.12.0 --
+  # and it implements the FlutterSceneLifeCycleDelegate callbacks this
+  # Runner needs, because the Runner uses FlutterSceneDelegate.
+  app_links: ^7.2.1
 
 dev_dependencies:
   flutter_test:

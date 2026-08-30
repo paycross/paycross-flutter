@@ -75,7 +75,9 @@ The switch is exhaustive: `PayCrossResult` is sealed, so a result case added in
 a future version is a compile error rather than a silently unhandled outcome.
 
 The [example app](example/lib/main.dart) is this quickstart as a runnable
-screen, including the error handling below.
+screen, including the error handling below. It ships as **PayCross Demo — the
+internal QA app ([`example/`](example/README.md))**, which mints its own
+sandbox sessions and runs named payment scenarios.
 
 ### Session tokens
 

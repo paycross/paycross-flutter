@@ -30,7 +30,7 @@ ADB = rig_path(
     "PAYCROSS_E2E_ADB",
     "/mnt/c/Users/Syllo/AppData/Local/Android/Sdk/platform-tools/adb.exe",
 )
-PACKAGE = "com.paycross.paycross_flutter_example"
+PACKAGE = "com.paycross.flutterdemo"
 
 #: Every adb call is bounded. A wedged emulator would otherwise hold the whole
 #: matrix on one round trip.

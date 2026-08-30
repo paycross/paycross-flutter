@@ -44,7 +44,7 @@ from .base import Driver, DriverError, device_text, read_token, rig_path
 #: The ssh alias for the Mac, overridable with PAYCROSS_E2E_SSH_HOST.
 SSH_HOST = rig_path("PAYCROSS_E2E_SSH_HOST", "mac")
 UDID = "C311AFDC-25FA-44A2-A800-10EB5A1039E3"
-BUNDLE = "com.paycross.paycrossFlutterExample"
+BUNDLE = "com.paycross.flutterdemo"
 WDA = "http://127.0.0.1:8100"
 
 #: An ssh session gets launchd's minimal PATH, so every remote command sets

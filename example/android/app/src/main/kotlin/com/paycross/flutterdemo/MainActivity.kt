@@ -1,4 +1,4 @@
-package com.paycross.paycross_flutter_example
+package com.paycross.flutterdemo
 
 import io.flutter.embedding.android.FlutterActivity
 

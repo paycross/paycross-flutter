@@ -448,7 +448,7 @@ def test_launch_terminates_and_relaunches_the_example_bundle_then_opens_a_sessio
     joined = ssh.joined()
     assert "simctl terminate" in joined
     assert "simctl launch" in joined
-    assert "com.paycross.paycrossFlutterExample" in joined
+    assert "com.paycross.flutterdemo" in joined
 
 
 def test_launch_accepts_the_older_top_level_session_id_shape():
