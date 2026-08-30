@@ -14,8 +14,13 @@ the example app (`--dart-define=PAYCROSS_E2E=true`).
 Neither run aborted, and **every interleaved control passed**, so each failure
 stands on its own rather than being one rig problem seen many times.
 
-Three of the eighteen cells are Android-only: the iOS simulator shares the
-host's network and has no airplane mode (R6).
+Three of the cells are Android-only: the iOS simulator shares the host's
+network and has no airplane mode (R6).
+
+The summary line above is the **first full pass**, over eighteen cells.
+`session_expired_server_submit` was written during the run to answer a question
+the pass raised, so the dimension is now **19 cells on Android and 16 on iOS**,
+and that is what a future full pass will report.
 
 ## Results
 
@@ -96,7 +101,124 @@ a complete failure block on the transaction (`code: do_not_honor`,
 was the sleep and nothing else.
 
 Both reruns also carried a first draft of `session_expired_server_submit` that
-failed by design — see "The cell that had to be rewritten" below.
+failed by design — see below.
+
+## Paying into a server-expired session
+
+`session_expired_server` measured that both SDKs present a fully payable form
+on a session the server has already killed, and stops there. The obvious next
+question — what happens when the shopper does the thing the form invites — was
+not in the original cell set. `session_expired_server_submit` was written to
+answer it, with the **approve** PAN, so that the one outcome that matters most
+(money moving on a closed session) would be visible rather than hidden behind a
+card that declines anyway.
+
+The verdicts were fixed in writing **before** the run, so the answer could not
+be fitted to it:
+
+| measured | verdict |
+|---|---|
+| `result:failure:restart:` or a re-arm with a banner | correct, no finding |
+| a hang, a crash, or `result:failure:retry:` | finding |
+| `result:success:` | **serious** finding |
+
+### The result: both SDKs refuse correctly
+
+| | Android — `evidence/d2-debug-android/20260830-114945-android` | iOS — `evidence/d2-debug-ios/20260830-114950-ios` |
+|---|---|---|
+| label | `result:failure:restart:3a9c6d3b-…` | `result:failure:restart:71dfcbf5-…` |
+| session | `01a05281-149e-7026-a049-8f94599b6803` — **expired** | `01a05281-2518-712c-92a3-b7a60e5101f3` — **expired** |
+| transactions on the session | **0** | **0** |
+| `no_succeeded_txn` | held | held |
+| seconds | 1304 | 1286 |
+
+**No money moved on either platform**, the session stayed expired holding
+nothing, and both SDKs landed on the non-retryable `restart` — the same
+recovery they give for an expired JWT and a malformed token. That is the
+"correct, no finding" row of the table above, and it is the answer to the
+question `session_expired_server` left open: the sheet is payable, but the
+payment is refused.
+
+### The measurement inside the pass: the label names a transaction that the session does not have
+
+The cell left `txn_count` unasserted on purpose, because whether a submit on a
+dead session creates a transaction was part of the question. The answer is
+**stranger than either option**: the label's transaction field is *non-empty*
+on both platforms, and the merchant API's session holds `"transactions": []`.
+
+So the id in the label is not resolvable against the session it belongs to. A
+merchant reconciling `Failure.transactionId` against `GET /payment-sessions/{id}`
+finds nothing there.
+
+Where the id comes from is **read in source, not observed on the wire**, and
+the distinction matters:
+
+- The initialize path cannot have produced it. `PaymentViewModel.kt:137` builds
+  its `restart` from `transactionId ?: session?.latestTransactionId`, and on a
+  session with no transactions both are null — that path yields an *empty*
+  `<txn>`, which is exactly what `session_expired_jwt` measures.
+- So the card really was submitted: `submitWithRetry` (`:304-306`) only starts
+  polling when `submitCard` answers `success == true` with a non-null
+  `transactionId`, and the only route from there to a non-retryable failure
+  naming a transaction is `handleStatus`'s `STATUS_FAILED` branch (`:379-403`)
+  with a `recovery` that is not retryable.
+
+Read together: **`POST /api/submit-card` accepted a card on an expired session
+and handed back a transaction id**, the status endpoint later reported that id
+as failed with a `restart` recovery, and no transaction was ever recorded
+against the session. The refusal happens downstream of the submit, not at it.
+
+This was **not filed as an issue**, deliberately. The chain above is inference
+from `origin/main` plus two measured endpoints; the submit and status HTTP
+bodies were never captured, and an issue asserting backend behaviour on that
+basis could easily be wrong in its particulars. The verification step is
+small and exact, and belongs to whoever next has the rig: **capture the
+`/api/submit-card` response and the first `/status/{id}` response for this
+cell.** If the submit really does answer `success: true` on an expired
+session, that is a backend issue on `paycross-core`, in the same family as
+[io.paycross#871](https://github.com/paycross/io.paycross/issues/871) — two
+read paths disagreeing about one transaction.
+
+### Why this cell stays `<any>`, and the tooling gap it exposes
+
+`session_expired_server_submit` is the one discovery cell that reproduced
+across both platforms and still **cannot be pinned**. Pinning
+`result:failure:restart:<txn>` would make it fail:
+`verify.verify_label_transaction` requires a non-empty captured `<txn>` to name
+a transaction on the session, and this one names none.
+
+That is worth stating plainly, because it cuts the other way too. **`<any>`
+silently disables that check.** `verify.match_label` captures nothing for
+`<any>` (`verify.py:107-108`), so the `transaction_id` reaching
+`verify_label_transaction` at `runner.py:915` is `None`, and the function
+returns immediately. Every discovery cell in the matrix can therefore report a
+transaction id that does not exist and pass without comment — which is exactly
+what happened here, and it took reading `merchant.json` by hand to notice.
+
+Worth a runner change in Phase 3: capture and cross-check the transaction id
+for `<any>` cells too, recording the mismatch rather than asserting a label.
+The information is already in `result.json`; nothing is checking it.
+
+## The cell that had to be rewritten
+
+The first draft of `session_expired_server_submit` copied its sibling's
+opening — decline, `expect rearmed`, cancel, then `wait_expired` — while
+keeping the **approve** PAN the submit step needs. A cell carries one card, so
+the set-up payment used the approve card and simply **succeeded**: there was no
+re-arm to observe, no Cancel button to press, and the session reached
+`completed`, which can never go on to expire. The cell's own premise was
+destroyed by its set-up.
+
+It failed that way once on each platform, inside the reruns
+(`20260830-100336-*`): iOS session `01a05220-d801-7352-9632-bf1c1174cfb4` with
+txn `df9b2fde-…` succeeded, android session `01a05232-83c9-702f-8b6e-cdba6215a17c`.
+Both aborted at the cancel rather than burning the 1400 s wait, and both
+interleaved controls passed straight afterwards, so the rig was never in doubt.
+
+The fix was to **drop the set-up entirely**. The sibling needs a failed
+transaction only to make its `<txn>` non-empty; this cell needs nothing but a
+server-expired session, so it now waits one out and submits into it. Recorded
+here so it is not retried.
 
 ## The pins
 
@@ -152,7 +274,9 @@ would have been a guess.
 ## The discovery cells, both platforms
 
 Every `<any>` cell that ran on both platforms produced **the same label on
-both**. There is no Android/iOS divergence anywhere in this dimension.
+both**. There is no Android/iOS divergence anywhere in this dimension — which
+is itself worth saying, because it means a merchant integrating against one
+platform's behaviour will not be surprised by the other.
 
 | cell | Android | iOS | agree | pinned |
 |---|---|---|---|---|
@@ -161,6 +285,7 @@ both**. There is no Android/iOS divergence anywhere in this dimension.
 | `session_expired_jwt` | `result:failure:restart:` (empty `<txn>`) | `result:failure:restart:` (empty `<txn>`) | yes | yes |
 | `timeout_provider_never_answers` | `result:failure:retry:<txn>` | `result:failure:retry:<txn>` | yes | yes |
 | `session_expired_server` | no label; payable sheet | no label; payable sheet | yes | **no — see above** |
+| `session_expired_server_submit` | `result:failure:restart:<txn>` | `result:failure:restart:<txn>` | yes | **no — the `<txn>` names no transaction** |
 | `airplane_during_challenge` | `result:failure:retry:<txn>` | *(android only, R6)* | — | yes |
 | `airplane_during_polling` | `result:failure:retry:<txn>` | *(android only, R6)* | — | yes |
 
