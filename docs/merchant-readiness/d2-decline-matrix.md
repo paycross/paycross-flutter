@@ -62,20 +62,107 @@ host's network and has no airplane mode (R6).
 | `session_expired_server` | discover | *(no label)* | expired | 1 | failed | **FINDING** |
 | `timeout_provider_never_answers` | discover | `result:failure:retry:5b5cc9f0-…` | open | 1 | processing | measured |
 
+## The reruns
+
+Three cells were rerun with `--only … --all` on the same evidence roots — two
+because the host sleep had turned them into artifacts rather than
+measurements, and one because it was the finding and a finding is worth
+proving twice.
+
+### Android — `evidence/d2-debug-android/20260830-100336-android`
+
+| cell | measured label | session | txns | txn status | seconds | verdict |
+|---|---|---|---|---|---|---|
+| `airplane_during_challenge` | `result:failure:retry:85844815-…` | open | 1 | `threeds_challenge_requested` | 612 | PASS — the artifact replaced by a real measurement |
+| `airplane_during_polling` | **`result:failure:retry:1f9aa0d3-…`** | **completed** | 1 | **succeeded** | 609 | PASS — **the finding, reproduced** |
+
+`airplane_during_challenge` is the cell the sleep caught mid-flight, and the
+rerun both replaces it and settles what it means. Its session came back
+**open** with the transaction still at `threeds_challenge_requested` and
+`threeds_result: null` — nothing succeeded and no liability shifted — so
+`failure:retry` is a defensible answer there. **It is not the same result as
+its sibling** even though the two labels read alike, and the two must not be
+reported as one finding.
+
+### iOS — `evidence/d2-debug-ios/20260830-100336-ios`
+
+| cell | measured label | session | txns | txn status | seconds | verdict |
+|---|---|---|---|---|---|---|
+| `decline_do_not_honor` | `result:cancelled` | open | 1 | failed | 63 | PASS — sleep artifact confirmed |
+
+63 seconds against the 9.5 hours the first attempt took, `rearmed: true`, and
+a complete failure block on the transaction (`code: do_not_honor`,
+`recovery: change_method`, `network_decline_code: "05"`). The first attempt
+was the sleep and nothing else.
+
+Both reruns also carried a first draft of `session_expired_server_submit` that
+failed by design — see "The cell that had to be rewritten" below.
+
+## The pins
+
+Six of the seven `<any>` cells measured the same label twice and are now
+literals in the cell files, so the matrix asserts where it used to record.
+"Twice" means either two runs on one platform (the android-only airplane
+cells) or the same label on both platforms — both are independent
+observations of one behaviour.
+
+| cell | pinned to | reproduced by |
+|---|---|---|
+| `completed_session_represented` | `result:success:<txn>` | android + iOS agree |
+| `error_malformed_token` | `result:failure:restart:` | android + iOS agree |
+| `session_expired_jwt` | `result:failure:restart:` | android + iOS agree |
+| `timeout_provider_never_answers` | `result:failure:retry:<txn>` | android + iOS agree |
+| `airplane_during_challenge` | `result:failure:retry:<txn>` | android, two runs |
+| `airplane_during_polling` | `result:failure:retry:<txn>` | android, two runs |
+
+Two are pinned **without** a `<txn>` placeholder. `error_malformed_token` and
+`session_expired_jwt` both measured an empty transaction field, and that
+emptiness carries meaning: it is what tells `session_expired_jwt` apart from
+`session_expired_server`. A placeholder would quietly accept a transaction id
+that should never exist.
+
+`airplane_during_polling`'s pin **asserts a bug on purpose.** Its merchant
+assertions already say the money moved and liability shifted; the label now
+says the SDK called that a retryable failure. When
+[payment-android-sdk#25](https://github.com/paycross/payment-android-sdk/issues/25)
+is fixed the cell will go red, and that red is the fix arriving — the cell's
+own comment says so. Leaving `<any>` would have let the fix land unremarked.
+
+### `session_expired_server` is not pinned, and cannot pass as it is written
+
+It produced no label at all, on either platform, so there is no literal to
+pin — and the reason is structural rather than a defect in the SDK: the cell's
+action list stops at `present_token`, so nothing downstream can resolve a
+label, while `expected.label: "<any>"` requires one. **As authored it is a
+guaranteed red on both platforms in every future D2 run.**
+
+The runner's vocabulary already has the answer — `expect no_result` paired
+with `label: "<none>"`, a pairing `cells.py` enforces in both directions — but
+it is not a two-line change. The runner overwrites the recorded label on
+*every* `wait_result`, and this cell has an earlier one that records
+`result:cancelled` after the cancel; `<none>` only works if that is dropped
+too, which costs the cell its proof that the cancel produced a label.
+
+Left for Phase 3 on purpose, and for a second reason:
+`session_expired_server_submit` may supersede it. If the SDK turns out to
+refuse at submit, folding the two cells into one is likely better than
+converting this one — and deciding that before the submit measurement was in
+would have been a guess.
+
 ## The discovery cells, both platforms
 
 Every `<any>` cell that ran on both platforms produced **the same label on
 both**. There is no Android/iOS divergence anywhere in this dimension.
 
-| cell | Android | iOS | agree |
-|---|---|---|---|
-| `completed_session_represented` | `result:success:<txn>` | `result:success:<txn>` | yes |
-| `error_malformed_token` | `result:failure:restart:` (empty `<txn>`) | `result:failure:restart:` (empty `<txn>`) | yes |
-| `session_expired_jwt` | `result:failure:restart:` (empty `<txn>`) | `result:failure:restart:` (empty `<txn>`) | yes |
-| `timeout_provider_never_answers` | `result:failure:retry:<txn>` | `result:failure:retry:<txn>` | yes |
-| `session_expired_server` | no label; payable sheet | no label; payable sheet | yes |
-| `airplane_during_challenge` | `result:failure:retry:<txn>` | *(android only, R6)* | — |
-| `airplane_during_polling` | `result:failure:retry:<txn>` | *(android only, R6)* | — |
+| cell | Android | iOS | agree | pinned |
+|---|---|---|---|---|
+| `completed_session_represented` | `result:success:<txn>` | `result:success:<txn>` | yes | yes |
+| `error_malformed_token` | `result:failure:restart:` (empty `<txn>`) | `result:failure:restart:` (empty `<txn>`) | yes | yes |
+| `session_expired_jwt` | `result:failure:restart:` (empty `<txn>`) | `result:failure:restart:` (empty `<txn>`) | yes | yes |
+| `timeout_provider_never_answers` | `result:failure:retry:<txn>` | `result:failure:retry:<txn>` | yes | yes |
+| `session_expired_server` | no label; payable sheet | no label; payable sheet | yes | **no — see above** |
+| `airplane_during_challenge` | `result:failure:retry:<txn>` | *(android only, R6)* | — | yes |
+| `airplane_during_polling` | `result:failure:retry:<txn>` | *(android only, R6)* | — | yes |
 
 Two of these settle open questions from the plan:
 
@@ -112,12 +199,17 @@ does, and a cell aiming at the server's verdict measures JWT expiry instead.
 merchant assertions is exactly the shape that catches this, so a pass here is
 the finding.
 
-| | |
-|---|---|
-| session | `01a0512f-186f-713d-8d87-3bf2bb8345d6` — completed |
-| transaction | `fd3ea19c-2d7a-460d-a926-5ed8ab3f9ad1` — **succeeded** |
-| `threeds_result` | authenticated, challenge, **`liability_shifted: true`**, eci 05 |
-| SDK label | **`result:failure:retry:fd3ea19c-…`** |
+Filed as
+**[payment-android-sdk#25](https://github.com/paycross/payment-android-sdk/issues/25)**,
+after reproducing it on a second, independent session.
+
+| | first run | rerun |
+|---|---|---|
+| session | `01a0512f-186f-713d-8d87-3bf2bb8345d6` — completed | `01a05229-3a71-7369-b538-29bf557f8db7` — completed |
+| transaction | `fd3ea19c-…` — **succeeded** | `1f9aa0d3-…` — **succeeded** |
+| `threeds_result` | authenticated, challenge, **`liability_shifted: true`**, eci 05 | identical |
+| SDK label | **`result:failure:retry:fd3ea19c-…`** | **`result:failure:retry:1f9aa0d3-…`** |
+| seconds | 592 | 609 |
 
 `PaymentViewModel.pollStatus` swallows `IOException`/`HttpException` as
 transient, runs out its 480 s deadline and emits
@@ -127,8 +219,17 @@ reporting an observed failure; it is reporting the absence of an answer as one.
 and the SDK contradicts its own stated policy: `isRetryable`'s docstring says
 unknown recoveries "fail closed", yet the one genuinely-unknown case fails open.
 
+The proposed fix in #25 is a new `Recovery` member meaning *outcome unknown,
+verify before re-collecting*, returned from the deadline branch. It is a new
+enum member and therefore source-incompatible for an exhaustive `when` in
+merchant code, so it belongs in a minor release. Shortening or lengthening the
+deadline is explicitly **not** proposed: no deadline makes an unreachable
+network reachable, and the report at the deadline is wrong at any duration.
+
 iOS is **suspected but unmeasurable** — the same shape is in
-`PaymentFlowRunner.swift`, but R6 puts network cuts out of reach on a simulator.
+`PaymentFlowRunner.swift`, but R6 puts network cuts out of reach on a
+simulator. The issue says so rather than implying the defect is cross-platform;
+if it is confirmed on iOS it needs its own issue on that SDK.
 
 ### 2. Both platforms present a fully payable sheet for a server-expired session
 
@@ -175,6 +276,7 @@ failed`; only the code path that set it differs.
 |---|---|---|
 | [payment-testing-tool#17](https://github.com/paycross/payment-testing-tool/issues/17) | `payment_testing_go` | `declined_expired.json` / `declined_invalid_cvv.json` no longer decline |
 | [io.paycross#871](https://github.com/paycross/io.paycross/issues/871) | `paycross-core` | a failed transaction can render `failure: null` |
+| [payment-android-sdk#25](https://github.com/paycross/payment-android-sdk/issues/25) | `payment-android-sdk` | poll deadline reports `Recovery.RETRY` over a succeeded, liability-shifted payment |
 
 ## The run was interrupted by a ~10 h host sleep
 
