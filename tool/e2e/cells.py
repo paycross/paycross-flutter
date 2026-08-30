@@ -84,9 +84,64 @@ EXPECTATIONS = frozenset(
 _LITERAL_TOKEN = re.compile(r"[A-Za-z0-9._~-]{1,200}")
 
 
+#: Every button the sandbox's challenge page renders, which is what
+#: `acs:<outcome>` taps. Three groups, not two: `internal/challenge/render.go`
+#: builds `authOutcomes`, `issuerOutcomes` AND `technicalOutcomes`, and
+#: `assets/challenge.html.tmpl:142-153` renders each of them as
+#: `<button data-outcome="{{.}}">{{.}}</button>` -- so the visible text a
+#: driver taps is the token verbatim, and every token here is reachable.
+#: Values from `internal/sandboxcore/outcome.go` on payment-sandbox
+#: `origin/main` (read 2026-08-31; the local working tree runs behind).
+#:
+#: A membership check rather than the shape check this used to be. `[a-z_]+`
+#: accepts `card_expird`, which authors cleanly, reaches a device, and then
+#: spends the full 120-second ACS page wait before failing on text that
+#: nothing renders -- a live cell burned on a typo. Membership costs nothing
+#: and answers at load time.
+#:
+#: Kept as a literal rather than fetched: the runner has no access to the Go
+#: repo, and a list that could not be read would fail closed on a legal cell.
+#: A sandbox that adds a button is a one-line change here, and one that
+#: REMOVES one shows up as a live cell failing rather than as a false pass.
+ACS_OUTCOMES = frozenset(
+    {
+        # authOutcomes
+        "approve",
+        "authentication_failed",
+        "authentication_rejected",
+        "authentication_abandoned",
+        "authentication_timeout",
+        "authentication_required",
+        # issuerOutcomes
+        "do_not_honor",
+        "insufficient_funds",
+        "card_expired",
+        "invalid_card_number",
+        "invalid_cvv",
+        "card_lost_stolen",
+        "card_restricted",
+        "fraud_suspected",
+        "transaction_not_allowed",
+        "account_closed",
+        "limit_exceeded",
+        "duplicate_transaction",
+        "customer_abandoned",
+        # technicalOutcomes
+        "gateway_error",
+        "issuer_unavailable",
+        "timeout",
+        "invalid_request",
+        "session_expired",
+        "merchant_configuration",
+        "method_not_supported",
+        "unknown_error",
+    }
+)
+
+
 def _is_acs_outcome(arg: str) -> bool:
-    """The sandbox ACS buttons are all lower-case snake tokens."""
-    return bool(re.fullmatch(r"[a-z_]+", arg))
+    """One of the buttons the sandbox's challenge page actually renders."""
+    return arg in ACS_OUTCOMES
 
 
 def _is_positive_seconds(arg: str) -> bool:
@@ -116,7 +171,10 @@ def _is_literal_token(arg: str) -> bool:
 #: `verb in ARG_ACTIONS` still reads as membership.
 ARG_ACTIONS = MappingProxyType(
     {
-        "acs": (_is_acs_outcome, "a lower-case ACS outcome token"),
+        # The whole list, not a description of it: this message is read by
+        # whoever mistyped an outcome, and the answer they need is which
+        # token to write instead.
+        "acs": (_is_acs_outcome, f"one of {sorted(ACS_OUTCOMES)}"),
         "airplane": (_is_on_off, "'on' or 'off'"),
         "background": (_is_positive_seconds, "a positive number of seconds"),
         "dont_keep_activities": (_is_on_off, "'on' or 'off'"),

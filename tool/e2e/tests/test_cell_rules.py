@@ -146,3 +146,78 @@ def test_the_ios_refusal_of_airplane_mode_still_stands(tmp_path):
 
     with pytest.raises(AssertionError, match="iOS simulator"):
         check_cell_dir(Path(where), "ios")
+
+
+#: A discovery cell: it asserts nothing about the label, because which label
+#: appears is what it is measuring. `{merchant}` is left open so each test
+#: writes only the session pinning it is about.
+DISCOVERY = """\
+id: {id}
+platforms: [android]
+card: {{pan: "4111111111153220", expiry: "12/28", cvv: "123"}}
+session: {{amount: 1000, currency: EUR}}
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - rotate
+  - wait_result 60
+expected:
+  label: "<any>"
+  merchant:
+{merchant}
+"""
+
+
+def discovery(tmp_path, cell_id, merchant):
+    where = tmp_path / "cells"
+    where.mkdir(exist_ok=True)
+    (where / "control.yaml").write_text(textwrap.dedent(CONTROL), encoding="utf-8")
+    (where / f"{cell_id}.yaml").write_text(
+        DISCOVERY.format(id=cell_id, merchant=merchant), encoding="utf-8"
+    )
+    return where
+
+
+@pytest.mark.parametrize(
+    "merchant",
+    ["    session_status: open\n", "    txn_count: 1\n"],
+    ids=["session_status", "txn_count"],
+)
+def test_a_discovery_cell_pins_the_session_instead_of_no_succeeded_txn(
+    tmp_path, merchant
+):
+    # `<any>` cannot honestly promise `no_succeeded_txn`: whether money moved
+    # is part of what the cell is measuring. What it must not be allowed to do
+    # is assert nothing at all.
+    where = discovery(tmp_path, "rotate_after_submit", merchant)
+
+    assert {c.id for c in check_cell_dir(where, "android")} == {
+        "control",
+        "rotate_after_submit",
+    }
+
+
+def test_a_discovery_cell_asserting_nothing_about_the_session_is_refused(tmp_path):
+    # Otherwise it passes on a device that did nothing at all.
+    where = discovery(tmp_path, "rotate_after_submit", "    txn_status: failed\n")
+
+    with pytest.raises(AssertionError, match="must still pin the session state"):
+        check_cell_dir(where, "android")
+
+
+def test_a_silent_cell_pins_the_session_too(tmp_path):
+    # `<none>` is the other sentinel and is held to the same rule -- and it
+    # CAN also carry no_succeeded_txn, which the process-kill cell does.
+    where = tmp_path / "cells"
+    where.mkdir()
+    (where / "control.yaml").write_text(textwrap.dedent(CONTROL), encoding="utf-8")
+    (where / "kill_process.yaml").write_text(
+        DISCOVERY.format(id="kill_process", merchant="    txn_status: failed\n")
+        .replace('label: "<any>"', 'label: "<none>"')
+        .replace("  - wait_result 60\n", "  - kill_activity\n  - expect no_result\n"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError, match="must still pin the session state"):
+        check_cell_dir(where, "android")

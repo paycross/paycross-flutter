@@ -68,7 +68,14 @@ def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
         # No `rearmed` <-> `expect rearmed` assertion here: `load_cell` now
         # refuses that pairing outright, so a cell breaking it never reaches
         # this loop and the assertion would be dead code.
-        if not expected.label.startswith("result:success"):
+        if expected.label in cells.LABEL_SENTINELS:
+            # A discovery cell asserts nothing about the label, so it has to
+            # assert something about the session -- otherwise it passes on a
+            # device that did nothing at all.
+            assert {"session_status", "txn_count"} & set(expected.merchant), (
+                f"{cell.id}: a discovery cell must still pin the session state"
+            )
+        elif not expected.label.startswith("result:success"):
             assert "no_succeeded_txn" in expected.merchant, cell.id
         assert "airplane" not in verbs or platform == "android", (
             f"{cell.id}: airplane mode does not exist on the iOS simulator"
