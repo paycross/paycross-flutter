@@ -90,6 +90,15 @@ EXAMPLE_PAY = "Pay"
 #: a cell that submits into a half-cut network measures neither state.
 AIRPLANE_SETTLE_SECONDS = 8
 
+#: How long the window manager is given to settle after a HOME, a resume or
+#: a rotation. Generous: a look taken mid-animation reads the old screen.
+BACKGROUND_SETTLE_SECONDS = 3
+ROTATE_SETTLE_SECONDS = 3
+_KEYCODE_HOME = 3
+
+#: `mCurrentFocus=Window{... com.example/com.example.MainActivity}`.
+_FOCUSED = re.compile(r"([A-Za-z0-9_.]+)/[A-Za-z0-9_.$]+")
+
 #: How much raw device text a driver message may carry. These reach stdout and
 #: the cell's `problems`, and a wedged adb answers with a screenful.
 QUOTED_DEVICE_TEXT_CHARS = 80
@@ -295,6 +304,23 @@ class AndroidDriver(Driver):
                 "the device is in airplane mode: a previous cell left it on. "
                 "Run: adb shell cmd connectivity airplane-mode disable"
             )
+        # The same shape, for the same reason, one setting along. This one is
+        # worse to inherit than airplane mode: the plugin's detach path fires
+        # on EVERY cell that follows, so each of them reports
+        # `error:resultUnknown` and each looks like an SDK finding rather than
+        # like the one rig fault it is.
+        if (
+            self._shell(
+                ["shell", "settings get global always_finish_activities"]
+            ).strip()
+            == "1"
+        ):
+            raise DriverError(
+                "'Don't keep activities' is on: a previous cell left it set, and "
+                "every cell after it would fail for that reason while looking "
+                "like an SDK finding. Run: adb shell settings put global "
+                "always_finish_activities 0"
+            )
         self._shell(["shell", "am", "force-stop", PACKAGE])
         self._shell(["shell", "monkey", "-p", PACKAGE, "-c", _LAUNCHER, "1"])
         self._sleep(LAUNCH_SETTLE_SECONDS)
@@ -422,6 +448,126 @@ class AndroidDriver(Driver):
                 f"asking for {want!r}: the cut did not take, so anything this "
                 "cell measured is meaningless. The toggle said "
                 f"{said.strip()[:QUOTED_DEVICE_TEXT_CHARS]!r}"
+            )
+
+    # -- the app process and the device --------------------------------------
+
+    def _foreground_package(self) -> str:
+        """Which app the window manager says is focused, or "".
+
+        Asked of the window manager rather than inferred from a tree dump:
+        a dump of the launcher and a dump of an app mid-transition look alike
+        from up here, and this is the question both `background` halves
+        actually have.
+        """
+        said = self._shell(
+            ["shell", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"]
+        )
+        found = _FOCUSED.search(said)
+        return found.group(1) if found else ""
+
+    def _wait_foreground(
+        self, package: str, *, timeout: float = 30, interval: float = 1
+    ) -> None:
+        # Same deadline convention as `_poll`: with timeout=0 it looks once
+        # and then gives up, which is how a test reaches the failure branch
+        # without spending the wait.
+        deadline = time.monotonic() + timeout
+        while True:
+            live = time.monotonic() < deadline
+            seen = self._foreground_package()
+            if seen == package:
+                return
+            if not live:
+                raise DriverError(
+                    f"{package} is not in the foreground after {timeout}s; the "
+                    f"window manager reports {seen!r}"
+                )
+            self._sleep(interval)
+
+    def background(self, seconds: float) -> None:
+        """HOME, wait, and bring the task back the way a shopper would.
+
+        `monkey` with the LAUNCHER category, exactly as `launch()` uses --
+        but WITHOUT the force-stop that precedes it there. That is the whole
+        point: tapping the icon RESUMES the existing task with the SDK's
+        PaymentActivity still on top of it, where `am start` on MainActivity
+        would reorder the task and change what is being measured.
+
+        Both halves are verified. A HOME that did not take would background
+        nothing and the cell would report that the SDK survived something
+        that never happened.
+        """
+        self._key(_KEYCODE_HOME)
+        self._sleep(BACKGROUND_SETTLE_SECONDS)
+        if self._foreground_package() == self.package:
+            raise DriverError("the app is still in the foreground after HOME")
+        self._sleep(seconds)
+        self._shell(["shell", "monkey", "-p", self.package, "-c", _LAUNCHER, "1"])
+        self._wait_foreground(self.package)
+        self._sleep(BACKGROUND_SETTLE_SECONDS)
+
+    def rotate(self) -> None:
+        """A quarter turn, and it stays turned.
+
+        Accelerometer rotation goes off first or the emulator's own sensor
+        puts it straight back.
+
+        What this actually exercises: the SDK's PaymentActivity declares no
+        `android:configChanges` at all (sdk AndroidManifest.xml:12-15), so a
+        rotation DESTROYS AND RECREATES it. The example app does the
+        opposite -- its manifest lists orientation, screenSize and locale --
+        so MainActivity absorbs the change and the plugin's
+        onDetachedFromActivityForConfigChanges never fires. A rotation here
+        measures the SDK's recreation, not the plugin's detach path.
+
+        One consequence for cell authoring: the CVV field is a plain
+        `remember`, not `rememberSaveable` (CardFormScreen.kt:91-95, citing
+        PCI DSS 3.3.1), so rotating on the form clears it. Rotate after
+        submitting, or retype.
+        """
+        self._shell(["shell", "settings put system accelerometer_rotation 0"])
+        current = self._shell(["shell", "settings get system user_rotation"]).strip()
+        target = "0" if current == "1" else "1"
+        self._shell(["shell", f"settings put system user_rotation {target}"])
+        self._sleep(ROTATE_SETTLE_SECONDS)
+
+    def kill_activity(self) -> None:
+        """Ends the app's process, sheet and all.
+
+        `am force-stop`, not `am kill`: `am kill` only takes processes that
+        are safe to kill, and this one is foreground with the SDK's activity
+        on top, so it would do nothing at all and the cell would pass having
+        killed nothing. What this stands in for is a low-memory kill -- the
+        Dart isolate dies with the process and the pending call dies with it,
+        which is the contract D3 exists to record. The verb's name is Phase
+        0's; what it does is end the process.
+        """
+        self._shell(["shell", "am", "force-stop", self.package])
+        self._sleep(SETTLE_SECONDS)
+
+    def dont_keep_activities(self, on: bool) -> None:
+        """The developer option, from the command line.
+
+        With it on, MainActivity is destroyed the moment the SDK's
+        PaymentActivity comes to the front, so the plugin's
+        `onDetachedFromActivity` fires and finishes the pending call with
+        `paycross_result_unknown` (PayCrossPlugin.kt:82-94) while the sheet
+        is still up and the shopper can still pay.
+
+        Read back, because a setting that silently did not take would make
+        the cell measure an ordinary payment. And left on it poisons every
+        later cell, which is why `launch()` refuses to start while it is set.
+        """
+        want = "1" if on else "0"
+        self._shell(["shell", f"settings put global always_finish_activities {want}"])
+        self._sleep(SETTLE_SECONDS)
+        got = self._shell(
+            ["shell", "settings get global always_finish_activities"]
+        ).strip()
+        if got != want:
+            raise DriverError(
+                f"always_finish_activities reads {got!r} after asking for {want!r}"
             )
 
     def type_card(self, card: Card, *, verify_pan: bool = True) -> None:

@@ -668,20 +668,6 @@ def test_close_is_a_no_op_for_a_driver_with_nothing_to_release():
     assert shell.calls == []
 
 
-def test_the_d3_actions_are_declared_and_refuse_rather_than_no_op():
-    # `airplane` is no longer among them: D2 needs a real network cut, and
-    # this driver implements one. The rest still belong to D3.
-    d = driver(FakeShell())
-
-    for call in (
-        lambda: d.background(5),
-        d.rotate,
-        d.kill_activity,
-    ):
-        with pytest.raises(NotImplementedError):
-            call()
-
-
 def test_a_wait_that_times_out_on_a_legacy_label_names_the_missing_define():
     # The expensive failure this replaces: a build made without
     # --dart-define=PAYCROSS_E2E=true renders "Paid 1000 EUR - ..." instead of
@@ -786,8 +772,10 @@ def test_relaunch_on_android_is_exactly_launch():
     # Nothing on this side is truncated by a launch, so there is nothing for a
     # relaunch to preserve. The base implementation is the whole answer.
     # Two launches' worth: FakeShell pops one output per call, and a launch
-    # spends five -- boot, locale, airplane, force-stop, monkey.
-    shell = FakeShell("1\n", "en-US\n", "0\n", "", "", "1\n", "en-US\n", "0\n", "", "")
+    # spends six -- boot, locale, airplane, don't-keep-activities, force-stop,
+    # monkey.
+    one = ["1\n", "en-US\n", "0\n", "0\n", "", ""]
+    shell = FakeShell(*one, *one)
     made = driver(shell)
 
     made.launch()
@@ -1113,11 +1101,9 @@ def test_wait_acs_says_which_page_never_came():
 #: NotImplementedError as a cell-authoring fault and spends no control check on
 #: it, where an AttributeError reads as a device problem -- and two of those in
 #: a row abort a forty-minute matrix as a rig fault.
+#: The four lifecycle verbs are no longer here: D3 implements all of them on
+#: this driver, and each has its own tests under "D3: lifecycle" below.
 NOT_LANDED_YET = [
-    ("background", (5,)),
-    ("rotate", ()),
-    ("kill_activity", ()),
-    ("dont_keep_activities", (True,)),
     ("type_cvv", ("123",)),
     ("tap_google_pay", ()),
     ("select_saved_card", ()),
@@ -1134,3 +1120,175 @@ def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
 
     with pytest.raises(NotImplementedError):
         getattr(d, name)(*args)
+
+
+# -- D3: lifecycle ------------------------------------------------------------
+
+
+#: What `dumpsys window | grep mCurrentFocus` answers with, for one app.
+def focused(package, activity="com.paycross.MainActivity"):
+    return f"  mCurrentFocus=Window{{c4b8ac1 u0 {package}/{activity}}}\n"
+
+
+LAUNCHER = focused("com.google.android.apps.nexuslauncher", "NexusLauncherActivity")
+OURS = focused("com.paycross.flutterdemo")
+
+
+def test_the_foreground_package_is_asked_of_the_window_manager():
+    # Not inferred from a tree dump: a dump of the launcher and a dump of an
+    # app mid-transition look alike from up here.
+    shell = FakeShell(OURS)
+
+    assert driver(shell)._foreground_package() == "com.paycross.flutterdemo"
+    assert shell.argv_text() == [
+        "shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"
+    ]
+
+
+def test_nothing_focused_reads_as_no_package():
+    assert driver(FakeShell("  mCurrentFocus=null\n"))._foreground_package() == ""
+
+
+def test_wait_foreground_gives_up_naming_what_it_saw():
+    # timeout=0 looks once and then gives up, which is how a test reaches the
+    # failure branch without spending the wait.
+    shell = FakeShell(LAUNCHER)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell)._wait_foreground("com.paycross.flutterdemo", timeout=0)
+
+    message = str(excinfo.value)
+    assert "com.paycross.flutterdemo is not in the foreground" in message
+    assert "nexuslauncher" in message
+
+
+def test_wait_foreground_keeps_looking_until_the_app_is_back():
+    shell = FakeShell(LAUNCHER, LAUNCHER, OURS)
+    naps = []
+
+    driver(shell, naps)._wait_foreground("com.paycross.flutterdemo", interval=1)
+
+    assert len(shell.calls) == 3
+    assert naps == [1, 1]
+
+
+def test_background_goes_home_waits_and_resumes_the_existing_task():
+    # `monkey` with the LAUNCHER category exactly as `launch()` uses -- but
+    # WITHOUT the force-stop that precedes it there. That is the whole point:
+    # tapping the icon RESUMES the existing task with the SDK's
+    # PaymentActivity still on top of it, where `am start` on MainActivity
+    # would reorder the task and change what is being measured.
+    shell = FakeShell("", LAUNCHER, "", OURS)
+    naps = []
+
+    driver(shell, naps).background(60)
+
+    assert shell.argv_text() == [
+        "shell input keyevent 3",
+        "shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+        "shell monkey -p com.paycross.flutterdemo "
+        "-c android.intent.category.LAUNCHER 1",
+        "shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+    ]
+    assert naps == [
+        android.BACKGROUND_SETTLE_SECONDS,
+        60,
+        android.BACKGROUND_SETTLE_SECONDS,
+    ]
+    # No force-stop anywhere: that would end the very task being measured.
+    assert not any("force-stop" in t for t in shell.argv_text())
+
+
+def test_background_refuses_a_home_that_did_not_take():
+    # Otherwise the cell reports that the SDK survived something that never
+    # happened.
+    shell = FakeShell("", OURS)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).background(60)
+
+    assert "still in the foreground after HOME" in str(excinfo.value)
+    # And the wait was never spent, nor the app re-launched.
+    assert not any("monkey" in t for t in shell.argv_text())
+
+
+def test_rotate_turns_the_accelerometer_off_first():
+    # Or the emulator's own sensor puts the screen straight back.
+    shell = FakeShell("", "0\n")
+    naps = []
+
+    driver(shell, naps).rotate()
+
+    assert shell.argv_text() == [
+        "shell settings put system accelerometer_rotation 0",
+        "shell settings get system user_rotation",
+        "shell settings put system user_rotation 1",
+    ]
+    assert naps == [android.ROTATE_SETTLE_SECONDS]
+
+
+def test_rotate_toggles_from_whatever_it_read():
+    shell = FakeShell("", "1\n")
+
+    driver(shell).rotate()
+
+    assert "shell settings put system user_rotation 0" in shell.argv_text()
+
+
+def test_kill_activity_force_stops_rather_than_killing():
+    # `am kill` only takes processes that are safe to kill, and this one is
+    # foreground with the SDK's activity on top -- so it would do nothing at
+    # all and the cell would pass having killed nothing.
+    shell = FakeShell()
+    naps = []
+
+    driver(shell, naps).kill_activity()
+
+    assert shell.argv_text() == ["shell am force-stop com.paycross.flutterdemo"]
+    assert naps == [android.SETTLE_SECONDS]
+
+
+def test_dont_keep_activities_writes_and_reads_back():
+    shell = FakeShell("", "1\n")
+    naps = []
+
+    driver(shell, naps).dont_keep_activities(True)
+
+    assert shell.argv_text() == [
+        "shell settings put global always_finish_activities 1",
+        "shell settings get global always_finish_activities",
+    ]
+    assert naps == [android.SETTLE_SECONDS]
+
+
+def test_dont_keep_activities_off_asks_for_zero():
+    shell = FakeShell("", "0\n")
+
+    driver(shell).dont_keep_activities(False)
+
+    assert "shell settings put global always_finish_activities 0" in shell.argv_text()
+
+
+def test_dont_keep_activities_refuses_a_setting_that_did_not_take():
+    # A setting that silently did not take would make the cell measure an
+    # ordinary payment and report it as the developer option's behaviour.
+    shell = FakeShell("", "0\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).dont_keep_activities(True)
+
+    assert "always_finish_activities reads '0'" in str(excinfo.value)
+
+
+def test_launch_refuses_a_device_left_not_keeping_activities():
+    # Left on it poisons every later cell -- the plugin's detach path fires on
+    # every one of them, and each failure looks like an SDK finding.
+    shell = FakeShell("1\n", "en-US\n", "0\n", "1\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).launch()
+
+    message = str(excinfo.value)
+    assert "Don't keep activities" in message
+    assert "always_finish_activities 0" in message
+    assert not any("monkey" in c for c in shell.argv_text())
