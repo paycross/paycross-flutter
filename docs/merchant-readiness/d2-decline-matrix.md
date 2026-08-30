@@ -243,6 +243,70 @@ emptiness carries meaning: it is what tells `session_expired_jwt` apart from
 `session_expired_server`. A placeholder would quietly accept a transaction id
 that should never exist.
 
+### The pins, proven live
+
+Every pin was first replayed **offline** against the recorded evidence through
+the real `verify.match_label` and `verify.verify_label_transaction`: 12 of 12
+combinations passed, transaction cross-check included. Then each was rerun
+against a **fresh** session, which is what actually proves an assertion — a
+literal that only matches the run it was copied from is not an assertion.
+
+Android — `evidence/d2-debug-android/20260830-121620-android`, iOS —
+`evidence/d2-debug-ios/20260830-121626-ios`.
+
+| cell | android | iOS |
+|---|---|---|
+| `completed_session_represented` | PASS `result:success:953a6481-…` | PASS `result:success:ba1195a5-…` |
+| `error_malformed_token` | PASS `result:failure:restart:` | PASS `result:failure:restart:` |
+| `session_expired_jwt` | label matched; **merchant assertion failed** — see below | PASS `result:failure:restart:` |
+| `timeout_provider_never_answers` | PASS `result:failure:retry:4d33451a-…` | PASS `result:failure:retry:42ffca0d-…` |
+| `airplane_during_challenge` | PASS `result:failure:retry:d99d6e34-…` | *(android only, R6)* |
+| `airplane_during_polling` | PASS `result:failure:retry:8a79f874-…` | *(android only, R6)* |
+
+`6 cells, 5 passed, 1 failed, 1 control check` on android (exit 1),
+`4 cells, 4 passed` on iOS (exit 0). **All ten pinned labels matched on fresh
+sessions**, including the two id-free literals. The single failure is a
+merchant-state assertion, not a label.
+
+It also gave `airplane_during_polling` a **third** reproduction —
+session `01a052a2-65bf-71f3-9907-40c816bf1ab9`, transaction `8a79f874-…`
+succeeded with `liability_shifted: true`, SDK label `result:failure:retry:` —
+added as a comment on
+[payment-android-sdk#25](https://github.com/paycross/payment-android-sdk/issues/25).
+Three for three at 592 / 609 / 595 s in the cell: not a flake.
+
+### `session_expired_jwt` is too tightly timed for this rig
+
+The android rerun failed on `session_status: expected 'open', got 'expired'`
+while its **label matched exactly**. The cell's own comment predicted this and
+said what to do — *"if it ever reports session_status `expired`, check the clock
+before checking the SDK"* — so the clock was checked:
+
+| | |
+|---|---|
+| session `created_at` | 12:39:08Z |
+| session `expires_at` | 12:59:08Z (1200 s) |
+| the sweeper flipped it at | 13:00:46Z |
+| the cell took | **1420 s** against an action budget of `wait 960` + `wait_result 90` = 1050 s |
+
+The cell needs the merchant read to land inside a window that opens at 900 s
+(the JWT's own `exp`) and closes at 1200 s. On this rig launch, install, token
+handling and evidence writing cost ~370 s on top of the action list, which does
+not fit — so `wait 960` leaves no headroom at all and the cell wins or loses on
+how busy the emulator is. It won twice and lost once: **flaky at roughly one in
+three, and flaky in the cell rather than in the SDK.**
+
+The interleaved control passed straight afterwards, so the rig was sound; this
+is the cell's arithmetic, not the device.
+
+**Recommended fix, not applied here** (it needs another ~25 minute run to
+prove, and this task is out of device time): drop `session_status: open` from
+the expectation. It is not the assertion that carries the cell — `txn_count: 0`
+already tells `session_expired_jwt` apart from `session_expired_server`, which
+holds one transaction, and the empty `<txn>` in the pinned label says the same
+thing a second way. `session_status` only restates which clock ran out first,
+which is precisely the thing the rig cannot deliver reliably.
+
 `airplane_during_polling`'s pin **asserts a bug on purpose.** Its merchant
 assertions already say the money moved and liability shifted; the label now
 says the SDK called that a retryable failure. When
