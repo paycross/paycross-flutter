@@ -94,6 +94,25 @@ PAY_BUTTON = "payButton"
 #: Tagged by CardFormView.swift:179 and never interactive -- the neutral target
 #: for the keyboard-dismissal fallback.
 AMOUNT = "amount"
+#: `Toggle("Save this card")` (CardFormView.swift:53). Rendered only under
+#: `allowsSaving && state.source.isNewCard`, and measured 2026-08-31 to sit at
+#: y=840 on an 874-tall screen with `visible="false"` even before any keyboard
+#: is up -- so it has to be scrolled to, where Android's checkbox does not.
+SAVE_CARD_TOGGLE = "Save this card"
+
+#: The saved-card rows carry NO accessibility identifier at all
+#: (`SavedCardPicker`, CardFormView.swift:230-276), so the only handle is the
+#: visible label -- `"\(brand.displayName) •••• \(last4)"` at :239, with four
+#: U+2022 BULLETs. This substring is what separates a stored-card row from the
+#: "Use a new card" row beside it, and it is the reason D5 files an
+#: accessibility issue against the iOS SDK.
+SAVED_CARD_BULLETS = "\u2022\u2022\u2022\u2022"
+
+#: The row that goes back to a fresh card (CardFormView.swift:246). Composed
+#: only inside the picker, which is composed only when the session snapshot
+#: holds a stored card -- so its presence is the `saved_card` predicate.
+NEW_CARD_ROW = "Use a new card"
+
 THREE_DS_CANCEL = "threeDSCancel"
 SHEET_CANCEL = "Cancel"
 CANCEL_CONFIRM = "Yes, Cancel"
@@ -1011,6 +1030,139 @@ class IosDriver(Driver):
         if label is None:
             raise self.no_label_error(timeout)
         return label
+
+    def _switch(self, name: str) -> tree.Node | None:
+        """The named two-state control, wherever it is in the tree.
+
+        Not `_find`: that prefers an on-screen node and this is asked before
+        anything has been scrolled, when the answer is legitimately off-screen.
+        `checked is not None` is what makes it the switch rather than the
+        StaticText beside it, which carries the same label.
+        """
+        for node in self._nodes(tolerate=True):
+            named = name in (node.identifier, node.content_desc)
+            if node.checked is not None and named:
+                return node
+        return None
+
+    def _toggle_control(self, row: tree.Node) -> tree.Node:
+        """The part of a `Toggle` that actually toggles.
+
+        SwiftUI exposes one `Toggle` as TWO switch nodes: the labelled row, and
+        the control sitting inside it with no name and no label at all.
+        Measured on the simulator 2026-08-31, and it failed first -- tapping
+        the row's centre did nothing and the probe came back with "the tap at
+        (201, 715) did not turn on 'Save this card'". Only the control responds.
+
+        Which makes this the exact iOS twin of the Android hazard: on both
+        platforms the node you can name is not the node you can tap, for two
+        entirely different framework reasons.
+
+        Falls back to the row rather than raising when no inner control is
+        found. A tap there is what this did before and is no worse than
+        nothing, and the verification below catches it either way -- naming the
+        coordinates, so the next reader can see which of the two was hit.
+
+        "Inside" is the control's **centre** within the row, not its box within
+        the row's box. Measured, the control is (321, 440, 384, 468) against a
+        row of (20, 440, 382, 468) -- it overhangs the right edge by two
+        points, so strict containment finds nothing and silently falls back to
+        the very tap that does not work.
+        """
+        left, top, right, bottom = row.bounds
+        inside = [
+            n
+            for n in self._nodes(tolerate=True)
+            if n.checked is not None
+            and n.bounds != row.bounds
+            and left <= n.centre[0] <= right
+            and top <= n.centre[1] <= bottom
+        ]
+        return inside[0] if inside else row
+
+    def save_card(self, *, timeout: float = 30) -> None:
+        """Makes sure the save-card toggle is on, and proves that it is.
+
+        Three differences from Android, all measured rather than assumed.
+
+        It has to be **scrolled to**: the toggle sits at y=840 on an 874-tall
+        screen, below the pinned Pay bar, and WDA reports it not visible even
+        with no keyboard up. Android's checkbox is at y=1125 of 2400 and needs
+        nothing.
+
+        It is **found** by its label and **tapped** somewhere else. SwiftUI
+        exposes the row as an `XCUIElementTypeSwitch` carrying the label as its
+        name, and its state as `value` "0"/"1" -- which `tree.parse_wda`
+        normalises into `checked` -- but tapping that row does nothing at all.
+        Only the unnamed control inside it responds, so `_toggle_control` is
+        not a nicety. Android has the same split for a different reason: there
+        the checkbox carries no label and the label is not clickable.
+
+        And "makes sure" rather than "taps", for the reason Android has too:
+        tapping an already-on toggle turns it off, and the cell would assert a
+        save its own action had just undone.
+
+        The keyboard is dismissed first, best effort. `scroll_to` drags from
+        `height * 0.75`, which is inside where a numeric pad sits, so a pad
+        left up swallows every swipe -- but nothing on this build reliably
+        dismisses that pad, which is why the cell runs `save_card` BEFORE
+        `type_card` and there is no pad to fight.
+        """
+        self.dismiss_keyboard(required=False)
+        if self._switch(SAVE_CARD_TOGGLE) is None:
+            raise DriverError(
+                f"no {SAVE_CARD_TOGGLE!r} toggle anywhere in the tree: the "
+                "session's options are missing save_card_config, or the form "
+                "has not rendered"
+            )
+        node = self.scroll_to(SAVE_CARD_TOGGLE)
+        if node.checked:
+            return
+
+        target = self._toggle_control(node)
+        self._tap_node(target)
+        self._sleep(SETTLE_SECONDS)
+
+        after = self._poll(
+            lambda nodes: next(
+                (
+                    n
+                    for n in nodes
+                    if n.checked and SAVE_CARD_TOGGLE in (n.identifier, n.content_desc)
+                ),
+                None,
+            ),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        if after is None:
+            raise DriverError(
+                f"the tap at {target.centre} did not turn on "
+                f"{SAVE_CARD_TOGGLE!r}; "
+                "the submit would carry card.save false and the payment would "
+                "store nothing"
+            )
+
+    def wait_saved_card(self, timeout: float = 30) -> bool:
+        """Whether the sheet is offering a stored card.
+
+        Matched on the "Use a new card" row rather than on a stored card's own
+        label, and that is not a shortcut. `SavedCardPicker` is composed only
+        under `if !savedCards.isEmpty` (CardFormView.swift:30) and always
+        renders that row last (:245-250), so its presence is exactly equivalent
+        to "at least one stored card is offered" -- while a stored card's label
+        is `"<Brand> •••• <last4>"`, which the driver cannot predict without
+        knowing the PAN.
+
+        False rather than a raise, for the reason Android's says: "no stored
+        card was offered" is a cell verdict, not a broken device.
+        """
+        found = self._poll(
+            lambda nodes: self._pick(nodes, NEW_CARD_ROW, False, False),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        return found is not None
 
     def wait_acs(self, timeout: float = 120) -> bool:
         """Waits for the sandbox ACS page without answering it.

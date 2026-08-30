@@ -1160,6 +1160,154 @@ def test_type_card_settles_between_the_taps_and_the_keystrokes():
     assert naps == [0.5] * 9
 
 
+# -- save_card ----------------------------------------------------------------
+
+#: The real store form, dumped from the simulator on 2026-08-31. Taken after
+#: `paste_token` and BEFORE `type_card`, which is the state the cell now uses:
+#: with no keyboard up, and with the toggle at y=840 on an 874-tall screen --
+#: below the pinned Pay bar and reported `visible="false"`, which is why iOS
+#: needs a scroll where Android does not.
+SAVE_FORM_IOS = (FIXTURES / "ios-save-card-form.xml").read_text()
+
+#: The same form after one swipe has brought the toggle up into the window.
+#: BOTH switches move: SwiftUI renders the labelled row and the control inside
+#: it as separate `XCUIElementTypeSwitch` nodes, and which of the two is
+#: tappable is the whole point of the test below.
+SAVE_FORM_IOS_ONSCREEN = SAVE_FORM_IOS.replace(
+    'visible="false" accessible="true" x="20" y="840"',
+    'visible="true" accessible="true" x="20" y="440"',
+).replace(
+    'visible="false" accessible="false" x="321" y="840"',
+    'visible="true" accessible="false" x="321" y="440"',
+)
+assert SAVE_FORM_IOS_ONSCREEN.count('y="440"') == 2, "both switches must move"
+
+#: And after the tap took.
+SAVE_FORM_IOS_TICKED = SAVE_FORM_IOS_ONSCREEN.replace(
+    'value="0" name="Save this card"', 'value="1" name="Save this card"'
+)
+assert SAVE_FORM_IOS_TICKED != SAVE_FORM_IOS_ONSCREEN
+
+
+class SaveCardFakeSsh(FakeSsh):
+    """Serves the toggle off-screen until a drag arrives, then on-screen.
+
+    Shaped like `ScrollingFakeSsh`, because the situation is the same one: the
+    control is in the tree from the moment the sheet renders and off-screen for
+    just as long. `ticks` makes the tap flip it, so the verification has
+    something real to read rather than a fixture that was ticked all along.
+    """
+
+    def __init__(self, ticks=True):
+        super().__init__()
+        self.scrolled = False
+        self.tapped = False
+        self.ticks = ticks
+
+    def __call__(self, command, *, stdin=None):
+        if "dragfromtoforduration" in command:
+            self.scrolled = True
+        if "/wda/tap" in command:
+            self.tapped = True
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            if self.tapped and self.ticks:
+                return source_response(SAVE_FORM_IOS_TICKED)
+            return source_response(
+                SAVE_FORM_IOS_ONSCREEN if self.scrolled else SAVE_FORM_IOS
+            )
+        return super().__call__(command, stdin=stdin)
+
+
+def test_save_card_scrolls_to_the_toggle_before_tapping_it():
+    # Measured: with no keyboard up the toggle is still at y=840 on an
+    # 874-tall screen and WDA reports it not visible, so a name match alone
+    # finds a node that cannot be tapped. Android needs none of this -- its
+    # checkbox sits at y=1125 of 2400.
+    ssh = SaveCardFakeSsh()
+
+    driver(ssh).save_card()
+
+    assert ssh.scrolled, "the toggle is below the fold; a bare tap would miss"
+    assert ssh.tapped
+
+
+def test_save_card_taps_the_control_and_not_the_labelled_row():
+    """Measured on the simulator 2026-08-31, and it failed first.
+
+    SwiftUI exposes `Toggle` as TWO switch nodes: the labelled row
+    (x=20 w=362, name "Save this card") and the control inside it (x=321 w=63,
+    no name at all). Tapping the row's centre is what a label match gives you,
+    and on the device it did nothing -- the probe came back with "the tap at
+    (201, 715) did not turn on 'Save this card'". Only the control toggles.
+
+    So this is the iOS twin of the Android hazard: the node you can name is not
+    the node you can tap. Both platforms need the same trick and neither can
+    use its visible label as the target.
+    """
+    ssh = SaveCardFakeSsh()
+
+    driver(ssh).save_card()
+
+    # The control's centre (321 + 63/2, 440 + 28/2), not the row's (201, 454).
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 352.0, "y": 454.0}]
+
+
+def test_save_card_verifies_the_toggle_took():
+    # The same guarantee as Android's, read off a different attribute: WDA
+    # gives a switch's state as value "0"/"1", which `tree.parse_wda`
+    # normalises into `checked`.
+    ssh = SaveCardFakeSsh(ticks=False)
+
+    with pytest.raises(DriverError) as excinfo:
+        # `_poll`'s deadline is real time while the injected sleep is not, so
+        # a test that means to reach it says zero rather than spending thirty
+        # seconds of the suite getting there.
+        driver(ssh).save_card(timeout=0)
+
+    assert "did not turn on" in str(excinfo.value)
+
+
+def test_save_card_leaves_an_already_on_toggle_alone():
+    # Tapping it again turns it OFF, and the cell would then assert a save
+    # that its own action had just undone.
+    class AlreadyOn(FakeSsh):
+        def __call__(self, command, *, stdin=None):
+            if "/source" in command:
+                self.calls.append(command)
+                self.stdins.append(stdin)
+                return source_response(SAVE_FORM_IOS_TICKED)
+            return super().__call__(command, stdin=stdin)
+
+    ssh = AlreadyOn()
+
+    driver(ssh).save_card()
+
+    assert payloads_for(ssh, "/wda/tap") == []
+
+
+def test_save_card_says_so_when_the_session_never_rendered_a_toggle():
+    # `allowsSaving` is false without `save_card_config` on the session, and
+    # the Toggle is not built at all. A cell-authoring mistake, named as one.
+    ssh = FakeSsh()  # the ordinary ACS fixture: no switch anywhere
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).save_card()
+
+    assert "Save this card" in str(excinfo.value)
+
+
+# -- wait_saved_card ----------------------------------------------------------
+
+
+def test_wait_saved_card_answers_false_rather_than_raising_when_none_is_offered():
+    # Same contract as Android's: "no stored card was offered" is a cell
+    # verdict, and a DriverError would spend an interleaved control check on a
+    # rig that was never in doubt.
+    assert driver(FakeSsh()).wait_saved_card(timeout=0) is False
+
+
 # -- type_cvv -----------------------------------------------------------------
 
 
@@ -2008,10 +2156,8 @@ NOT_LANDED_YET = [
     ("dont_keep_activities", (True,)),
     ("tap_google_pay", ()),
     ("select_saved_card", ()),
-    ("save_card", ()),
     ("wait_google_pay", (30,)),
     ("wait_no_google_pay", (20,)),
-    ("wait_saved_card", (30,)),
 ]
 
 

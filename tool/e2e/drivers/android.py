@@ -90,6 +90,15 @@ EXAMPLE_PAY = "Pay"
 #: a cell that submits into a half-cut network measures neither state.
 AIRPLANE_SETTLE_SECONDS = 8
 
+#: How long the save-card checkbox is given to appear, and to read back as
+#: ticked. Short: it is composed with the rest of the form, so a wait here is
+#: covering a slow frame rather than a round trip.
+#:
+#: Named for the BOX, not for the saved-card list: `runner` separately has a
+#: SAVED_CARD_TIMEOUT_SECONDS, which is the `expect saved_card` deadline and
+#: a different number for a different thing.
+SAVE_BOX_TIMEOUT_SECONDS = 15
+
 #: How much raw device text a driver message may carry. These reach stdout and
 #: the cell's `problems`, and a wedged adb answers with a screenful.
 QUOTED_DEVICE_TEXT_CHARS = 80
@@ -98,6 +107,26 @@ CARD_NUMBER = "Card number input"
 EXPIRY = "Expiry date input"
 CVV = "CVV input"
 CARDHOLDER = "Cardholder name input"
+#: The `semantics { contentDescription = ... }` on the ExposedDropdownMenuBox
+#: (SavedCardSelector.kt:35). Measured 2026-08-31: it DOES survive Compose's
+#: semantics merging, as a non-clickable `android.view.View`, with a clickable
+#: `android.widget.Spinner` at identical bounds carrying the collapsed text.
+#: It is composed only when the session snapshot holds at least one stored
+#: card, which is what makes its presence the whole `saved_card` predicate.
+SAVED_CARD_SELECTOR = "Saved card selector"
+
+#: The collapsed selector's text while nothing is chosen, and the menu row
+#: that goes back to a fresh card. Neither SDK auto-selects a stored card
+#: (PaymentSheet.swift:213-214, "auto-selecting a stored card is one
+#: unnoticed tap from charging it"), so this is what the sheet opens showing.
+NEW_CARD_ROW = "Use a new card"
+
+#: CardFormScreen.kt:311 renders `Text("Enter CVV for ${savedCard?.maskedPan}")`
+#: only on the saved-card branch, so this prefix appearing is the proof that
+#: the form really switched. A prefix and not an exact match: the masked PAN
+#: is part of the string and the driver has no way to know it.
+SAVED_CARD_CVV_PROMPT = "Enter CVV for "
+
 ACS_TITLE = "Sandbox 3DS Challenge"
 CANCEL_TITLE = "Cancel Payment?"
 CANCEL_CONFIRM = "Yes, Cancel"
@@ -461,6 +490,75 @@ class AndroidDriver(Driver):
         self._key(_KEYCODE_BACK)  # drop the IME so the Pay button is reachable
         self._sleep(SETTLE_SECONDS)
 
+    def _checkboxes(self, nodes: list[tree.Node]) -> list[tree.Node]:
+        """Every two-state control on screen.
+
+        By state rather than by anything readable, because the SDK's save
+        checkbox has nothing readable: it is a Compose `Checkbox` in a `Row`
+        whose only sibling is a separate, non-clickable `Text`, so the node
+        that toggles carries an empty `text` and an empty `content-desc`. Its
+        `checkable` flag is the only handle it has, and `tree.Node.checked` is
+        None for everything that is not one.
+        """
+        return [n for n in nodes if n.checked is not None]
+
+    def save_card(self, *, timeout: float = SAVE_BOX_TIMEOUT_SECONDS) -> None:
+        """Makes sure the save-card box is ticked, and proves that it is.
+
+        "Makes sure" rather than "taps": tapping a box that is already ticked
+        UNticks it, and `TestCardPrefill.saveCard` pre-ticks it whenever a
+        prefill is configured. A cell asking to save a card means the end
+        state, not the gesture.
+
+        The verification is the reason this is not two lines. A tap that lands
+        beside the box -- on the label, which does nothing -- leaves the submit
+        carrying `card.save: false`, so the payment succeeds, the cell reaches
+        its label, and only `saved_card_saved` fails, twenty minutes later,
+        against a merchant record that is telling the truth. Reading the state
+        back turns that into a message naming the cause.
+        """
+        found = self._poll(
+            lambda nodes: self._checkboxes(nodes) or None,
+            timeout,
+            SETTLE_SECONDS,
+        )
+        if not found:
+            # Almost always the cell rather than the device: without
+            # `save_card_config` on the session `canSaveCard` is false and the
+            # box is never composed.
+            raise DriverError(
+                "the save-card checkbox never appeared within "
+                f"{timeout}s: the session's options are "
+                "missing save_card_config, or the form has not rendered"
+            )
+        if len(found) > 1:
+            # One today. Said out loud rather than silently taking the first,
+            # because a field group gaining a checkbox would otherwise make
+            # this tick an arbitrary one.
+            raise DriverError(
+                f"{len(found)} checkboxes on screen at "
+                f"{[n.bounds for n in found]}; refusing to guess which one saves "
+                "the card"
+            )
+        box = found[0]
+        if box.checked:
+            return
+
+        self._tap(box.centre)
+        self._sleep(SETTLE_SECONDS)
+
+        after = self._poll(
+            lambda nodes: next((n for n in self._checkboxes(nodes) if n.checked), None),
+            timeout,
+            SETTLE_SECONDS,
+        )
+        if after is None:
+            raise DriverError(
+                f"the tap at {box.centre} did not tick the save-card checkbox; "
+                "the submit would carry card.save false and the payment would "
+                "store nothing"
+            )
+
     def type_cvv(self, cvv: str) -> None:
         """Fills the CVV field and nothing else.
 
@@ -511,6 +609,33 @@ class AndroidDriver(Driver):
             tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=timeout
         )
         return True
+
+    def wait_saved_card(self, timeout: float = 30) -> bool:
+        """Whether the sheet is offering a stored card.
+
+        The selector's presence is the whole predicate, because the SDK
+        composes `SavedCardSelector` only under `if (savedCards.isNotEmpty())`
+        (`CardFormScreen.kt:161`) -- there is no separate signal to read, and
+        an empty selector is not a state that exists.
+
+        Answers False rather than raising, unlike `wait_acs`. "No stored card
+        was offered" is a cell verdict -- the finding a D5 cell is there to
+        make -- and a DriverError would be classified as a broken device and
+        spend an interleaved control check proving a rig that was never in
+        doubt. A device that will not dump *does* still raise, out of `_poll`:
+        that is not the same answer.
+
+        The default is the literal `runner.EXPECT_TIMEOUT_SECONDS` uses, and a
+        test pins the pair equal.
+        """
+        found = self._poll(
+            lambda nodes: next(
+                iter(tree.find_content_desc(nodes, SAVED_CARD_SELECTOR)), None
+            ),
+            timeout,
+            SETTLE_SECONDS,
+        )
+        return found is not None
 
     def acs(self, outcome: str) -> None:
         self.wait_acs()
