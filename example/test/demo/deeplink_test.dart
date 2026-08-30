@@ -134,6 +134,9 @@ void main() {
       // one won would depend on the order of the list.
       final slugs = [for (final p in demoPresets) presetSlug(p.name)];
 
+      // An empty slug would also match every degenerate link, so a preset
+      // whose name slugifies away is a collision with all of them at once.
+      expect(slugs, everyElement(isNotEmpty));
       expect(slugs.toSet(), hasLength(slugs.length));
     });
 

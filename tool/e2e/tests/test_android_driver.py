@@ -209,7 +209,7 @@ def test_install_stages_the_apk_where_the_windows_adb_can_read_it(tmp_path):
     staged = tmp_path / "winstage" / "paycross-e2e.apk"
     assert staged.read_bytes() == b"not really an apk"
     text = shell.argv_text()
-    assert any("uninstall com.paycross.paycross_flutter_example" in t for t in text)
+    assert any("uninstall com.paycross.flutterdemo" in t for t in text)
     assert any(r"install D:\stage\paycross-e2e.apk" in t for t in text)
 
 
@@ -298,8 +298,8 @@ def test_launch_force_stops_before_starting():
     driver(shell, naps).launch()
 
     text = shell.argv_text()
-    assert any("force-stop com.paycross.paycross_flutter_example" in t for t in text)
-    assert any("monkey -p com.paycross.paycross_flutter_example" in t for t in text)
+    assert any("force-stop com.paycross.flutterdemo" in t for t in text)
+    assert any("monkey -p com.paycross.flutterdemo" in t for t in text)
     # Six real seconds on the rig, asserted here rather than spent.
     assert android.LAUNCH_SETTLE_SECONDS == 6
     assert naps == [6]

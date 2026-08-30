@@ -1,4 +1,4 @@
-# paycross_flutter_example
+# PayCross Demo
 
 A minimal checkout screen against the PayCross sandbox: paste a session token
 minted by your server, press Pay, and read the result.

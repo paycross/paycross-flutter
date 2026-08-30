@@ -223,10 +223,10 @@ def test_crash_lines_finds_only_real_faults():
         "08-28 12:00:01.000 W AndroidRuntime: uiautomator noise\n"
         "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
         "08-28 12:00:03.000 E ActivityManager: ANR in "
-        "com.paycross.paycross_flutter_example\n"
+        "com.paycross.flutterdemo\n"
     )
 
-    found = verify.crash_lines(logcat, "com.paycross.paycross_flutter_example")
+    found = verify.crash_lines(logcat, "com.paycross.flutterdemo")
 
     assert len(found) == 2
     assert verify.crash_lines("all quiet\n", "com.paycross.x") == []
@@ -265,7 +265,7 @@ def test_an_anr_in_another_package_is_not_this_apps_crash():
     # its own housekeeping often enough that the difference matters.
     log = "08-28 12:00:03.000 E ActivityManager: ANR in com.other.app\n"
 
-    assert verify.crash_lines(log, "com.paycross.paycross_flutter_example") == []
+    assert verify.crash_lines(log, "com.paycross.flutterdemo") == []
 
 
 def test_a_force_finish_of_another_app_is_not_this_apps_crash():
@@ -277,7 +277,7 @@ def test_a_force_finish_of_another_app_is_not_this_apps_crash():
         "com.android.settings/.Settings\n"
     )
 
-    assert verify.crash_lines(log, "com.paycross.paycross_flutter_example") == []
+    assert verify.crash_lines(log, "com.paycross.flutterdemo") == []
 
 
 def test_a_fatal_exception_in_another_process_is_not_ours():
@@ -288,7 +288,7 @@ def test_a_fatal_exception_in_another_process_is_not_ours():
         "08-28 12:00:02.000 E AndroidRuntime: java.lang.NullPointerException\n"
     )
 
-    assert verify.crash_lines(log, "com.paycross.paycross_flutter_example") == []
+    assert verify.crash_lines(log, "com.paycross.flutterdemo") == []
 
 
 def test_a_fatal_exception_in_our_process_is_ours():

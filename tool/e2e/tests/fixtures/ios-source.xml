@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Paycross Flutter" label="Paycross Flutter" enabled="true" visible="true" x="0" y="0" width="402" height="874" index="0">
+<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="PayCross Demo" label="PayCross Demo" enabled="true" visible="true" x="0" y="0" width="402" height="874" index="0">
   <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" x="0" y="0" width="402" height="874" index="0">
     <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" x="0" y="0" width="402" height="874" index="0">
       <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="PayCross Example" label="PayCross Example" value="PayCross Example" enabled="true" visible="true" x="115" y="76" width="172" height="28" index="0"/>
