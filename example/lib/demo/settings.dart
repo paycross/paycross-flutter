@@ -58,6 +58,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _googlePay = TextEditingController();
   bool _revealSecret = false;
   bool _busy = false;
+
+  /// Whether the first read has come back, whatever it found.
+  ///
+  /// Every button is dead until it has. Before that the fields are empty
+  /// because nothing has been read yet, not because nothing is stored, and
+  /// a Save on that emptiness would write it straight over a good
+  /// credential -- silently, since an empty pair reads back as "not
+  /// configured" and looks exactly like a store that was never set up.
+  bool _loaded = false;
   String? _message;
 
   /// What the store is believed to hold, so "Verify credentials" can say
@@ -87,14 +96,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     final stored = await widget.store.read();
-    if (!mounted || stored == null) return;
+    if (!mounted) return;
     setState(() {
       _stored = stored;
-      _clientId.text = stored.clientId;
-      _clientSecret.text = stored.clientSecret;
-      _googlePay.text = stored.googlePayMerchantId ?? '';
+      if (stored != null) {
+        // Only what is still empty: a slow Keychain that answers after the
+        // human started typing must not pull the text out from under them.
+        if (_clientId.text.isEmpty) _clientId.text = stored.clientId;
+        if (_clientSecret.text.isEmpty) {
+          _clientSecret.text = stored.clientSecret;
+        }
+        if (_googlePay.text.isEmpty) {
+          _googlePay.text = stored.googlePayMerchantId ?? '';
+        }
+      }
+      // Set on the empty path too -- a store with nothing in it is the
+      // first-run case, and leaving the screen dead there would make a fresh
+      // install impossible to configure.
+      _loaded = true;
     });
   }
+
+  /// Why what is typed cannot be used yet, or null if it can.
+  ///
+  /// Both halves or neither. An empty pair does not fail early on its own:
+  /// the minter would send Basic auth over a bare colon and the token
+  /// endpoint would answer 401, which reads as "these credentials are wrong"
+  /// rather than "you have not entered any".
+  String? _whyUnusable(Credentials typed) =>
+      typed.clientId.isEmpty || typed.clientSecret.isEmpty
+      ? 'Enter both a client ID and a client secret first.'
+      : null;
 
   /// Whether what is on screen is what the store holds.
   ///
@@ -119,6 +151,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _save() async {
     final typed = _typed;
+    final unusable = _whyUnusable(typed);
+    if (unusable != null) {
+      setState(() => _message = unusable);
+      return;
+    }
     String said;
     Credentials? nowStored;
     try {
@@ -162,11 +199,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _verify() async {
+    final typed = _typed;
+    final unusable = _whyUnusable(typed);
+    if (unusable != null) {
+      setState(() => _message = unusable);
+      return;
+    }
     setState(() {
       _busy = true;
       _message = null;
     });
-    final typed = _typed;
     String said;
     try {
       final minted = await widget.verifyCredentials(typed);
@@ -251,15 +293,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           runSpacing: 12,
           children: [
             FilledButton(
-              onPressed: _busy ? null : _save,
+              onPressed: _busy || !_loaded ? null : _save,
               child: const Text('Save'),
             ),
             OutlinedButton(
-              onPressed: _busy ? null : _verify,
+              onPressed: _busy || !_loaded ? null : _verify,
               child: const Text('Verify credentials'),
             ),
             TextButton(
-              onPressed: _busy ? null : _forget,
+              onPressed: _busy || !_loaded ? null : _forget,
               child: const Text('Forget credentials'),
             ),
           ],

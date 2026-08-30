@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/minter.dart';
@@ -41,6 +43,41 @@ class _FailingBackend implements SecretBackend {
     entries.remove(key);
   }
 }
+
+/// A backend whose reads wait on [gate], so a test can act on the screen
+/// while the first load is still in flight.
+class _SlowBackend implements SecretBackend {
+  final Map<String, String> entries = <String, String>{};
+  final Completer<void> gate = Completer<void>();
+
+  @override
+  Future<String?> read(String key) async {
+    await gate.future;
+    return entries[key];
+  }
+
+  @override
+  Future<void> write(String key, String value) async => entries[key] = value;
+
+  @override
+  Future<void> delete(String key) async => entries.remove(key);
+}
+
+/// Whether the button carrying [label] is live.
+///
+/// Found by predicate, not by type: `find.byType` matches the exact runtime
+/// type, so it would never see a FilledButton as the ButtonStyleButton the
+/// three buttons share.
+bool _enabled(WidgetTester tester, String label) =>
+    tester
+        .widget<ButtonStyleButton>(
+          find.ancestor(
+            of: find.text(label),
+            matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+          ),
+        )
+        .onPressed !=
+    null;
 
 String _message(WidgetTester tester) =>
     tester.widget<Text>(find.byKey(const ValueKey('settingsMessage'))).data!;
@@ -312,6 +349,106 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_message(tester), isNot(contains('Verified')));
+  });
+
+  testWidgets('nothing can be saved before the store has answered', (
+    tester,
+  ) async {
+    final backend = _SlowBackend();
+    backend.entries['paycross_demo_client_id'] = 'id-1';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    await tester.pumpWidget(_settings(store: SecretStore(backend: backend)));
+    await tester.pump();
+
+    // The fields are empty only because the read has not come back yet.
+    // Saving now would write that emptiness over a good stored credential.
+    expect(_enabled(tester, 'Save'), isFalse);
+    expect(_enabled(tester, 'Verify credentials'), isFalse);
+    expect(_enabled(tester, 'Forget credentials'), isFalse);
+
+    await tester.tap(find.text('Save'), warnIfMissed: false);
+    await tester.pump();
+
+    expect(backend.entries['paycross_demo_client_secret'], 'secret-1');
+
+    backend.gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(_enabled(tester, 'Save'), isTrue);
+    expect(_fieldText(tester, 'clientSecret'), 'secret-1');
+  });
+
+  testWidgets('a load that finds nothing still enables the buttons', (
+    tester,
+  ) async {
+    // The empty store is the first-run case. Leaving the screen disabled
+    // there would make a fresh install impossible to configure.
+    await tester.pumpWidget(
+      _settings(store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(_enabled(tester, 'Save'), isTrue);
+  });
+
+  testWidgets('a save with no id or secret is refused, not reported saved', (
+    tester,
+  ) async {
+    final backend = InMemorySecretBackend();
+    await tester.pumpWidget(_settings(store: SecretStore(backend: backend)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(backend.entries, isEmpty);
+    expect(_message(tester), isNot(contains('Saved')));
+    expect(_message(tester), contains('client ID'));
+  });
+
+  testWidgets('a verify with no id or secret never reaches the network', (
+    tester,
+  ) async {
+    var minted = false;
+    await tester.pumpWidget(
+      _settings(
+        store: SecretStore(backend: InMemorySecretBackend()),
+        verify: (_) async {
+          minted = true;
+          return 'Minted session sess-9.';
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Verify credentials'));
+    await tester.pumpAndSettle();
+
+    // An empty pair still builds a request: the token endpoint would get
+    // Basic auth over a bare colon and answer 401, which reads as "these
+    // credentials are wrong" rather than "you have not entered any".
+    expect(minted, isFalse);
+    expect(_message(tester), isNot(contains('Verified')));
+    expect(_message(tester), contains('client ID'));
+  });
+
+  testWidgets('a load does not overwrite what a human has already typed', (
+    tester,
+  ) async {
+    final backend = _SlowBackend();
+    backend.entries['paycross_demo_client_id'] = 'id-1';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    await tester.pumpWidget(_settings(store: SecretStore(backend: backend)));
+    await tester.pump();
+
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'typed-1');
+    backend.gate.complete();
+    await tester.pumpAndSettle();
+
+    // A slow Keychain that answers after the human started typing must not
+    // pull the text out from under them.
+    expect(_fieldText(tester, 'clientId'), 'typed-1');
+    expect(_fieldText(tester, 'clientSecret'), 'secret-1');
   });
 
   testWidgets('says the app is sandbox-only', (tester) async {
