@@ -14,7 +14,10 @@ class EditorScreen extends StatefulWidget {
   const EditorScreen({super.key, required this.preset, required this.onRun});
 
   final Preset preset;
-  final void Function(String body) onRun;
+
+  /// Runs [body]. It returns only once the run has been started, so this
+  /// screen knows to keep its own button dead until then.
+  final Future<void> Function(String body) onRun;
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
@@ -27,6 +30,13 @@ class _EditorScreenState extends State<EditorScreen> {
   final _amount = TextEditingController();
   final _customer = TextEditingController();
   String? _problem;
+
+  /// True from the moment Run is pressed until [EditorScreen.onRun] returns.
+  ///
+  /// What Run starts is a credential read and then a live mint, so a second
+  /// press before the first has finished bills a second sandbox session and
+  /// stacks a second Run screen on top of the first.
+  bool _running = false;
 
   @override
   void initState() {
@@ -121,6 +131,18 @@ class _EditorScreenState extends State<EditorScreen> {
 
   bool get _savesCard => _decoded?['save_card_config'] != null;
 
+  Future<void> _run() async {
+    if (_running) return;
+    setState(() => _running = true);
+    try {
+      await widget.onRun(_raw.text);
+    } finally {
+      // Even if the run threw: a dead Run button with nothing in flight is a
+      // screen a person can only escape from by going back.
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
   void _reset() {
     _amount.clear();
     _customer.clear();
@@ -209,9 +231,7 @@ class _EditorScreenState extends State<EditorScreen> {
           spacing: 12,
           children: [
             FilledButton(
-              onPressed: _problem == null
-                  ? () => widget.onRun(_raw.text)
-                  : null,
+              onPressed: _problem == null && !_running ? _run : null,
               child: const Text('Run'),
             ),
             OutlinedButton(

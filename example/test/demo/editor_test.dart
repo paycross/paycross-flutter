@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -17,7 +18,7 @@ void main() {
     String? ran;
     await tester.pumpWidget(
       MaterialApp(
-        home: EditorScreen(preset: _preset, onRun: (body) => ran = body),
+        home: EditorScreen(preset: _preset, onRun: (body) async => ran = body),
       ),
     );
     await tester.pumpAndSettle();
@@ -33,7 +34,7 @@ void main() {
     String? ran;
     await tester.pumpWidget(
       MaterialApp(
-        home: EditorScreen(preset: _preset, onRun: (body) => ran = body),
+        home: EditorScreen(preset: _preset, onRun: (body) async => ran = body),
       ),
     );
     await tester.pumpAndSettle();
@@ -51,7 +52,7 @@ void main() {
     var ranCount = 0;
     await tester.pumpWidget(
       MaterialApp(
-        home: EditorScreen(preset: _preset, onRun: (_) => ranCount++),
+        home: EditorScreen(preset: _preset, onRun: (_) async => ranCount++),
       ),
     );
     await tester.pumpAndSettle();
@@ -70,7 +71,7 @@ void main() {
     String? ran;
     await tester.pumpWidget(
       MaterialApp(
-        home: EditorScreen(preset: _preset, onRun: (body) => ran = body),
+        home: EditorScreen(preset: _preset, onRun: (body) async => ran = body),
       ),
     );
     await tester.pumpAndSettle();
@@ -92,7 +93,7 @@ void main() {
     String? ran;
     await tester.pumpWidget(
       MaterialApp(
-        home: EditorScreen(preset: _preset, onRun: (body) => ran = body),
+        home: EditorScreen(preset: _preset, onRun: (body) async => ran = body),
       ),
     );
     await tester.pumpAndSettle();
@@ -116,7 +117,7 @@ void main() {
     String? ran;
     await tester.pumpWidget(
       MaterialApp(
-        home: EditorScreen(preset: _preset, onRun: (body) => ran = body),
+        home: EditorScreen(preset: _preset, onRun: (body) async => ran = body),
       ),
     );
     await tester.pumpAndSettle();
@@ -142,7 +143,7 @@ void main() {
     useTallSurface(tester);
     await tester.pumpWidget(
       MaterialApp(
-        home: EditorScreen(preset: _preset, onRun: (_) {}),
+        home: EditorScreen(preset: _preset, onRun: (_) async {}),
       ),
     );
     await tester.pumpAndSettle();
@@ -166,7 +167,7 @@ void main() {
     String? ran;
     await tester.pumpWidget(
       MaterialApp(
-        home: EditorScreen(preset: _preset, onRun: (body) => ran = body),
+        home: EditorScreen(preset: _preset, onRun: (body) async => ran = body),
       ),
     );
     await tester.pumpAndSettle();
@@ -179,5 +180,44 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(jsonDecode(ran!), jsonDecode(_preset.body));
+  });
+
+  testWidgets('Run cannot be pressed twice while the first is still going', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+    var runs = 0;
+    final gate = Completer<void>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditorScreen(
+          preset: _preset,
+          onRun: (_) async {
+            runs++;
+            await gate.future;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // What Run starts is a credential read and then a live mint. A second
+    // press before the first has finished bills a second sandbox session and
+    // stacks a second Run screen.
+    await tester.tap(find.text('Run'));
+    await tester.pump();
+    await tester.tap(find.text('Run'), warnIfMissed: false);
+    await tester.pump();
+
+    expect(runs, 1);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    // And it comes back afterwards: this is a guard, not a one-shot button.
+    await tester.tap(find.text('Run'));
+    await tester.pump();
+
+    expect(runs, 2);
   });
 }

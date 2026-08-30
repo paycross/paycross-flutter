@@ -9,6 +9,18 @@ import 'secrets.dart';
 import 'settings.dart';
 import 'test_cards_screen.dart';
 
+/// The app's real mint: one [Minter] per run, closed when that run is done.
+///
+/// A named function rather than a closure inside [runPreset] so a widget test
+/// can put something else in its place and never open a socket.
+Future<MintedSession> mintWithCredentials(
+  Credentials credentials,
+  String body,
+) {
+  final minter = Minter(credentials: credentials);
+  return minter.mint(body).whenComplete(minter.close);
+}
+
 /// Reads the stored credentials and pushes a run, or pushes Settings.
 ///
 /// Top-level, and the only path to a run: the preset tiles call it and so
@@ -23,6 +35,8 @@ Future<void> runPreset(
   Preset preset,
   String body, {
   SecretStore store = const SecretStore(),
+  Future<MintedSession> Function(Credentials, String body) mintWith =
+      mintWithCredentials,
 }) async {
   final credentials = await store.read();
   if (!context.mounted) return;
@@ -37,10 +51,7 @@ Future<void> runPreset(
       builder: (_) => RunScreen(
         preset: preset,
         body: body,
-        mintSession: (body) {
-          final minter = Minter(credentials: credentials);
-          return minter.mint(body).whenComplete(minter.close);
-        },
+        mintSession: (body) => mintWith(credentials, body),
       ),
     ),
   );
@@ -101,13 +112,45 @@ class _ActiveProfileStripState extends State<ActiveProfileStrip> {
 }
 
 /// Where an ordinary build lands: pick a scenario, run it.
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, this.store = const SecretStore()});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    super.key,
+    this.store = const SecretStore(),
+    this.mintWith = mintWithCredentials,
+  });
 
   final SecretStore store;
+  final Future<MintedSession> Function(Credentials, String body) mintWith;
 
-  Future<void> _run(BuildContext context, Preset preset, String body) =>
-      runPreset(context, preset, body, store: store);
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  /// True from the tap until the run has been pushed or refused.
+  ///
+  /// The credential read sits in that gap and a cold Keychain makes it a real
+  /// window, so an impatient second tap would mint a second live session and
+  /// stack a second Run screen. Every tile goes dead rather than only the one
+  /// that was tapped: the second session is just as unwanted when the second
+  /// tap lands on a different scenario.
+  bool _busy = false;
+
+  Future<void> _run(BuildContext context, Preset preset, String body) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await runPreset(
+        context,
+        preset,
+        body,
+        store: widget.store,
+        mintWith: widget.mintWith,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -147,7 +190,7 @@ class HomeScreen extends StatelessWidget {
             'environment and has no way to reach production.',
           ),
         ),
-        ActiveProfileStrip(store: store),
+        ActiveProfileStrip(store: widget.store),
         for (final preset in demoPresets)
           Card(
             child: ListTile(
@@ -172,7 +215,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              onTap: () => _run(context, preset, preset.body),
+              onTap: _busy ? null : () => _run(context, preset, preset.body),
             ),
           ),
         // The way in for a scenario nobody wrote a preset for. It opens the
@@ -183,14 +226,16 @@ class HomeScreen extends StatelessWidget {
             leading: const Icon(Icons.tune),
             title: const Text('Custom'),
             subtitle: const Text('Edit a session body by hand and run it.'),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => EditorScreen(
-                  preset: customPreset,
-                  onRun: (body) => _run(context, customPreset, body),
-                ),
-              ),
-            ),
+            onTap: _busy
+                ? null
+                : () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => EditorScreen(
+                        preset: customPreset,
+                        onRun: (body) => _run(context, customPreset, body),
+                      ),
+                    ),
+                  ),
           ),
         ),
       ],

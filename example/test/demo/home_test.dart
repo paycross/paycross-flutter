@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/editor.dart';
 import 'package:paycross_demo/demo/history_screen.dart';
 import 'package:paycross_demo/demo/home.dart';
+import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/presets.dart';
+import 'package:paycross_demo/demo/run.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_demo/demo/test_cards_screen.dart';
@@ -21,6 +25,26 @@ class _ThrowingBackend implements SecretBackend {
 
   @override
   Future<void> delete(String key) async {}
+}
+
+/// A store whose reads wait on [gate], so a test can tap again while the
+/// first read is still in flight -- which on a cold Keychain is a real
+/// window, not a theoretical one.
+class _SlowBackend implements SecretBackend {
+  final Map<String, String> entries = <String, String>{};
+  final Completer<void> gate = Completer<void>();
+
+  @override
+  Future<String?> read(String key) async {
+    await gate.future;
+    return entries[key];
+  }
+
+  @override
+  Future<void> write(String key, String value) async => entries[key] = value;
+
+  @override
+  Future<void> delete(String key) async => entries.remove(key);
 }
 
 void main() {
@@ -190,5 +214,50 @@ void main() {
 
     expect(find.byType(SettingsScreen), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a second tap while the first run is starting does nothing', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+    final backend = _SlowBackend()
+      ..entries['paycross_demo_client_id'] = 'id-1'
+      ..entries['paycross_demo_client_secret'] = 'secret-1';
+    var mints = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(
+          store: SecretStore(backend: backend),
+          mintWith: (credentials, body) async {
+            mints++;
+            return const MintedSession(
+              id: 'sess-9',
+              token: 'a-live-token',
+              sentBody: '{}',
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The store read sits between the tap and the push, so an impatient
+    // second tap would otherwise mint a second live session and stack a
+    // second Run screen on top of the first.
+    await tester.tap(find.text(demoPresets.first.name));
+    await tester.pump();
+    await tester.tap(find.text(demoPresets.first.name), warnIfMissed: false);
+    await tester.pump();
+
+    backend.gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(RunScreen), findsOneWidget);
+    expect(mints, 1);
+
+    // Drain the two bookkeeping timeouts the pushed Run screen started
+    // against platform stores that never answer under `flutter test`.
+    await tester.pump(const Duration(seconds: 10));
   });
 }
