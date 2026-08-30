@@ -238,4 +238,27 @@ void main() {
     expect(find.byKey(const ValueKey('copyBugReport')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('the outcome announces itself to a screen reader', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+
+    await tester.pumpWidget(_run(present: (_) async => _success('txn-9')));
+    await tester.pumpAndSettle();
+
+    // The outcome can land minutes after the tap -- a challenge waits on the
+    // shopper's bank -- and it lands in place, with no focus change and
+    // nothing to navigate to. Without this a screen-reader user is never
+    // told the payment finished.
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('runOutcome')))
+          .flagsCollection
+          .isLiveRegion,
+      isTrue,
+    );
+
+    semantics.dispose();
+  });
 }

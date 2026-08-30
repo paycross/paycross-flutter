@@ -159,37 +159,46 @@ class _RunScreenState extends State<RunScreen> {
           Text(_stage, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 16),
           if (human != null)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(human, style: const TextStyle(height: 1.4)),
-                    const SizedBox(height: 12),
-                    Text('Session ${_sessionId ?? '(none)'}'),
-                    Text('Transaction ${_transactionId ?? '(none)'}'),
-                    if (_entry != null) ...[
-                      const SizedBox(height: 8),
-                      // The same block History copies, offered where the run
-                      // just happened: a colleague reporting a problem should
-                      // not have to navigate away to quote it.
-                      OutlinedButton.icon(
-                        key: const ValueKey('copyBugReport'),
-                        icon: const Icon(Icons.copy, size: 18),
-                        label: const Text('Copy bug report'),
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(text: bugReport(_entry!)),
-                          );
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Copied.')),
-                          );
-                        },
-                      ),
+            // A live region, like Settings' message line: the outcome lands
+            // in place and can land minutes after the tap, because a
+            // challenge waits on the shopper's bank. Nothing moves focus and
+            // there is nothing to navigate to, so without this a
+            // screen-reader user is never told the payment finished.
+            Semantics(
+              key: const ValueKey('runOutcome'),
+              liveRegion: true,
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(human, style: const TextStyle(height: 1.4)),
+                      const SizedBox(height: 12),
+                      Text('Session ${_sessionId ?? '(none)'}'),
+                      Text('Transaction ${_transactionId ?? '(none)'}'),
+                      if (_entry != null) ...[
+                        const SizedBox(height: 8),
+                        // The same block History copies, offered where the run
+                        // just happened: a colleague reporting a problem should
+                        // not have to navigate away to quote it.
+                        OutlinedButton.icon(
+                          key: const ValueKey('copyBugReport'),
+                          icon: const Icon(Icons.copy, size: 18),
+                          label: const Text('Copy bug report'),
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: bugReport(_entry!)),
+                            );
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Copied.')),
+                            );
+                          },
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
