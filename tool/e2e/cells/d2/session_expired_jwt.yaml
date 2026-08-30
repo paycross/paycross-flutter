@@ -14,9 +14,11 @@
 # never coming would report "the card form never appeared" instead of the
 # label already on screen.
 #
-# <any> because only iOS's answer has been read in source and neither has
-# been measured on a device: the cell records what each platform says and
-# Phase 3 pins it. Both are expected to reach a `restart` recovery.
+# MEASURED 2026-08-29/30, and PINNED: `result:failure:restart:` with an
+# EMPTY transaction field, on BOTH platforms -- the expected `restart`, and
+# identical to what error_malformed_token measures. The literal carries no
+# <txn> placeholder because the emptiness is the half that tells this cell
+# apart from session_expired_server, and a placeholder would accept an id.
 #
 # Distinguished from its sibling `session_expired_server` by <txn>: this
 # session holds no transaction, so the label's transaction field is empty.
@@ -44,7 +46,7 @@ actions:
   - present_token
   - wait_result 90
 expected:
-  label: "<any>"
+  label: "result:failure:restart:"
   merchant:
     session_status: open
     txn_count: 0

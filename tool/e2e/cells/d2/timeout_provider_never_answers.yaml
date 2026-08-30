@@ -14,8 +14,10 @@
 #
 # 1. The Dart side resolves on the SDK's OWN deadline, not the backend's.
 #    iOS: FlowLimits.pollDeadline = 480 s (PaymentFlowReducer.swift:8-15) ->
-#    .failed(recovery: .retry). Android's equivalent has not been read, so
-#    the label is DISCOVERED here rather than presumed. Phase 3 pins it.
+#    .failed(recovery: .retry). Android's has since been read and is the SAME
+#    480 s (PaymentViewModel.POLL_DEADLINE_MS = 8 * 60 * 1000L), which is why
+#    wait_result 600 clears both. MEASURED and PINNED as
+#    `result:failure:retry:<txn>` on both platforms.
 # 2. The transaction reaches status `failed` with `failure: null`.
 #    markAsFailed writes metadata['failure_reason'] while FormatsFailure
 #    reads metadata['error'], so no failure block is ever rendered -- which
@@ -45,7 +47,7 @@ actions:
   - tap_pay
   - wait_result 600
 expected:
-  label: "<any>"
+  label: "result:failure:retry:<txn>"
   merchant:
     session_status: open
     txn_count: 1

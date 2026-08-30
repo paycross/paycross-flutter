@@ -14,10 +14,10 @@
 # this session MUST hold a transaction that moved money, or the re-present
 # was not a re-present.
 #
-# <any> for the label alone: a resumed success and a refusal are both
-# defensible answers and neither has been measured, so the cell records what
-# each platform says while the merchant assertions carry the finding. Phase 3
-# pins the label per platform.
+# MEASURED 2026-08-29/30, and PINNED: `result:success:<txn>` on BOTH
+# platforms, with txn_count still 1. So both SDKs take the resume branch and
+# report the ORIGINAL payment's success rather than refusing -- and neither
+# double-charges. The two defensible answers turned out to be one answer.
 #
 # The documented empty-transactionId success -- a completed session with NO
 # transaction (SessionResolution.swift:46-50) -- is deliberately not covered:
@@ -41,7 +41,7 @@ actions:
   - present_token
   - wait_result 180
 expected:
-  label: "<any>"
+  label: "result:success:<txn>"
   merchant:
     session_status: completed
     txn_count: 1

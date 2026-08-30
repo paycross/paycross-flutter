@@ -5,9 +5,13 @@
 # refusal happens on line 46, and `present` is line 65. Android's path has
 # not been read.
 #
-# So the cell taps Pay and waits, and records whatever comes back. Phase 3
-# replaces <any> with the label both platforms measured, and the difference
-# between them (if any) is a row in the outcome table.
+# MEASURED 2026-08-29/30, and PINNED: `result:failure:restart:` with an
+# EMPTY transaction field, on BOTH platforms. So R9's prediction holds on iOS
+# and holds on Android too, whose path R9 said was unread -- there is no
+# divergence to put in the outcome table. The literal is pinned without a
+# <txn> placeholder on purpose: the emptiness is part of what was measured
+# (no transaction is ever created), and <txn> would accept a transaction id
+# here without complaint.
 #
 # The literal is capped at 200 printable characters by cells.py, which is
 # what makes it impossible for a live token to be committed here.
@@ -25,7 +29,7 @@ actions:
   - tap_example_pay
   - wait_result 60
 expected:
-  label: "<any>"
+  label: "result:failure:restart:"
   merchant:
     session_status: open
     txn_count: 0

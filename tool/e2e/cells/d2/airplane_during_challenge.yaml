@@ -9,9 +9,16 @@
 # have been swept by core's stuck-transaction recovery by the time the runner
 # reads the session; no_succeeded_txn is the half that carries the finding.
 #
-# <any> because what the SDK eventually tells Dart after a challenge it can
-# neither finish nor abandon has never been measured on either platform. The
-# cell records it; Phase 3 pins it.
+# MEASURED twice on android (2026-08-29 and 2026-08-30) and PINNED:
+# `result:failure:retry:<txn>`, over a session still `open` whose single
+# transaction is still `threeds_challenge_requested` with no threeds_result.
+# Nothing succeeded and nothing shifted, so `retry` is a defensible report
+# here -- this cell is a measurement, NOT the finding its sibling
+# airplane_during_polling carries. Do not read the two labels as one result
+# just because they read alike.
+#
+# iOS is absent by R6, not by omission: the simulator shares the host's
+# network and every route to cutting it needs sudo or the GUI.
 id: airplane_during_challenge
 platforms: [android]
 card:
@@ -30,7 +37,7 @@ actions:
   - wait_result 600
   - airplane off
 expected:
-  label: "<any>"
+  label: "result:failure:retry:<txn>"
   merchant:
     session_status: open
     txn_count: 1
