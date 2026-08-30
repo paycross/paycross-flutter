@@ -783,6 +783,55 @@ class IosDriver(Driver):
             self._sleep(settle)
         raise DriverError(f"{name!r} never came on screen after {max_swipes} swipes")
 
+    def scroll_back_to_top(
+        self,
+        *,
+        max_swipes: int = _MAX_SWIPES,
+        settle: float = SCROLL_SETTLE_SECONDS,
+    ) -> None:
+        """Undoes `scroll_to`, so an action that scrolled leaves no trace.
+
+        `scroll_to` is the only thing in this driver that moves the sheet, and
+        until D5 nothing called it on the *form* -- only on the ACS page, which
+        the cell then leaves. `save_card` broke that: it scrolls the form to
+        reach the toggle, and a form left scrolled poisons every action after
+        it.
+
+        Measured, and it cost a live cell. With the sheet left scrolled,
+        `amount` sat at y=37 -- under the navigation bar -- and
+        `dismiss_keyboard`'s fallback tap on `amount` hit dead space. The CVV
+        pad then survived onto the ACS page, where `acs()` requires it gone, and
+        `saved_card_3_challenge_save` failed while its interleaved control
+        passed.
+
+        The anchor is `amount`: the SDK tags it, it is the first thing in the
+        form, and it never moves within it. Best effort and bounded -- a sheet
+        that will not scroll back is not worth failing a cell that has
+        otherwise done what it was asked.
+        """
+        width, height = self._window_size()
+        for _ in range(max_swipes):
+            nodes = self._nodes(tolerate=True)
+            anchor = self._pick(nodes, AMOUNT, False, False)
+            floor = max(
+                (n.bounds[3] for n in nodes if n.type == "NavigationBar"),
+                default=0,
+            )
+            if anchor is not None and anchor.bounds[1] >= floor:
+                return
+            self._wda(
+                "POST",
+                self._session("/wda/dragfromtoforduration"),
+                {
+                    "fromX": width / 2,
+                    "fromY": height * _DRAG_TO,
+                    "toX": width / 2,
+                    "toY": height * _DRAG_FROM,
+                    "duration": _DRAG_DURATION,
+                },
+            )
+            self._sleep(settle)
+
     def _keyboard(self) -> tree.Node | None:
         """The keyboard node, so a caller can ask where it is, not just whether.
 
@@ -1117,6 +1166,7 @@ class IosDriver(Driver):
             )
         node = self.scroll_to(SAVE_CARD_TOGGLE)
         if node.checked:
+            self.scroll_back_to_top()
             return
 
         target = self._toggle_control(node)
@@ -1142,6 +1192,11 @@ class IosDriver(Driver):
                 "the submit would carry card.save false and the payment would "
                 "store nothing"
             )
+        # Only once the tick is confirmed: a failure above has a verdict to
+        # report and putting the sheet back would not change it, while a
+        # successful tick must leave the form exactly as the next action
+        # expects to find it.
+        self.scroll_back_to_top()
 
     def select_saved_card(self, *, timeout: float = 30) -> None:
         """Chooses the first stored card, and proves the form switched.

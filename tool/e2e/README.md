@@ -331,10 +331,14 @@ Things worth knowing before you write an expectation:
   looking only for `succeeded` would have passed on either.
 * `failure_code` and `network_decline_code` read `transactions[-1].failure`,
   beside `failure_recovery`.
-* `saved_card_saved` / `saved_card_used` assert **presence**, never a value:
-  `evidence.scrub_resource` drops `stored_credentials.saved_token` and
-  `used_token` by name before the verifier sees them, so what is left is the
-  redaction marker for a card that was stored and `null` for one that was not.
+* `saved_card_saved` / `saved_card_used` assert **presence**, never a value.
+  Both keys are on the scrubber's list, so what the verifier sees has already
+  been through `evidence.scrub_resource` — and these work only because a
+  scrubbed token is **replaced rather than removed**: the key survives carrying
+  the redaction marker for a card that was stored, and is still `null` for one
+  that was not. Removing the key instead, which reads like the safer choice,
+  would turn every `saved_card_saved: true` into a failure; a test in
+  `test_verify` pins the pair together for that reason.
 * `threeds` accepts exactly `outcome`, `flow` and `liability_shifted`, and an
   unknown inner key is refused at load. `threeds.eci` and `threeds.version` are
   deliberately not assertable: a sandbox upgrade must not present as a finding.
@@ -358,7 +362,10 @@ Things worth knowing before you write an expectation:
 | `enter_token <literal>` | types a literal into the token field, for the malformed-token cells |
 | `relaunch` | cold-starts the app mid-cell. On iOS this keeps the console window the cell has already written; `launch` would truncate it |
 | `airplane on\|off` | cuts the device's network and reads the setting back. **Android only** |
-| `type_cvv`, `tap_google_pay`, `select_saved_card`, `save_card` | wallet and saved-card entry (D4, D5) |
+| `type_cvv` | types the cell's CVV into the CVV field and nothing else |
+| `save_card` | makes sure the save-card box is ticked, and reads the state back to prove it |
+| `select_saved_card` | chooses the first stored card, and verifies the form switched |
+| `tap_google_pay` | the wallet button (D4) |
 | `background <s>`, `rotate`, `kill_activity`, `dont_keep_activities on\|off` | lifecycle (D3) |
 
 Each `expect` argument has its own deadline, and a falsy answer fails the cell
@@ -380,8 +387,8 @@ the expected answer: on iOS a malformed or expired token is refused before
 `present` is ever called, so waiting for a sheet costs a 60-second timeout and
 then reports the wrong failure.
 
-The last two rows are **in the grammar but not yet executable**, and so are
-`expect google_pay`, `expect no_google_pay` and `expect saved_card`. The
+`tap_google_pay` and the lifecycle row are **in the grammar but not yet
+executable**, and so are `expect google_pay` and `expect no_google_pay`. The
 vocabulary is opened a dimension at a time so cell files can be written against
 a stable list; the dimension that owns a verb writes the driver method, and
 every verb already reaches a `_perform` branch that calls it. Until the method

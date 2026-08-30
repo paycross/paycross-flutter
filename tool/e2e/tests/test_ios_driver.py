@@ -1188,6 +1188,17 @@ SAVE_FORM_IOS_TICKED = SAVE_FORM_IOS_ONSCREEN.replace(
 )
 assert SAVE_FORM_IOS_TICKED != SAVE_FORM_IOS_ONSCREEN
 
+#: The ticked form with the sheet still scrolled -- `amount` at y=37, tucked
+#: under a navigation bar whose bottom is y=132. Exactly what the live run left
+#: behind, and what made `dismiss_keyboard`'s fallback tap dead space.
+SAVE_FORM_IOS_SCROLLED = SAVE_FORM_IOS_TICKED.replace(
+    'name="amount" label="\u20ac10,00" enabled="true" visible="true" '
+    'accessible="true" x="20" y="171"',
+    'name="amount" label="\u20ac10,00" enabled="true" visible="true" '
+    'accessible="true" x="20" y="37"',
+)
+assert SAVE_FORM_IOS_SCROLLED != SAVE_FORM_IOS_TICKED, "amount did not move"
+
 
 class SaveCardFakeSsh(FakeSsh):
     """Serves the toggle off-screen until a drag arrives, then on-screen.
@@ -1201,19 +1212,29 @@ class SaveCardFakeSsh(FakeSsh):
     def __init__(self, ticks=True):
         super().__init__()
         self.scrolled = False
+        self.restored = False
         self.tapped = False
         self.ticks = ticks
 
     def __call__(self, command, *, stdin=None):
         if "dragfromtoforduration" in command:
-            self.scrolled = True
+            raw = command.split("printf %s ", 1)[1].split(" | curl", 1)[0]
+            body = json.loads(shlex.split(raw)[0])
+            # Which way the drag went is the whole difference between reaching
+            # the toggle and putting the sheet back.
+            if body["fromY"] > body["toY"]:
+                self.scrolled = True
+            else:
+                self.restored = True
         if "/wda/tap" in command:
             self.tapped = True
         if "/source" in command:
             self.calls.append(command)
             self.stdins.append(stdin)
             if self.tapped and self.ticks:
-                return source_response(SAVE_FORM_IOS_TICKED)
+                if self.restored:
+                    return source_response(SAVE_FORM_IOS_TICKED)
+                return source_response(SAVE_FORM_IOS_SCROLLED)
             return source_response(
                 SAVE_FORM_IOS_ONSCREEN if self.scrolled else SAVE_FORM_IOS
             )
@@ -1374,6 +1395,31 @@ def test_select_saved_card_says_so_when_no_stored_card_is_offered():
         driver(ssh).select_saved_card(timeout=0)
 
     assert "no stored-card row" in str(excinfo.value)
+
+
+def test_save_card_puts_the_scroll_back_where_it_found_it():
+    """Measured, and it cost a live cell.
+
+    `save_card` has to scroll to reach the toggle. Leaving the sheet scrolled
+    poisons everything after it: on the live run `amount` ended up at y=37,
+    tucked under the navigation bar, and `dismiss_keyboard`'s fallback -- which
+    taps `amount` -- hit dead space. The CVV pad then survived all the way onto
+    the ACS page and `acs()` refused, failing `saved_card_3_challenge_save`
+    while its interleaved control passed.
+
+    So the scroll is restored before returning. The anchor is `amount`, which
+    the SDK tags and never moves within the form.
+    """
+    ssh = SaveCardFakeSsh()
+
+    driver(ssh).save_card()
+
+    drags = payloads_for(ssh, "/wda/dragfromtoforduration")
+    assert drags, "it has to scroll down to reach the toggle"
+    # The last drag goes the other way: down the screen, not up it.
+    assert drags[-1]["fromY"] < drags[-1]["toY"], drags[-1]
+    # And the first one went up, which is what reached the toggle.
+    assert drags[0]["fromY"] > drags[0]["toY"], drags[0]
 
 
 # -- wait_saved_card ----------------------------------------------------------
