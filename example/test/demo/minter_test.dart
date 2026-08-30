@@ -23,6 +23,24 @@ String jwtExpiring(DateTime at) {
   return '$head.$body.notasignature';
 }
 
+/// A client that records whether anything closed it.
+class _ClosingSpy extends http.BaseClient {
+  _ClosingSpy(this._inner);
+
+  final http.Client _inner;
+  bool closed = false;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _inner.send(request);
+
+  @override
+  void close() {
+    closed = true;
+    _inner.close();
+  }
+}
+
 void main() {
   late DateTime clock;
   late List<http.Request> sent;
@@ -125,6 +143,32 @@ void main() {
       await minter.mint('{"amount":1000}');
       clock = clock.add(const Duration(minutes: 30));
       await minter.mint('{"amount":1000}');
+
+      expect(tokenCalls, 1);
+    });
+
+    test('two overlapping calls share one fetch', () async {
+      var tokenCalls = 0;
+      final minter = Minter(
+        credentials: _credentials,
+        now: () => clock,
+        newIdempotencyKey: () => 'idem',
+        client: MockClient((request) async {
+          if (request.url.path.endsWith('/token')) {
+            tokenCalls++;
+            // Yield, so the second mint reaches the token check while this
+            // fetch is still in flight -- which is what two taps in a row do.
+            await Future<void>.delayed(Duration.zero);
+            return tokenResponse(clock.add(const Duration(hours: 1)));
+          }
+          return sessionResponse();
+        }),
+      );
+
+      await Future.wait([
+        minter.mint('{"amount":1000}'),
+        minter.mint('{"amount":1000}'),
+      ]);
 
       expect(tokenCalls, 1);
     });
@@ -360,6 +404,16 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('the client it runs on', () {
+    test('close leaves a client it was handed open', () async {
+      final spy = _ClosingSpy(MockClient((request) async => sessionResponse()));
+
+      Minter(credentials: _credentials, client: spy).close();
+
+      expect(spy.closed, isFalse);
     });
   });
 

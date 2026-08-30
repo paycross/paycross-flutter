@@ -147,6 +147,7 @@ class Minter {
     String Function() newIdempotencyKey = randomIdempotencyKey,
     Duration timeout = _requestTimeout,
   }) : _credentials = credentials,
+       _ownsClient = client == null,
        _client = client ?? http.Client(),
        _now = now,
        _newIdempotencyKey = newIdempotencyKey,
@@ -154,12 +155,14 @@ class Minter {
 
   final Credentials _credentials;
   final http.Client _client;
+  final bool _ownsClient;
   final DateTime Function() _now;
   final String Function() _newIdempotencyKey;
   final Duration _timeout;
 
   String? _accessToken;
   DateTime _accessTokenDeadline = DateTime.utc(1970);
+  Future<String>? _bearerInFlight;
 
   /// Creates one session from a raw JSON body.
   ///
@@ -206,7 +209,14 @@ class Minter {
     return scrubResource(raw)! as Map<String, Object?>;
   }
 
-  void close() => _client.close();
+  /// Releases the HTTP client, if this minter is the one that made it.
+  ///
+  /// A client that was passed in belongs to whoever passed it: closing it
+  /// here would take the connection pool out from under the next minter
+  /// built over the same one.
+  void close() {
+    if (_ownsClient) _client.close();
+  }
 
   Future<Map<String, Object?>> _send(
     String method,
@@ -271,10 +281,20 @@ class Minter {
     }
   }
 
-  Future<String> _bearer() async {
+  Future<String> _bearer() {
     final cached = _accessToken;
-    if (cached != null && _now().isBefore(_accessTokenDeadline)) return cached;
+    if (cached != null && _now().isBefore(_accessTokenDeadline)) {
+      return Future.value(cached);
+    }
+    // One fetch however many callers are waiting on it. Two taps in a row
+    // would otherwise mint two tokens, and the second would evict the first
+    // while a request was still on its way out carrying it.
+    return _bearerInFlight ??= _fetchBearer().whenComplete(
+      () => _bearerInFlight = null,
+    );
+  }
 
+  Future<String> _fetchBearer() async {
     final basic = base64.encode(
       utf8.encode('${_credentials.clientId}:${_credentials.clientSecret}'),
     );
