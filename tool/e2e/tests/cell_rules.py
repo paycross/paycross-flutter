@@ -54,6 +54,20 @@ def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
                     verb,
                     off,
                 ) in actions, f"{cell.id}: turns {verb} on and never off"
+        # Orientation outlives the cell on both platforms -- `user_rotation` is
+        # a global setting on Android and the simulator keeps its pose -- and
+        # unlike airplane mode it is not an on/off pair, so the runner's
+        # teardown replay has no shape to put it back with. An odd number of
+        # turns therefore leaves the device turned, and the next cell fails
+        # looking for a button that is off-screen. Measured: the D3 iOS probe
+        # rotated once, and the interleaved control after it failed with "no
+        # element named 'payButton' within 60s" -- a rig fault wearing an SDK
+        # finding's clothes.
+        turns = sum(1 for verb, _ in actions if verb == "rotate")
+        assert turns % 2 == 0, (
+            f"{cell.id}: rotates {turns} time(s), so it leaves the device "
+            "turned for every cell after it; rotate back before the cell ends"
+        )
         if any(v == "wait" for v, _ in actions):
             assert "expired" in cell.id or "jwt" in cell.id, (
                 f"{cell.id}: a bare `wait` is only for the two expiry recipes"

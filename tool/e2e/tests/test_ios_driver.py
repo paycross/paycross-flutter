@@ -404,6 +404,7 @@ def launch_outputs(
     stopping=False,
     mark=CONSOLE_MARK,
     locale="en_US@rg=lvzzzz\n",
+    orientation=None,
 ):
     """One launch's worth of remote answers, in the order launch() asks.
 
@@ -425,6 +426,8 @@ def launch_outputs(
         f"    {mark}\n12345\n",
         session or json.dumps({"value": {"sessionId": "sess-9"}}),
         alive,
+        # Asked last, because /orientation needs the session.
+        orientation or json.dumps({"value": "PORTRAIT"}),
     )
 
 
@@ -2175,3 +2178,26 @@ def test_the_console_half_is_never_capped():
     launched(ssh).logs_since(slept)
 
     assert f"tail -c +{CONSOLE_MARK + 1}" in ssh.calls[0]
+
+
+def test_launch_refuses_a_simulator_a_previous_cell_left_turned():
+    # Measured on the D3 probe: a cell rotated once and did not rotate back,
+    # and the interleaved control after it failed with "no element named
+    # 'payButton' within 60s" -- a rig fault wearing an SDK finding's clothes.
+    ssh = FakeSsh(*launch_outputs(orientation=json.dumps({"value": "LANDSCAPE"})))
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+
+    with pytest.raises(DriverError) as excinfo:
+        d.launch()
+
+    message = str(excinfo.value)
+    assert "not upright" in message
+    assert "LANDSCAPE" in message
+
+
+def test_launch_is_happy_with_an_upright_simulator():
+    ssh = FakeSsh(*launch_outputs())
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    assert "/orientation" in ssh.joined()

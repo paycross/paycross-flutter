@@ -583,6 +583,21 @@ class IosDriver(Driver):
         # A new session can mean a new window; the cached size is not carried.
         self._window = None
         self._check_console()
+        # Last, because /orientation needs the session. A cell that rotated and
+        # did not rotate back leaves the simulator turned, and every cell after
+        # it looks for buttons that are off screen -- measured on the D3 probe,
+        # where the interleaved control failed with "no element named
+        # 'payButton' within 60s", which reads as an SDK finding and is a rig
+        # fault. `cell_rules` refuses a cell with an odd number of turns; this
+        # catches the cell that died between two of them, where the runner's
+        # teardown replay cannot help because `rotate` has no on/off pair.
+        pose = self._wda("GET", self._session("/orientation")).get("value")
+        if pose not in (None, "PORTRAIT"):
+            raise DriverError(
+                f"the simulator is not upright: WebDriverAgent reports {pose!r}, "
+                "so a previous cell rotated and did not rotate back. Every cell "
+                "after it looks for buttons that are off screen"
+            )
 
     def relaunch(self) -> None:
         self.launch(truncate_console=False)

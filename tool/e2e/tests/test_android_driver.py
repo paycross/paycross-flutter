@@ -772,9 +772,9 @@ def test_relaunch_on_android_is_exactly_launch():
     # Nothing on this side is truncated by a launch, so there is nothing for a
     # relaunch to preserve. The base implementation is the whole answer.
     # Two launches' worth: FakeShell pops one output per call, and a launch
-    # spends six -- boot, locale, airplane, don't-keep-activities, force-stop,
-    # monkey.
-    one = ["1\n", "en-US\n", "0\n", "0\n", "", ""]
+    # spends eight -- boot, locale, airplane, don't-keep-activities, the two
+    # rotation settings, force-stop, monkey.
+    one = ["1\n", "en-US\n", "0\n", "0\n", "0\n", "0\n", "", ""]
     shell = FakeShell(*one, *one)
     made = driver(shell)
 
@@ -1292,3 +1292,30 @@ def test_launch_refuses_a_device_left_not_keeping_activities():
     assert "Don't keep activities" in message
     assert "always_finish_activities 0" in message
     assert not any("monkey" in c for c in shell.argv_text())
+
+
+def test_launch_refuses_a_device_a_previous_cell_left_turned():
+    # Measured on the D3 probe: a cell that rotated once left the device
+    # turned, and the next cell failed looking for a button that was off
+    # screen. Without this the message is "no element named ... within 60s",
+    # which reads as an SDK finding.
+    shell = FakeShell("1\n", "en-US\n", "0\n", "0\n", "0\n", "1\n")
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).launch()
+
+    message = str(excinfo.value)
+    assert "not upright" in message
+    assert "user_rotation 0" in message
+    assert not any("monkey" in c for c in shell.argv_text())
+
+
+def test_launch_ignores_a_stale_user_rotation_the_sensor_overrides():
+    # `user_rotation` only takes effect while `accelerometer_rotation` is 0.
+    # With the sensor in charge the device is upright whatever that value
+    # says, and refusing on it would break a rig nothing had turned.
+    shell = FakeShell("1\n", "en-US\n", "0\n", "0\n", "1\n", "1\n", "", "")
+
+    driver(shell).launch()
+
+    assert any("monkey" in c for c in shell.argv_text())

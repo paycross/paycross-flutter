@@ -321,6 +321,30 @@ class AndroidDriver(Driver):
                 "like an SDK finding. Run: adb shell settings put global "
                 "always_finish_activities 0"
             )
+        # And the third: a cell that rotated and did not rotate back. Both
+        # settings are read, because `user_rotation` only takes effect while
+        # `accelerometer_rotation` is 0 -- with the sensor in charge the device
+        # is upright whatever `user_rotation` says, and refusing on that alone
+        # would break a rig nothing had turned. `rotate()` writes both, so this
+        # is exactly the state it leaves.
+        #
+        # Measured on the D3 probe: one un-restored rotation, and the
+        # interleaved control after it failed with "no element named
+        # 'payButton' within 60s" -- which reads as an SDK finding and is a rig
+        # fault. `cell_rules` refuses a cell with an odd number of turns; this
+        # catches the cell that died between two of them, where the teardown
+        # replay cannot help because `rotate` has no on/off pair.
+        sensor = self._shell(
+            ["shell", "settings get system accelerometer_rotation"]
+        ).strip()
+        turned = self._shell(["shell", "settings get system user_rotation"]).strip()
+        if sensor == "0" and turned not in ("0", "null", ""):
+            raise DriverError(
+                f"the device is not upright: user_rotation reads {turned!r} with "
+                "accelerometer_rotation off, so a previous cell rotated and did "
+                "not rotate back. Every cell after it looks for buttons that are "
+                "off screen. Run: adb shell settings put system user_rotation 0"
+            )
         self._shell(["shell", "am", "force-stop", PACKAGE])
         self._shell(["shell", "monkey", "-p", PACKAGE, "-c", _LAUNCHER, "1"])
         self._sleep(LAUNCH_SETTLE_SECONDS)

@@ -487,7 +487,20 @@ not when the process exits. Left on, they fail every cell that follows —
 including the interleaved control, so the run aborts as a rig fault after two
 of them.
 
-Three things guard against that.
+**`rotate` is the third of these and does not fit the same shape.** Orientation
+outlives the cell on both platforms — `user_rotation` is a global setting on
+Android and the simulator keeps its pose — but it is not an on/off pair, so the
+runner's teardown replay has nothing to put back. This is measured, not
+hypothetical: a D3 probe rotated once, and the interleaved control after it
+failed with `no element named 'payButton' within 60s` — a rig fault wearing an
+SDK finding's clothes. So `cell_rules` requires an **even number of turns**, and
+both drivers' `launch()` refuses a device that is still turned, which is what
+catches the cell that died between two of them. On Android both rotation
+settings are read, because `user_rotation` only takes effect while
+`accelerometer_rotation` is 0 and refusing on a stale value the sensor overrides
+would break a rig nothing had turned.
+
+Three things guard against the two on/off settings.
 
 `cell_rules` refuses a cell that turns either on without turning it off, and
 allows only that teardown to follow the action that reads the outcome.
@@ -822,7 +835,7 @@ trailing it means a rule ran in the wrong order.
 pytest tool/e2e/tests -q
 ```
 
-767 tests, no device needed: every driver call is faked, so this covers the
+773 tests, no device needed: every driver call is faked, so this covers the
 parsing, the redaction, the label matching and the merchant verification — the
 places where a silent mistake would be read as an SDK finding. The shipped cell
 files are validated here too. CI runs this on Linux on every PR, in its own job,

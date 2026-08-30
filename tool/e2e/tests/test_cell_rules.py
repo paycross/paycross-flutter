@@ -161,6 +161,7 @@ actions:
   - type_card
   - tap_pay
   - rotate
+  - rotate
   - wait_result 60
 expected:
   label: "<any>"
@@ -221,3 +222,34 @@ def test_a_silent_cell_pins_the_session_too(tmp_path):
 
     with pytest.raises(AssertionError, match="must still pin the session state"):
         check_cell_dir(where, "android")
+
+
+def test_a_cell_that_rotates_must_rotate_back(tmp_path):
+    # MEASURED, not hypothetical. The D3 iOS probe rotated once and left the
+    # simulator in landscape; the interleaved control that followed failed with
+    # "no element named 'payButton' within 60s", which reads as an SDK finding
+    # and is a rig fault. Orientation outlives the cell on both platforms --
+    # `user_rotation` is a global setting on Android and the simulator keeps
+    # its pose -- and unlike airplane mode it has no on/off pair for the
+    # runner's teardown replay to put back.
+    where = directory(
+        tmp_path,
+        "rotate_after_submit",
+        ["paste_token", "type_card", "tap_pay", "rotate", "wait_result 60"],
+    )
+
+    with pytest.raises(AssertionError, match="rotates 1 time"):
+        check_cell_dir(where, "android")
+
+
+def test_a_cell_that_rotates_there_and_back_is_fine(tmp_path):
+    where = directory(
+        tmp_path,
+        "rotate_after_submit",
+        ["paste_token", "type_card", "tap_pay", "rotate", "rotate", "wait_result 60"],
+    )
+
+    assert {c.id for c in check_cell_dir(where, "android")} == {
+        "control",
+        "rotate_after_submit",
+    }
