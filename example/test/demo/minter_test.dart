@@ -248,6 +248,64 @@ void main() {
       expect((session['saved_cards'] as List).first['brand'], 'visa');
     });
 
+    test('a refusal echoes no token value, JWT-shaped or not', () async {
+      final minter = minterOver(
+        recording((request, index) {
+          if (request.url.path.endsWith('/token')) {
+            return tokenResponse(clock.add(const Duration(hours: 1)));
+          }
+          return http.Response(
+            jsonEncode({
+              'message': 'that card is not enrolled',
+              'session_token': 'eyJhbGciOiJSUzI1NiJ9.eyJhIjoxfQ.other',
+              // Opaque, so the JWT mask alone cannot see it. History keeps
+              // this text and the bug-report block quotes it.
+              'saved_cards': [
+                {'saved_token': 'tok_live_1', 'brand': 'visa'},
+              ],
+            }),
+            422,
+          );
+        }),
+      );
+
+      try {
+        await minter.mint('{"amount":1000}');
+        fail('expected a MinterError');
+      } on MinterError catch (error) {
+        expect(error.message, isNot(contains('tok_live_1')));
+        expect(error.message, isNot(contains('eyJhbGciOiJSUzI1NiJ9')));
+        // What is left has to stay worth reading, or the refusal is no use
+        // in a bug report.
+        expect(error.message, contains('422'));
+        expect(error.message, contains('not enrolled'));
+        expect(error.message, contains('visa'));
+      }
+    });
+
+    test('a refusal that is not JSON keeps the JWT mask', () async {
+      final minter = minterOver(
+        recording((request, index) {
+          if (request.url.path.endsWith('/token')) {
+            return tokenResponse(clock.add(const Duration(hours: 1)));
+          }
+          return http.Response(
+            'upstream connect failure for '
+            'eyJhbGciOiJSUzI1NiJ9.eyJhIjoxfQ.other',
+            502,
+          );
+        }),
+      );
+
+      try {
+        await minter.mint('{"amount":1000}');
+        fail('expected a MinterError');
+      } on MinterError catch (error) {
+        expect(error.message, isNot(contains('eyJhbGciOiJSUzI1NiJ9')));
+        expect(error.message, contains('upstream connect failure'));
+      }
+    });
+
     test('an HTML refusal is reported as the edge, not as bad JSON', () async {
       final minter = minterOver(
         recording((request, index) {

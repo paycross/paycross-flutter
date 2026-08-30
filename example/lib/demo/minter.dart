@@ -293,6 +293,9 @@ class Minter {
   /// token's life is told it has the whole thing (cognito-m2m#1). `exp` is
   /// inside the signed payload and the cache does not rewrite it.
   DateTime _deadlineFor(String token, Object? expiresIn) {
+    // No clock-skew guard, unlike `sandbox.py`'s IMPLAUSIBLE_EXP_AGE_SECONDS:
+    // a phone whose clock is wrong reads every `exp` as long past and pays one
+    // extra token round trip per call for it, which is never a failed payment.
     final expiry = jwtExpiry(token);
     if (expiry != null) return expiry.subtract(tokenRefreshMargin);
     final seconds = expiresIn is num ? expiresIn.toInt() : 3600;
@@ -345,9 +348,29 @@ final RegExp _jwtShape = RegExp(
   r'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
 );
 
-/// Renders a response for an error message with every token masked and the
+/// Renders a response for an error message with every token dropped and the
 /// text cut short. Whole session resources reach here, not just refusals.
+///
+/// Two branches, the same two `sandbox.py`'s `_safe_to_echo` has. A body that
+/// parses is scrubbed by key first, so a token is dropped whatever shape its
+/// value has -- an opaque `saved_token` is invisible to the mask below.
+/// Anything that does not parse -- a transport failure's message, a gateway's
+/// plain-text refusal -- has only the mask.
+///
+/// The key pass is not optional here the way it nearly is in the Python: what
+/// this text reaches is History and the bug-report block, so it is an
+/// artifact rather than a line in a run log.
 String _safeToEcho(String text) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(text);
+  } on FormatException {
+    return _maskAndTrim(text);
+  }
+  return _maskAndTrim(jsonEncode(scrubResource(decoded)));
+}
+
+String _maskAndTrim(String text) {
   final masked = text.replaceAll(_jwtShape, '<redacted>');
   return masked.length <= 400 ? masked : '${masked.substring(0, 400)}…';
 }
