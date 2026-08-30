@@ -1,5 +1,10 @@
-name: paycross_flutter_example
-description: "Demonstrates how to use the paycross_flutter plugin."
+name: paycross_demo
+description: "PayCross Demo: mint sandbox sessions and run payment scenarios against the paycross_flutter plugin."
+# Independent of the plugin's version on purpose -- this is the demo app's
+# own release train, and both release scripts pass --build-name/--build-number
+# derived from the demo-vX.Y.Z tag. Without a version: line here every build
+# is 1.0.0+1, which App Store Connect rejects on the second upload.
+version: 0.1.0+1
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -28,6 +33,12 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+
+  # Reads CFBundleShortVersionString/CFBundleVersion on iOS and
+  # versionName/versionCode on Android -- the same two fields the release
+  # scripts set from the tag, so the version Settings shows and the version
+  # the store sees cannot drift apart.
+  package_info_plus: ^10.2.1
 
 dev_dependencies:
   flutter_test:
