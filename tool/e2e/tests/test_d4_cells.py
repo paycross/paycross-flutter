@@ -80,9 +80,16 @@ def test_the_absence_cell_mints_the_session_that_makes_the_absence_mean_somethin
     # `data.account_funding: true` with this block and `false` without it.
     absent = next(c for c in cells.load_cells(D4, "android") if "absent" in c.id)
     funding = absent.session.options.get("account_funding")
+    verbs = [a.verb for a in absent.actions]
 
     assert isinstance(funding, dict), f"{absent.id}: no account_funding block"
     assert funding.get("sender_is_recipient") is True, absent.id
+    # The session and the expectation are one assertion, not two: an AFT
+    # session asked for `google_pay` measures nothing, and the pair is what
+    # this dimension is. Pinned by position, as D0 pins its re-arm cell --
+    # without it the two cells' expectations can be swapped and all of these
+    # tests stay green while both cells fail on the device.
+    assert ("expect", "no_google_pay") == (verbs[-3], absent.actions[-3].arg)
 
 
 def test_the_presence_cell_mints_an_ordinary_session():
@@ -92,5 +99,7 @@ def test_the_presence_cell_mints_an_ordinary_session():
     offered = next(
         c for c in cells.load_cells(D4, "android") if c.id.endswith("offered")
     )
+    verbs = [a.verb for a in offered.actions]
 
     assert offered.session.options == {}, offered.id
+    assert ("expect", "google_pay") == (verbs[-3], offered.actions[-3].arg)

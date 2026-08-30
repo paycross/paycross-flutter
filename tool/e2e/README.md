@@ -382,9 +382,9 @@ and it can break without a line changing in either repo. The SDK does tag its
 own button (`Modifier.testTag("google_pay_button")`), but
 `testTagsAsResourceId` is set nowhere in either repo, so Compose test tags are
 invisible to `uiautomator`; that is filed as **payment-android-sdk#26**, and
-until it lands this is the only handle there is. The node is also **not clickable** — the click
-handler lives on the `AndroidView`, not on a Compose node — so it is tapped at
-its bounds centre.
+until it lands this is the only handle there is. The node is also **not
+clickable** — the click handler lives on the `AndroidView`, not on a Compose
+node — so it is tapped at its bounds centre.
 
 `expect no_google_pay` is the one expectation that waits its answer **out**
 rather than waiting for it. Readiness is a `LaunchedEffect` that runs after the
@@ -400,15 +400,15 @@ the expected answer: on iOS a malformed or expired token is refused before
 then reports the wrong failure.
 
 The last two rows are **in the grammar but not yet executable**, and so is
-`expect saved_card`. The vocabulary is opened a dimension at a time so cell files can be written against
-a stable list; the dimension that owns a verb writes the driver method, and
-every verb already reaches a `_perform` branch that calls it. Until the method
-lands, the declaration on `Driver` raises `NotImplementedError` and a cell using
-it fails as an **authoring mistake** rather than a device fault — so no control
-check is spent proving a rig that was never in doubt. That distinction is the
-whole reason the declarations exist: a missing attribute would raise
-`AttributeError`, which the runner reads as a broken device, and two of those in
-a row abort the run.
+`expect saved_card`. The vocabulary is opened a dimension at a time so cell
+files can be written against a stable list; the dimension that owns a verb
+writes the driver method, and every verb already reaches a `_perform` branch
+that calls it. Until the method lands, the declaration on `Driver` raises
+`NotImplementedError` and a cell using it fails as an **authoring mistake**
+rather than a device fault — so no control check is spent proving a rig that
+was never in doubt. That distinction is the whole reason the declarations
+exist: a missing attribute would raise `AttributeError`, which the runner
+reads as a broken device, and two of those in a row abort the run.
 
 A verb outside the grammar, or an argument the verb does not take, is a
 different failure and stays a device-side `DriverError`: `load_cell` refuses
