@@ -303,6 +303,9 @@ void main() {
               'session_token': 'eyJhbGciOiJSUzI1NiJ9.eyJhIjoxfQ.other',
               'checkout_url':
                   'https://checkout.test-pay-cross.com/pay?session=abc&x=1',
+              // Not the one key the scrub was written around: the rule is
+              // every `_url`, the same one evidence.py applies.
+              'redirect_url': 'https://merchant.example.com/back?session=def',
               'saved_cards': [
                 {'saved_token': 'tok_live_1', 'brand': 'visa'},
               ],
@@ -318,6 +321,7 @@ void main() {
       expect(rendered, isNot(contains('eyJhbGciOiJSUzI1NiJ9')));
       expect(rendered, isNot(contains('tok_live_1')));
       expect(rendered, isNot(contains('session=abc')));
+      expect(rendered, isNot(contains('session=def')));
       expect(session['status'], 'open');
       expect((session['saved_cards'] as List).first['brand'], 'visa');
     });
@@ -459,7 +463,7 @@ void main() {
 
       expect(minted.sentBody, isNot(contains('{{timestamp}}')));
       expect(minted.sentBody, isNot(contains('{{uuid}}')));
-      expect(minted.sentBody, contains('DEMO-'));
+      expect(minted.sentBody, contains('DEMO-${clock.millisecondsSinceEpoch}'));
     });
 
     test('a body that is not an object is refused before it is sent', () async {

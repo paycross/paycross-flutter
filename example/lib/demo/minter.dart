@@ -65,7 +65,7 @@ class MintedSession {
 ///
 /// Nine lines instead of a dependency, and injectable so the 401 test can
 /// prove the replay reuses the key rather than minting a second session.
-String randomIdempotencyKey() {
+String randomUuidV4() {
   final random = Random.secure();
   final bytes = List<int>.generate(16, (_) => random.nextInt(256));
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
@@ -103,6 +103,10 @@ DateTime? jwtExpiry(String token) {
 
 /// Drops the values a merchant-API resource carries that are credentials.
 ///
+/// Every key ending `_url` is treated as carrying one, not `checkout_url`
+/// alone: the same rule `evidence.py`'s `scrub_resource` applies, and one
+/// field name is a worse thing to depend on than a suffix.
+///
 /// Keyed, never shaped. The API re-mints a `session_token` on every read of
 /// an **open** session, so a shape rule anchored on a token this app already
 /// holds would miss it -- and a partial match is worse than none, because it
@@ -113,7 +117,7 @@ Object? scrubResource(Object? value) {
       for (final entry in value.entries)
         '${entry.key}': _tokenKeys.contains(entry.key)
             ? '<redacted>'
-            : entry.key == 'checkout_url'
+            : '${entry.key}'.endsWith('_url')
             ? _withoutSessionParam(entry.value)
             : scrubResource(entry.value),
     };
@@ -144,7 +148,7 @@ class Minter {
     required Credentials credentials,
     http.Client? client,
     DateTime Function() now = DateTime.now,
-    String Function() newIdempotencyKey = randomIdempotencyKey,
+    String Function() newIdempotencyKey = randomUuidV4,
     Duration timeout = _requestTimeout,
   }) : _credentials = credentials,
        _ownsClient = client == null,
@@ -169,7 +173,7 @@ class Minter {
   /// `{{timestamp}}` and `{{uuid}}` are substituted first, the same two
   /// placeholders the Android demo's scenario bodies use.
   Future<MintedSession> mint(String body) async {
-    final sent = substitutePlaceholders(body);
+    final sent = substitutePlaceholders(body, now: _now);
     final Object? decoded;
     try {
       decoded = jsonDecode(sent);
@@ -368,9 +372,16 @@ class Minter {
 }
 
 /// Substitutes the two placeholders the preset bodies carry.
-String substitutePlaceholders(String body) => body
-    .replaceAll('{{timestamp}}', '${DateTime.now().millisecondsSinceEpoch}')
-    .replaceAll('{{uuid}}', randomIdempotencyKey());
+///
+/// Takes its clock so a minter's own `now` reaches the body: a test that
+/// pins the reference it sent needs the same stamp twice, and the editor
+/// calls this directly.
+String substitutePlaceholders(
+  String body, {
+  DateTime Function() now = DateTime.now,
+}) => body
+    .replaceAll('{{timestamp}}', '${now().millisecondsSinceEpoch}')
+    .replaceAll('{{uuid}}', randomUuidV4());
 
 bool _looksLikeHtml(String text) {
   final head = text.trimLeft().toLowerCase();
