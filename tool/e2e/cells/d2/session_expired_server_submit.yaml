@@ -2,9 +2,11 @@
 #
 # `session_expired_server` measured what happens up to `present_token` and
 # found something its own comment did not predict: on BOTH platforms the sheet
-# opens fully and stays payable. That run's `10-wait_result-failed.uix` is
-# element-for-element identical to `09-present_token.uix` -- card number,
-# expiry, CVV and a live Pay button, no error banner -- on iOS session
+# opens fully and stays payable. That run's `10-wait_result-failed.uix` still
+# carries the whole form -- card number, expiry, CVV and a live Pay button, no
+# error banner -- differing from `09-present_token.uix` by one transient
+# com.google.android.gms pay_button_loading_logo node on android and nothing
+# else -- on iOS session
 # 01a0513f-13ea-7166-8347-b478886bb5ed and android session
 # 01a05154-829e-73ad-b5eb-16ea593c9fcb, both already `expired`.
 #

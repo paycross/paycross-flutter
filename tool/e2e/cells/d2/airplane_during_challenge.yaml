@@ -9,7 +9,8 @@
 # have been swept by core's stuck-transaction recovery by the time the runner
 # reads the session; no_succeeded_txn is the half that carries the finding.
 #
-# MEASURED twice on android (2026-08-29 and 2026-08-30) and PINNED:
+# MEASURED three times on android (2026-08-29, and twice 2026-08-30) and
+# PINNED:
 # `result:failure:retry:<txn>`, over a session still `open` whose single
 # transaction is still `threeds_challenge_requested` with no threeds_result.
 # Nothing succeeded and nothing shifted, so `retry` is a defensible report

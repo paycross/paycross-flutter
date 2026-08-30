@@ -582,7 +582,9 @@ def test_a_literal_label_with_nothing_that_captures_one_is_refused(tmp_path):
     body = CONTROL.replace("  - wait_result 120\n", "  - expect no_result\n")
 
     message = expect_rejected(tmp_path, body)
-    assert "wait_result" in message
+    # Both new rules name `wait_result`, so matching that alone would pass
+    # whichever fired. Pin the clause only this one has.
+    assert "nothing would ever capture one" in message
 
 
 def test_expecting_no_label_while_still_waiting_for_one_is_refused(tmp_path):
@@ -595,7 +597,29 @@ def test_expecting_no_label_while_still_waiting_for_one_is_refused(tmp_path):
     body = body.replace("  - tap_pay\n", "  - tap_pay\n  - expect no_result\n")
 
     message = expect_rejected(tmp_path, body)
-    assert "wait_result" in message
+    assert "raises rather than answering None" in message
+
+
+def test_one_platform_wanting_silence_beside_one_wanting_a_label_is_refused(tmp_path):
+    # The divergence the replaced pairing rule used to catch, and the reason
+    # dropping it costs nothing. One action list is shared, so a cell where
+    # ios wants silence and android wants a label needs `wait_result` to be
+    # both absent (for ios, which cannot pass with one) and present (for
+    # android, which cannot capture a label without one). The two halves of
+    # the rule disagree, and the `<none>` half fires first and names ios.
+    body = CONTROL.replace(
+        "  - wait_result 120\n",
+        "  - wait_result 120\n  - expect no_result\n",
+    ) + textwrap.dedent(
+        """\
+        expected.ios:
+          label: "<none>"
+        """
+    )
+
+    message = expect_rejected(tmp_path, body)
+    assert "['ios']" in message
+    assert "raises rather than answering None" in message
 
 
 def test_a_label_captured_before_an_absence_is_asserted_is_allowed(tmp_path):

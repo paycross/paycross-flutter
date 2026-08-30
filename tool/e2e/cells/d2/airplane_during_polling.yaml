@@ -12,7 +12,8 @@
 # it is why no_succeeded_txn is `false` here: this cell asserts that the money
 # DID move, and records what Dart said about it.
 #
-# MEASURED twice on android (2026-08-29 and 2026-08-30) and PINNED:
+# MEASURED three times on android (2026-08-29, and twice 2026-08-30) and
+# PINNED:
 # `result:failure:retry:<txn>` over a COMPLETED session whose transaction is
 # `succeeded` with liability_shifted true and eci 05. Filed as
 # paycross/payment-android-sdk#25.

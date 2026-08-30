@@ -95,7 +95,7 @@ reported as one finding.
 |---|---|---|---|---|---|---|
 | `decline_do_not_honor` | `result:cancelled` | open | 1 | failed | 63 | PASS — sleep artifact confirmed |
 
-63 seconds against the 9.5 hours the first attempt took, `rearmed: true`, and
+63 seconds against the 9.8 hours the first attempt took, `rearmed: true`, and
 a complete failure block on the transaction (`code: do_not_honor`,
 `recovery: change_method`, `network_decline_code: "05"`). The first attempt
 was the sleep and nothing else.
@@ -189,7 +189,7 @@ a transaction on the session, and this one names none.
 
 That is worth stating plainly, because it cuts the other way too. **`<any>`
 silently disables that check.** `verify.match_label` captures nothing for
-`<any>` (`verify.py:107-108`), so the `transaction_id` reaching
+`<any>` (`verify.py:108-109`), so the `transaction_id` reaching
 `verify_label_transaction` at `runner.py:915` is `None`, and the function
 returns immediately. Every discovery cell in the matrix can therefore report a
 transaction id that does not exist and pass without comment — which is exactly
@@ -302,8 +302,9 @@ The cell waits out the JWT's 900 s and then reads a session that dies at
 catches is whichever the clock happened to give it. On this rig launch,
 install, token handling and evidence writing cost ~370 s on top of the action
 list, so `wait 960` leaves no headroom and the cell wins or loses on how busy
-the emulator is. It won twice and lost once: **flaky at roughly one in three,
-and flaky in the cell rather than in the SDK.** The server-side status is
+the emulator is. Counted over every run of the cell: **3 wins and 1 loss in 4
+runs — 1 in 4, and in the cell rather than in the SDK.** The loss is the android
+pin run; android ran it twice (one win, one loss) and iOS twice (two wins). The server-side status is
 incidental to the JWT-expiry path this cell measures; asserting it was
 asserting a coin flip.
 
@@ -408,6 +409,16 @@ platform's behaviour will not be surprised by the other.
 | `airplane_during_challenge` | `result:failure:retry:<txn>` | *(android only, R6)* | — | yes |
 | `airplane_during_polling` | `result:failure:retry:<txn>` | *(android only, R6)* | — | yes |
 
+**`timeout_provider_never_answers`' transaction status is a sweeper race, not a
+platform difference.** The main-pass tables above show android `failed` and iOS
+`processing`, which reads like a divergence and is not: across all four runs of
+that cell each platform produced **both** values — android `failed` then
+`processing`, iOS `processing` then `failed`. What the runner catches is
+whichever side of core's `payments:recover-stuck-transactions` sweep (every 5
+minutes, over rows older than 5 minutes) the merchant read happens to land on.
+The cell's own comment predicted this and is why it asserts no `txn_status`;
+the label, which is what the cell measures, agreed on every run.
+
 Two of these settle open questions from the plan:
 
 - **R9 holds, and holds wider than it claimed.** It predicted that on iOS a
@@ -482,10 +493,18 @@ if it is confirmed on iOS it needs its own issue on that SDK.
 action list stops at `present_token` and never types a card or taps Pay, so no
 label can arrive.
 
-What the final dump shows is the finding. On both platforms the last dump is
-element-for-element identical to the `present_token` dump — card number, expiry,
-CVV and a live Pay button (`Pay €10.00` / `Pay EUR 10,00`), with **no error
-banner** — on a session the server has already expired.
+What the final dump shows is the finding. On both platforms the last dump
+carries the whole payment form — card number, expiry, CVV and a live Pay button
+(`Pay €10.00` on Android, `Pay €10,00` on iOS), with **no error banner** — on a
+session the server has already expired.
+
+Against the `present_token` dump taken 90 s earlier, Android differs by exactly
+**one** node: `com.google.android.gms:id/pay_button_loading_logo`, a transient
+ImageView inside the Google Pay button's loading-state container, present in the
+first dump and gone in the second. Every element of the payment form itself is
+unchanged. (An earlier draft called the two dumps "element-for-element
+identical" — that came from diffing `text=` attributes only, which cannot see a
+node whose text is empty.)
 
 | | Android | iOS |
 |---|---|---|
@@ -526,12 +545,24 @@ failed`; only the code path that set it differs.
 
 2026-08-29 19:50Z → 2026-08-30 04:25Z. Both runners survived it and resumed on
 their own; two cells were in flight and each recorded a **sleep artifact, not a
-measurement** — iOS `decline_do_not_honor` (card typed ~9.5 h after its session
+measurement** — iOS `decline_do_not_honor` (card typed ~9.8 h after its session
 expired) and Android `airplane_during_challenge`. Both were rerun with
 `--only … --all` on the same evidence roots.
 
-One side effect worth carrying forward: `IosDriver` builds its console capture
-as `log show --last <seconds>s` with the window measured from app launch. Every
-cell in this run used 52–90 s except the one straddling the sleep, which used
-**35354 s** and pulled ~10 h of simulator system log into a single cell's
-`logs.txt`. A relaunch per cell, or a cap on the window, would bound it.
+One side effect worth carrying forward, stated more carefully than an earlier
+draft had it: `IosDriver` builds its console capture as
+`log show --last <seconds>s`, with the window measured from app launch rather
+than from the cell. The one straddling the sleep asked for **`--last 35354s`**
+(9.8 h).
+
+The harm that draft claimed is not real, and the measurements say so. The window
+simply tracks each cell's own duration — across this run it ranged from **10 s**
+(`error_blank_token`) to **1313 s** (`session_expired_server`), so "52–90 s
+everywhere except the sleep cell" was wrong; long cells legitimately ask for long
+windows. And the sleep cell's `logs.txt` came to **2.0 MB**, *smaller* than an
+ordinary cell's — `acs_invalid_cvv` wrote 4.8 MB in 87 seconds — because a
+sleeping simulator logs almost nothing. No 10 h of log was pulled into anything.
+
+What remains is worth fixing anyway: the window is unbounded in principle, and a
+9.8 h `log show` is a slow, fragile thing to ask of `simctl` however little it
+returns. A relaunch per cell, or a cap on the window, would bound it.

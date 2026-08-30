@@ -25,11 +25,14 @@
 # used to carry. That reading cited SessionResolution.swift:37-40 answering
 # `expired` with .failed(transactionID: resumeID, recovery: .restart) AFTER
 # presenting the sheet, and concluded a sheet appears "briefly". It appears
-# and it STAYS. On BOTH platforms the dump 90 s after present_token is
-# element-for-element identical to the present_token dump -- card number,
-# expiry, CVV, a live Pay button, no error banner -- on a session the server
-# had already expired. Neither SDK detects a server-expired session at present
-# time while the JWT is still valid.
+# and it STAYS. On BOTH platforms the dump 90 s after present_token still
+# carries the whole payment form -- card number, expiry, CVV, a live Pay
+# button, no error banner -- on a session the server had already expired.
+# Android differs from its own present_token dump by exactly ONE node, a
+# transient com.google.android.gms pay_button_loading_logo inside the Google
+# Pay button; every element of the form itself is unchanged. Neither SDK
+# detects a server-expired session at present time while the JWT is still
+# valid.
 #
 # So this cell asserts two things, in two phases, and the action list is
 # ordered to keep them apart:
@@ -58,7 +61,7 @@
 # after it, so the two are not in conflict.
 #
 # Expected duration is about 30 minutes, most of it the wait_expired. The
-# runner's budget for it is 3026 s (50.4 min) -- a hang backstop sized off
+# runner's budget for it is 2966.4 s (49.4 min) -- a hang backstop sized off
 # the action list, not a prediction, and deliberately clear of the real
 # time so a slow sweeper does not present as a hang. It is one cell and it
 # resumes like any other.
