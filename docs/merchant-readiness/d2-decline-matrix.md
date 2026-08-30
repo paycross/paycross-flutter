@@ -299,13 +299,20 @@ three, and flaky in the cell rather than in the SDK.**
 The interleaved control passed straight afterwards, so the rig was sound; this
 is the cell's arithmetic, not the device.
 
-**Recommended fix, not applied here** (it needs another ~25 minute run to
-prove, and this task is out of device time): drop `session_status: open` from
-the expectation. It is not the assertion that carries the cell — `txn_count: 0`
-already tells `session_expired_jwt` apart from `session_expired_server`, which
-holds one transaction, and the empty `<txn>` in the pinned label says the same
-thing a second way. `session_status` only restates which clock ran out first,
-which is precisely the thing the rig cannot deliver reliably.
+**Fixed:** `session_status: open` is no longer asserted. It was not the
+assertion carrying the cell — `txn_count: 0` already tells `session_expired_jwt`
+apart from `session_expired_server`, which holds one transaction, and the empty
+`<txn>` in the pinned label says the same thing a second way. `session_status`
+only restated which clock ran out first, which is precisely what the rig cannot
+deliver on time, so asserting it made a green cell depend on how busy the
+emulator was.
+
+Proved by replay rather than by another 25-minute run: the relaxed cell was run
+through the real `verify.match_label`, `verify.verify_merchant` and
+`verify.verify_label_transaction` against **all four** recorded
+`session_expired_jwt` runs. All four pass, including the one that failed — and
+the three that read `open` are not weakened by the change, because they never
+depended on the assertion being right, only on it being lucky.
 
 `airplane_during_polling`'s pin **asserts a bug on purpose.** Its merchant
 assertions already say the money moved and liability shifted; the label now
