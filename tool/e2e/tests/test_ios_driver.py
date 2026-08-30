@@ -2116,3 +2116,59 @@ def test_dont_keep_activities_refuses_and_says_why():
     message = str(excinfo.value)
     assert "Android developer option" in message
     assert "platforms: [android]" in message
+
+
+def test_the_unified_log_window_is_capped():
+    # Measured in D2: a cell whose run straddled a host sleep asked simctl for
+    # `--last 35354s` -- 9.8 hours. The window is anchored to `launch()`, so
+    # it tracks the cell's own duration and normally that is fine; what it has
+    # no bound on is the host clock jumping. The harm is asking simctl for a
+    # 9.8-hour window at all, which is slow and fragile, not the volume that
+    # comes back -- a sleeping simulator logs almost nothing.
+    ssh = FakeSsh(console_response(), "log output\n")
+    slept = datetime.now(timezone.utc) - timedelta(seconds=35354)
+
+    launched(ssh).logs_since(slept)
+
+    assert f"--last {ios.LOG_WINDOW_CAP_SECONDS}s" in ssh.calls[1]
+
+
+def test_the_cap_clears_the_longest_cell_the_matrix_can_run():
+    # It must never truncate a cell that really ran that long. The widest
+    # per-cell budget in the matrix is session_expired_server's ~3026 s.
+    assert ios.LOG_WINDOW_CAP_SECONDS > 3026
+
+
+def test_a_capped_window_says_so_in_the_evidence_header():
+    # The header names the number actually asked for, so nobody reading the
+    # log later measures the cell's duration from it.
+    ssh = FakeSsh(console_response(), "log output\n")
+    slept = datetime.now(timezone.utc) - timedelta(seconds=35354)
+
+    text = launched(ssh).logs_since(slept)
+
+    assert f"--last {ios.LOG_WINDOW_CAP_SECONDS}s" in text
+    assert "capped" in text
+
+
+def test_an_ordinary_cell_is_not_capped_and_says_nothing_about_it():
+    ssh = FakeSsh(console_response(), "log output\n")
+    when = datetime.now(timezone.utc) - timedelta(seconds=90)
+
+    text = launched(ssh).logs_since(when)
+
+    assert "--last 95s" in text
+    assert "capped" not in text
+
+
+def test_the_console_half_is_never_capped():
+    # The cap is on the unified log alone. The console window is a byte offset
+    # from this launch, and `relaunch()` deliberately keeps that mark so a cell
+    # that relaunches halfway keeps its own criterion-3 evidence. Bounding the
+    # unified window must not undo that.
+    ssh = FakeSsh(console_response(), "log output\n")
+    slept = datetime.now(timezone.utc) - timedelta(seconds=35354)
+
+    launched(ssh).logs_since(slept)
+
+    assert f"tail -c +{CONSOLE_MARK + 1}" in ssh.calls[0]

@@ -125,6 +125,29 @@ TOKEN_READBACK_SECONDS = 10
 #: up. Named rather than inline because the tests reach past them.
 SCREEN_TIMEOUT_SECONDS = 60
 
+#: The widest `log show --last <n>s` window this driver will ask for.
+#:
+#: The window is anchored to `launch()`, so it normally tracks the cell's own
+#: duration -- measured across a D2 run it ranged from 10 s to 1313 s. What it
+#: has no bound on is the HOST CLOCK JUMPING: one D2 cell straddled a WSL
+#: sleep and asked simctl for `--last 35354s`, 9.8 hours.
+#:
+#: The harm is asking for the window at all, not what comes back. A sleeping
+#: simulator logs almost nothing -- that cell's `logs.txt` came to 2.0 MB,
+#: SMALLER than an ordinary cell's 4.8 MB -- so the earlier "hours of log in
+#: one file" reading was measured and is false. What is true is that a
+#: 9.8-hour `log show` is slow and fragile to ask of simctl however little it
+#: returns.
+#:
+#: An hour, because it has to clear the longest cell the matrix can legitimately
+#: run and stop well short of a clock jump: the widest per-cell budget is
+#: `session_expired_server`'s ~3026 s, so an hour is above every real cell with
+#: room to spare. Capping bounds the unified log ONLY. The console half is a
+#: byte offset from this launch and is never capped, because `relaunch()`
+#: deliberately keeps that mark so a cell that relaunches halfway keeps its own
+#: criterion-3 evidence.
+LOG_WINDOW_CAP_SECONDS = 3600
+
 #: How long the previous cell's console capture is given to die, polled on the
 #: Mac so it costs one round trip rather than one per look.
 _CONSOLE_STOP_TRIES = 25
@@ -1263,7 +1286,8 @@ class IosDriver(Driver):
                 "no console mark; call launch() first, or the window would "
                 "start at a previous cell's output"
             )
-        seconds = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
+        elapsed = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
+        seconds = min(elapsed, LOG_WINDOW_CAP_SECONDS)
         # Complaints are kept rather than discarded: a `tail` that found no file
         # and a `log show` that refused both read as a quiet run otherwise. The
         # size is therefore asked for separately -- "No such file or directory"
@@ -1299,9 +1323,14 @@ class IosDriver(Driver):
             f"xcrun simctl spawn {self._quoted_udid} log show --last {seconds}s "
             "--info --debug --predicate 'process == \"Runner\"' 2>&1"
         )
+        # The header names the number actually asked for, and says when that
+        # is not the cell's own elapsed time -- otherwise whoever reads the
+        # log later measures the cell's duration from a capped window.
+        capped = f" (capped from {elapsed}s)" if seconds < elapsed else ""
         return (
             f"--- app console (simctl launch --console-pty), since this launch ---\n"
             f"{console}\n"
-            f'--- log show --last {seconds}s, predicate process == "Runner" ---\n'
+            f"--- log show --last {seconds}s{capped}, "
+            f'predicate process == "Runner" ---\n'
             f"{unified}"
         )
