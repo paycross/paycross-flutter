@@ -124,18 +124,21 @@ class _DemoHomeState extends State<DemoHome> {
   /// rebuilt the tree under an open run would be a worse bug than this one.
   bool _busy = false;
 
-  /// Says a link was dropped, on the channel a malformed link already uses.
+  /// Says something on the channel a malformed link already uses.
   ///
   /// Silence reads as a broken build: the phone is in somebody's hand and the
-  /// link they just fired did nothing they can see. The wording names the way
-  /// out rather than the flag that refused it.
-  void _refuse(BuildContext context) {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(
-        content: Text('Link ignored — close the open screen first.'),
-      ),
-    );
+  /// link they just fired did nothing they can see. What is said names the
+  /// way out, or a type -- never a platform message, which can carry the URL
+  /// that failed.
+  void _say(BuildContext context, String message) {
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text(message)));
   }
+
+  /// The one refusal with a way out to name: something is over Home.
+  void _refuse(BuildContext context) =>
+      _say(context, 'Link ignored — close the open screen first.');
 
   Future<void> _run(BuildContext context, Preset preset) async {
     if (_busy) {
@@ -158,6 +161,13 @@ class _DemoHomeState extends State<DemoHome> {
         store: widget.store,
         mintWith: widget.mintWith,
       );
+    } catch (problem) {
+      // A link is fire-and-forget -- `onRun` returns void -- so anything that
+      // escapes here has no owner and lands as an async error with no screen
+      // attached. Only the type, for the reason `_say` gives.
+      if (context.mounted) {
+        _say(context, 'Could not start the run: ${problem.runtimeType}');
+      }
     } finally {
       _busy = false;
     }

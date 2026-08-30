@@ -85,6 +85,58 @@ void main() {
       expect((parsed as DeepLinkRejected).reason, contains('browser'));
     });
 
+    test('an arrow preset is reachable by its dashed slug', () {
+      final parsed = parseDeepLink(
+        Uri.parse('paycross-flutter-demo://run?preset=3ds-challenge-approve'),
+      );
+
+      expect(parsed, isA<DeepLinkRun>());
+      expect(
+        (parsed as DeepLinkRun).preset.name,
+        '3DS challenge \u2192 approve',
+      );
+    });
+
+    test('an arrow preset survives being percent-encoded by hand', () {
+      // U+2192 is E2 86 92 in UTF-8. This is what comes out of a shell when
+      // somebody pastes the name off the screen, and it has to reach the
+      // same preset the slug does.
+      final parsed = parseDeepLink(
+        Uri.parse(
+          'paycross-flutter-demo://run'
+          '?preset=3DS%20challenge%20%E2%86%92%20approve',
+        ),
+      );
+
+      expect(parsed, isA<DeepLinkRun>());
+      expect(
+        (parsed as DeepLinkRun).preset.name,
+        '3DS challenge \u2192 approve',
+      );
+    });
+
+    test('every preset is reachable by its slug as well as its name', () {
+      for (final preset in demoPresets) {
+        final uri = Uri(
+          scheme: demoScheme,
+          host: 'run',
+          queryParameters: {'preset': presetSlug(preset.name)},
+        );
+        final parsed = parseDeepLink(uri);
+
+        expect(parsed, isA<DeepLinkRun>(), reason: preset.name);
+        expect((parsed as DeepLinkRun).preset.name, preset.name);
+      }
+    });
+
+    test('no two presets share a slug', () {
+      // Two that did would make one of them unreachable by slug, and which
+      // one won would depend on the order of the list.
+      final slugs = [for (final p in demoPresets) presetSlug(p.name)];
+
+      expect(slugs.toSet(), hasLength(slugs.length));
+    });
+
     test('every preset is reachable by its own name', () {
       for (final preset in demoPresets) {
         final uri = Uri(
@@ -175,6 +227,37 @@ void main() {
       expect(tester.takeException(), isNull);
 
       // Let the snack bar time itself out; a pending timer fails the test.
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('a stream error is reported rather than thrown', (
+      tester,
+    ) async {
+      final links = StreamController<Uri>();
+      addTearDown(links.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DeepLinkListener(
+            links: links.stream,
+            onRun: (_) {},
+            child: const Scaffold(body: SizedBox.shrink()),
+          ),
+        ),
+      );
+
+      // app_links forwards whatever the native EventChannel raises. With no
+      // onError this is an async error with nobody to own it.
+      links.addError(StateError('the platform said no'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not read the link: StateError'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      // The message itself stays off the screen: it is native text and the
+      // one thing on this path that came from outside the app.
+      expect(find.textContaining('the platform said no'), findsNothing);
+
       await tester.pump(const Duration(seconds: 5));
       await tester.pumpAndSettle();
     });

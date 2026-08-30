@@ -42,6 +42,18 @@ const Duration _credentialReadTimeout = Duration(seconds: 5);
 /// popped instead, no run could ever be started from the screen the last one
 /// pushed, and a widget test that pushes without popping would leak it into
 /// the next test.
+///
+/// Four things guard a run between them, and this is the only one both
+/// entrances share:
+///
+/// - This flag: the credential read, whichever entrance is doing the reading.
+/// - `_HomeScreenState._busy`: one tile against another, and the visible
+///   half -- every tile goes dead while a run is being set up.
+/// - `_DemoHomeState._busy`: one link against another, for as long as the run
+///   that link started is still on screen.
+/// - `_DemoHomeState`'s `ModalRoute.isCurrent` check: a link against anything
+///   already pushed over Home, a run a tile started included -- which is the
+///   one case none of the other three can see.
 @visibleForTesting
 bool runInFlight = false;
 

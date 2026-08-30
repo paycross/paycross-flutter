@@ -28,6 +28,24 @@ class _RecordingHost extends g.PayCrossHostApi {
       lastConfiguration = configuration;
 }
 
+/// A store that answers once and then starts failing, which is what a device
+/// locking mid-session looks like: the profile strip's read at launch gets
+/// through, and the read a run makes afterwards does not.
+///
+/// It breaks [SecretStore]'s own "every read is guarded" promise on purpose.
+/// Nothing in the app does this today -- the point is that a link is
+/// fire-and-forget, so an escape from `runPreset` would have no owner.
+class _ThrowsAfterFirstRead extends SecretStore {
+  int reads = 0;
+
+  @override
+  Future<Credentials?> read() async {
+    reads++;
+    if (reads > 1) throw StateError('the keychain locked');
+    return null;
+  }
+}
+
 /// A store whose reads wait on [gate], so a link can arrive while a tile tap
 /// is still reading -- the window the two entrances share.
 class _SlowBackend implements SecretBackend {
@@ -237,6 +255,33 @@ void main() {
     );
 
     await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a run that throws is reported rather than left unhandled', (
+    tester,
+  ) async {
+    final links = StreamController<Uri>();
+    addTearDown(links.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: app.DemoHome(links: links.stream, store: _ThrowsAfterFirstRead()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    links.add(
+      Uri.parse('paycross-flutter-demo://run?preset=Frictionless%203DS'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Could not start the run: StateError'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    // And the app-wide guard did not survive the throw.
+    expect(runInFlight, isFalse);
+
+    await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
   });
 
