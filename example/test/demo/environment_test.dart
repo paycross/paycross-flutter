@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/endpoints.dart';
@@ -15,6 +17,14 @@ class _RecordingConfigure {
   final List<String?> merchantIds = <String?>[];
   bool refuse = false;
 
+  /// Runs inside the call, before the caller's `await` resumes. This is the
+  /// only way to reach the window a switch is open across.
+  void Function()? duringTheCall;
+
+  /// Parks the call until it is completed, so a second switch can be
+  /// attempted while the first is still in flight.
+  Completer<void>? hold;
+
   Future<void> call({
     required PayCrossEnvironment environment,
     String? googlePayMerchantId,
@@ -22,6 +32,8 @@ class _RecordingConfigure {
     if (refuse) throw StateError('a payment is in flight');
     calls.add(environment);
     merchantIds.add(googlePayMerchantId);
+    duringTheCall?.call();
+    if (hold != null) await hold!.future;
   }
 }
 
@@ -169,6 +181,74 @@ void main() {
     // production.
     expect(heard, 3);
   });
+  test(
+    'credentials armed while leaving Live do not survive the exit',
+    () async {
+      // The window is real: leaveLive drops the credentials, then awaits the
+      // SDK, and until that await comes back the state still says Live. A tap
+      // on the button that hands over credentials lands in that window, and
+      // what it armed used to outlive the exit -- production credentials in
+      // memory, in Test, under no banner.
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(configure: configure.call);
+      await state.enterLive('LIVE');
+      configure.duringTheCall = () => state.useForThisSession(_live);
+
+      expect(await state.leaveLive(), isNull);
+
+      expect(state.environment, DemoEnvironment.test);
+      expect(state.liveCredentials, isNull);
+
+      // And re-entering Live must not resurrect them. Hiding them behind the
+      // environment is not enough on its own: without dropping the reference
+      // too, the next enterLive hands back a credential the human already
+      // asked to forget.
+      configure.duringTheCall = null;
+      await state.enterLive('LIVE');
+      expect(state.liveCredentials, isNull);
+    },
+  );
+
+  test('a second switch while one is in flight is refused', () async {
+    // Two switches racing end with the banner and the SDK disagreeing: the
+    // last configure to land decides where payments go, the last assignment
+    // to land decides what the screen says, and nothing makes those the same
+    // call.
+    final configure = _RecordingConfigure();
+    final state = DemoEnvironmentState(configure: configure.call);
+    configure.hold = Completer<void>();
+
+    final entering = state.enterLive('LIVE');
+    final refused = await state.leaveLive();
+
+    expect(refused, isNotNull);
+
+    configure.hold!.complete();
+    expect(await entering, isNull);
+
+    expect(state.isLive, isTrue);
+    // One call, not two: the refused switch never reached the SDK.
+    expect(configure.calls, [PayCrossEnvironment.production]);
+  });
+
+  test('a refused switch does not touch the credentials', () async {
+    // leaveLive drops the credentials before it does anything else, so the
+    // guard has to come first or a refused exit would still forget them.
+    final configure = _RecordingConfigure();
+    final state = DemoEnvironmentState(configure: configure.call);
+    await state.enterLive('LIVE');
+    state.useForThisSession(_live);
+    configure.hold = Completer<void>();
+
+    final entering = state.enterLive('LIVE');
+    expect(await state.leaveLive(), isNotNull);
+
+    expect(state.liveCredentials?.clientId, 'live-id');
+
+    configure.hold!.complete();
+    await entering;
+  });
+
   group('LiveModeScope', () {
     testWidgets('Test shows no banner', (tester) async {
       await tester.pumpWidget(

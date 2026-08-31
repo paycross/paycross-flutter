@@ -18,6 +18,12 @@ enum DemoEnvironment { test, live }
 /// the other side of this one spends money.
 const String liveConfirmationWord = 'LIVE';
 
+/// What a switch answers when another one has not finished yet.
+///
+/// An ordinary refusal string rather than an exception, so every caller
+/// renders it the same way it renders the wrong-word message.
+const String switchAlreadyInProgress = 'A switch is already in progress.';
+
 /// Points the native SDK at an environment. Injected so a widget test never
 /// reaches a platform channel.
 typedef ConfigureSdk =
@@ -61,12 +67,29 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// Pay button that stops appearing until the app is relaunched.
   final String? googlePayMerchantId;
 
+  /// True while a switch is waiting on the SDK.
+  ///
+  /// One switch at a time. Two overlapping calls each re-point the SDK and
+  /// each assign the environment, and nothing makes the last configure to
+  /// land and the last assignment to land the same call -- so the banner
+  /// ends up describing an environment the SDK is not in.
+  bool _switching = false;
+
   DemoEnvironment _environment = DemoEnvironment.test;
   DemoEnvironment get environment => _environment;
   bool get isLive => _environment == DemoEnvironment.live;
 
   Credentials? _liveCredentials;
-  Credentials? get liveCredentials => _liveCredentials;
+
+  /// The production credentials, and only while the app is actually in Live.
+  ///
+  /// Gated on the environment rather than returning the field, because the
+  /// field and the environment change at different moments: [leaveLive]
+  /// awaits the SDK between dropping one and flipping the other, and
+  /// [useForThisSession] is reachable from a button across that await. The
+  /// gate makes "Test never has production credentials" true of every path
+  /// through this class, including ones nobody has written yet.
+  Credentials? get liveCredentials => isLive ? _liveCredentials : null;
 
   /// The pair a mint in this environment must use.
   ///
@@ -81,9 +104,11 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// lie, and it is the kind that ends with somebody trusting a green
   /// result that never touched production.
   Future<String?> enterLive(String typed) async {
+    if (_switching) return switchAlreadyInProgress;
     if (typed.trim() != liveConfirmationWord) {
       return 'Type $liveConfirmationWord exactly to switch to production.';
     }
+    _switching = true;
     try {
       await configure(
         environment: PayCrossEnvironment.production,
@@ -96,6 +121,8 @@ class DemoEnvironmentState extends ChangeNotifier {
       // Only the type. A platform exception's message is the one thing on
       // this path that came from outside the app.
       return 'The SDK would not switch to production: ${problem.runtimeType}';
+    } finally {
+      _switching = false;
     }
     _environment = DemoEnvironment.live;
     notifyListeners();
@@ -128,7 +155,11 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// environment flips only on proof, for the same reason [enterLive]
   /// flips only on proof.
   Future<String?> leaveLive() async {
+    // Before the credentials are touched: a refused exit must not be an exit
+    // that forgot them anyway.
+    if (_switching) return switchAlreadyInProgress;
     _liveCredentials = null;
+    _switching = true;
     try {
       await configure(
         environment: PayCrossEnvironment.sandbox,
@@ -138,7 +169,15 @@ class DemoEnvironmentState extends ChangeNotifier {
       notifyListeners();
       return 'The credentials are forgotten, but the SDK would not switch '
           'back: ${problem.runtimeType}. Still in Live — restart the app.';
+    } finally {
+      _switching = false;
     }
+    // Again, and this is not the same drop as the one above. The app was
+    // still in Live across that await, so a button could have armed a fresh
+    // production credential in the window. Dropping the reference is what
+    // stops it being handed back the next time Live is entered; the getter
+    // only stops it being read in Test.
+    _liveCredentials = null;
     _environment = DemoEnvironment.test;
     notifyListeners();
     return null;
