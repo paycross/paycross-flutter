@@ -185,12 +185,14 @@ class Minter {
     // one key rather than minting a second session.
     String Function() newIdempotencyKey = randomUuidV4,
     Duration timeout = _requestTimeout,
+    Endpoints endpoints = testEndpoints,
   }) : _credentials = credentials,
        _ownsClient = client == null,
        _client = client ?? http.Client(),
        _now = now,
        _newIdempotencyKey = newIdempotencyKey,
-       _timeout = timeout;
+       _timeout = timeout,
+       _endpoints = endpoints;
 
   final Credentials _credentials;
   final http.Client _client;
@@ -198,6 +200,16 @@ class Minter {
   final DateTime Function() _now;
   final String Function() _newIdempotencyKey;
   final Duration _timeout;
+
+  /// Which environment this minter talks to. Test unless told otherwise.
+  ///
+  /// A default rather than a required argument because every call site but
+  /// one is Test, and because the guarantee that matters is not here: the
+  /// Live path takes its pair from `DemoEnvironmentState.endpoints`, which
+  /// is derived from the same field the red banner renders. The endpoints a
+  /// Live run mints against therefore cannot disagree with what the screen
+  /// says they are.
+  final Endpoints _endpoints;
 
   String? _accessToken;
   DateTime _accessTokenDeadline = DateTime.utc(1970);
@@ -223,7 +235,7 @@ class Minter {
 
     final raw = await _send(
       'POST',
-      Uri.parse(sessionsUrl),
+      Uri.parse(_endpoints.sessionsUrl),
       body: sent,
       extraHeaders: {
         'Content-Type': 'application/json',
@@ -244,7 +256,7 @@ class Minter {
   /// The merchant-side truth for one session, scrubbed before it is
   /// returned. Nothing above this method ever sees a live token.
   Future<Map<String, Object?>> read(String sessionId) async {
-    final raw = await _send('GET', Uri.parse('$sessionsUrl/$sessionId'));
+    final raw = await _send('GET', Uri.parse('${_endpoints.sessionsUrl}/$sessionId'));
     return scrubResource(raw)! as Map<String, Object?>;
   }
 
@@ -337,7 +349,7 @@ class Minter {
     final basic = base64.encode(
       utf8.encode('${_credentials.clientId}:${_credentials.clientSecret}'),
     );
-    final url = Uri.parse(tokenUrl);
+    final url = Uri.parse(_endpoints.tokenUrl);
     final request = http.Request('POST', url)
       ..headers.addAll({
         'User-Agent': userAgent,

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:paycross_demo/demo/endpoints.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 
@@ -582,6 +583,47 @@ void main() {
           ),
         ),
       );
+    });
+  });
+  group('the environment a minter is pointed at', () {
+    MockClient happyPath() => recording((request, index) {
+      if (request.url.path.endsWith('/token')) {
+        return tokenResponse(clock.add(const Duration(hours: 1)));
+      }
+      return sessionResponse();
+    });
+
+    test('a Live minter asks the Live hosts and no others', () async {
+      final minter = Minter(
+        credentials: _credentials,
+        client: happyPath(),
+        now: () => clock,
+        newIdempotencyKey: () => 'idem',
+        endpoints: liveEndpoints,
+      );
+
+      await minter.mint('{"amount":100}');
+
+      // Compared against the constants rather than against a hostname
+      // written here: a test that spelled production out would put that
+      // string in the repository just as surely as the code would.
+      expect(sent.map((request) => request.url), [
+        Uri.parse(liveEndpoints.tokenUrl),
+        Uri.parse(liveEndpoints.sessionsUrl),
+      ]);
+    });
+
+    test('a minter told nothing asks the Test hosts', () async {
+      // The default every existing call site relies on. Live is opt-in, at
+      // the one seam that opts in.
+      final minter = minterOver(happyPath());
+
+      await minter.mint('{"amount":100}');
+
+      expect(sent.map((request) => request.url), [
+        Uri.parse(testEndpoints.tokenUrl),
+        Uri.parse(testEndpoints.sessionsUrl),
+      ]);
     });
   });
 }
