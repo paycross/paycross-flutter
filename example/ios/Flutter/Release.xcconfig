@@ -1,2 +1,32 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
 #include "Generated.xcconfig"
+
+// Signing for the App Store archive.
+//
+// This file is the base configuration for BOTH the Runner target's Release and
+// its Profile configuration, so nothing here may be unconditional: manual
+// signing with an App Store profile cannot install on a device, and Profile is
+// what `flutter run --profile` builds. Each setting is therefore indirected
+// through $(CONFIGURATION) and defined only for the configuration that wants
+// it, which keeps Debug and Profile on automatic signing.
+//
+// Manual, rather than automatic, because `xcodebuild archive` with automatic
+// signing always provisions an *iOS App Development* profile, and Apple will
+// not issue one to a team with no registered devices. This team has none and
+// needs none: an App Store profile requires no device. Passing these on the
+// xcodebuild command line instead is not an option -- command-line build
+// settings are global and every pod and Swift package target then fails with
+// "does not support provisioning profiles".
+CODE_SIGN_STYLE_Debug = Automatic
+CODE_SIGN_STYLE_Profile = Automatic
+CODE_SIGN_STYLE_Release = Manual
+CODE_SIGN_STYLE = $(CODE_SIGN_STYLE_$(CONFIGURATION))
+
+CODE_SIGN_IDENTITY_Release = iPhone Distribution
+CODE_SIGN_IDENTITY[sdk=iphoneos*] = $(CODE_SIGN_IDENTITY_$(CONFIGURATION))
+
+DEVELOPMENT_TEAM_Release = 53P7Y4G6TM
+DEVELOPMENT_TEAM = $(DEVELOPMENT_TEAM_$(CONFIGURATION))
+
+PROVISIONING_PROFILE_SPECIFIER_Release = PayCross Demo App Store
+PROVISIONING_PROFILE_SPECIFIER = $(PROVISIONING_PROFILE_SPECIFIER_$(CONFIGURATION))

@@ -2299,56 +2299,52 @@ def test_expect_acs_observes_the_page_and_taps_nothing(tmp_path):
 
 
 def test_the_expect_table_agrees_with_the_drivers_own_defaults():
-    """Every predicate that carries a literal default must match the table.
-
-    `runner` imports `drivers`, so a driver cannot import back: each keeps its
-    own literal default and `_observe` always passes `timeout=` explicitly.
-    That makes the table the value really used and the driver defaults a
-    courtesy to a direct caller -- but the pair must stay equal or a failure
-    message names a number no wait ever spent.
-
-    Swept rather than spelled out one predicate at a time (Task 4's
-    hand-forward, now that a second predicate carries a default). Three things
-    are deliberately skipped, and skipping them is what lets the sweep be
-    unconditional:
-
-    * `Driver`'s own declarations, which raise before a timeout could matter
-      and carry no default at all;
-    * a predicate a dimension has not landed yet, which is still the inherited
-      declaration -- so this test grows by itself as D3 and D4 land theirs,
-      rather than needing an edit each time;
-    * `wait_rearmed` and `wait_no_label`, which take the deadline without a
-      default by design -- and `no_result` reaches the second of those, so it
-      is not even spelled `wait_no_result`. The convention holds for the rest.
-
-    A sweep over all of them would read `Parameter.empty` and fail on the ones
-    that are correct.
-    """
+    # `runner` imports `drivers`, so a driver cannot import back: each keeps
+    # its own literal default and `_observe` always passes `timeout=`
+    # explicitly. That makes this table the value really used and the driver
+    # defaults a courtesy to a direct caller -- but the pair must stay equal
+    # or a message would name a number no wait ever spent.
+    #
+    # Swept from the table rather than named one predicate at a time, so an
+    # expectation that arrives with a mismatched default is caught by the test
+    # that already exists instead of by the one nobody remembered to write.
+    #
+    # Only a LITERAL default is compared, and two kinds of signature are
+    # skipped on purpose. `Driver`'s own declarations carry no default --
+    # they raise before a timeout could matter -- and neither do the iOS
+    # overrides that refuse D4; `rearmed` and `no_result` are served by
+    # `wait_rearmed` and `wait_no_label`, which take the deadline without one
+    # by design, and `wait_no_label` is not even spelled `wait_no_result`. A
+    # sweep that insisted on all six would fail on three signatures that are
+    # right.
+    #
+    # Both skips are silent, which is how a sweep ends up checking nothing at
+    # all -- so `checked` is asserted against the pairs that must be in it.
     import inspect
 
     from tool.e2e.drivers.android import AndroidDriver
-    from tool.e2e.drivers.base import Driver
     from tool.e2e.drivers.ios import IosDriver
 
-    checked = []
+    checked = set()
     for driver_class in (AndroidDriver, IosDriver):
-        for what, seconds in runner.EXPECT_TIMEOUT_SECONDS.items():
-            name = f"wait_{what}"
-            method = getattr(driver_class, name, None)
-            if method is None or method is getattr(Driver, name, None):
-                continue  # not landed on this platform yet
-            default = inspect.signature(method).parameters["timeout"].default
-            if default is inspect.Parameter.empty:
-                continue  # takes the deadline by design
-            assert default == seconds, f"{driver_class.__name__}.{name}"
-            checked.append(f"{driver_class.__name__}.{name}")
+        for expectation, seconds in runner.EXPECT_TIMEOUT_SECONDS.items():
+            method = getattr(driver_class, f"wait_{expectation}", None)
+            if method is None:
+                continue
+            timeout = inspect.signature(method).parameters.get("timeout")
+            if timeout is None or timeout.default is inspect.Parameter.empty:
+                continue
+            assert timeout.default == seconds, (driver_class, expectation)
+            checked.add((driver_class.__name__, expectation))
 
-    # The sweep must actually be sweeping. Without this a rename of the
-    # `wait_<what>` convention would skip every predicate and pass silently,
-    # which is the one way a test like this fails to do its job.
-    assert "AndroidDriver.wait_acs" in checked
-    assert "IosDriver.wait_acs" in checked
-    assert "AndroidDriver.wait_saved_card" in checked
+    assert checked == {
+        ("AndroidDriver", "acs"),
+        ("AndroidDriver", "google_pay"),
+        ("AndroidDriver", "no_google_pay"),
+        ("AndroidDriver", "saved_card"),
+        ("IosDriver", "acs"),
+        ("IosDriver", "saved_card"),
+    }
 
 
 # --- D2: the new action branches --------------------------------------------

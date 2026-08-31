@@ -17,6 +17,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import 'endpoints.dart';
+import 'presets.dart';
 import 'secrets.dart';
 
 /// How early to replace a bearer token, and the one constant here with a
@@ -164,12 +165,7 @@ Future<String> mintThrowawaySession(
 }) async {
   final minter = Minter(credentials: credentials, client: client);
   try {
-    final minted = await minter.mint(
-      '{"amount":100,"currency":"EUR","transaction_type":"sale",'
-      '"merchant_reference":"DEMO-VERIFY-{{timestamp}}",'
-      '"return_url":"https://merchant.example.com/payment/return",'
-      '"success_url":"https://merchant.example.com/payment/success"}',
-    );
+    final minted = await minter.mint(verifyProbeBody);
     return 'Minted session ${minted.id}.';
   } finally {
     minter.close();

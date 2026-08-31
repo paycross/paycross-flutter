@@ -1016,6 +1016,23 @@ class IosDriver(Driver):
             "host's network, and cutting that needs sudo or the GUI"
         )
 
+    # D4's whole vocabulary, refused here rather than left to `Driver`'s
+    # declaration for the same reason `airplane` is: the refusal names this
+    # platform's own reason. There is no wallet in the iOS SDK at all, and
+    # Apple Pay is an explicit campaign non-goal -- so every D4 cell is
+    # `platforms: [android]`, and a cell that forgets is an authoring fault
+    # the runner spends no control check on.
+    _NO_WALLET = "Google Pay is Android-only; the iOS SDK has no wallet yet"
+
+    def tap_google_pay(self) -> None:
+        raise NotImplementedError(self._NO_WALLET)
+
+    def wait_google_pay(self, timeout: float) -> bool:
+        raise NotImplementedError(self._NO_WALLET)
+
+    def wait_no_google_pay(self, timeout: float) -> bool:
+        raise NotImplementedError(self._NO_WALLET)
+
     def type_card(self, card: Card) -> None:
         for name, value in (
             (CARDHOLDER, card.holder),
