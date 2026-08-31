@@ -107,7 +107,28 @@ CARD_NUMBER = "Card number input"
 EXPIRY = "Expiry date input"
 CVV = "CVV input"
 CARDHOLDER = "Cardholder name input"
-ACS_TITLE = "Sandbox 3DS Challenge"
+#: How the sandbox's challenge page is recognised. More than one marker, and
+#: both of them text the page RENDERS, because this detector has already been
+#: broken once by a change that was nobody's fault here.
+#:
+#: `payment-sandbox` 687bf4e ("Redesign challenge page to match payment page
+#: design system") replaced `<strong>Sandbox 3DS Challenge</strong>` with
+#: `<div class="sandbox-badge">Sandbox</div>`. The phrase survives only in
+#: `<title>`, which never reaches an accessibility tree -- a WebView exposes
+#: rendered DOM text, not the document title. TEST was redeployed onto that
+#: build in the middle of this campaign: the page carried the old text at
+#: 22:07Z and did not at 11:41Z the next morning, and every android cell that
+#: waits for a challenge failed in between while the frictionless control
+#: passed five times.
+#:
+#: `AUTHENTICATION OUTCOMES` is the section heading above the outcome buttons
+#: and is present in both designs. The old phrase is kept because deployments
+#: lag, and a detector that knew only the new wording would break every rig
+#: still serving the old page -- the same mistake in the mirror.
+#:
+#: A bare `Sandbox` is deliberately NOT here: it is the badge text on the new
+#: design and far too generic to be evidence of anything.
+ACS_MARKERS = ("AUTHENTICATION OUTCOMES", "Sandbox 3DS Challenge")
 CANCEL_TITLE = "Cancel Payment?"
 CANCEL_CONFIRM = "Yes, Cancel"
 
@@ -649,10 +670,24 @@ class AndroidDriver(Driver):
         return label
 
     def wait_acs(self, timeout: float = 120) -> bool:
-        """Waits for the sandbox ACS page without answering it."""
-        self._find(
-            tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=timeout
+        """Waits for the sandbox ACS page without answering it.
+
+        Any of `ACS_MARKERS` identifies it. See that constant for why this is
+        a list rather than the single title it used to be.
+        """
+        found = self._poll(
+            lambda nodes: next(
+                (n for n in nodes if n.text in ACS_MARKERS),
+                None,
+            ),
+            timeout,
+            2,
         )
+        if found is None:
+            raise DriverError(
+                f"the sandbox ACS page never appeared within {timeout}s; looked "
+                f"for any of {list(ACS_MARKERS)}"
+            )
         return True
 
     def acs(self, outcome: str) -> None:

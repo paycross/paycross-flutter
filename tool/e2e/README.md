@@ -477,6 +477,24 @@ character class is narrow because Android hands the value to `input text` on a
 device shell that re-splits and expands whatever it is given, and a mangled
 literal would leave the cell measuring a string it never sent.
 
+**The challenge page is recognised by `ACS_MARKERS`, not by one title, and
+that is a scar rather than a design.** `payment-sandbox` 687bf4e redesigned the
+page, replacing `<strong>Sandbox 3DS Challenge</strong>` with a
+`<div class="sandbox-badge">Sandbox</div>`; the old phrase survives only in
+`<title>`, which never reaches an accessibility tree because a WebView exposes
+rendered DOM text and not the document title. TEST was redeployed onto that
+build **in the middle of this campaign** — the page carried the old text at
+22:07Z and did not at 11:41Z the next morning — and every android cell waiting
+for a challenge failed in between while the frictionless control passed five
+times interleaved with them. iOS was untouched, because it matches
+`threeDSCancel`, an accessibility identifier on the SDK's own cancel bar,
+rather than page text.
+
+Two lessons are baked into that constant. **Match text the page renders**, and
+**keep the old marker as well as the new one**, because deployments lag and a
+detector that knows only the current wording breaks every rig still serving the
+previous page.
+
 `acs:<outcome>` must match the sandbox ACS button's text **verbatim** — the
 outcome is chosen by which button is tapped, not by the PAN. It is checked
 against the buttons the sandbox actually renders (`cells.ACS_OUTCOMES`), so a
@@ -851,7 +869,7 @@ trailing it means a rule ran in the wrong order.
 pytest tool/e2e/tests -q
 ```
 
-788 tests, no device needed: every driver call is faked, so this covers the
+793 tests, no device needed: every driver call is faked, so this covers the
 parsing, the redaction, the label matching and the merchant verification — the
 places where a silent mistake would be read as an SDK finding. The shipped cell
 files are validated here too. CI runs this on Linux on every PR, in its own job,

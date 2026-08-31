@@ -830,7 +830,7 @@ def test_tap_pay_taps_the_sheets_own_pay_button_and_not_the_examples():
 def test_acs_waits_for_the_sandbox_page_before_it_taps_an_outcome():
     shell = FakeShell(
         tree=sheet(
-            (android.ACS_TITLE, "", "[0,0][100,40]"),
+            (android.ACS_MARKERS[0], "", "[0,0][100,40]"),
             ("approve", "", "[0,200][100,240]"),
             ("authentication_failed", "", "[0,260][100,300]"),
         )
@@ -845,7 +845,7 @@ def test_acs_waits_for_the_sandbox_page_before_it_taps_an_outcome():
 def test_cancel_challenge_backs_out_of_the_acs_page_then_confirms():
     shell = FakeShell(
         trees=[
-            sheet((android.ACS_TITLE, "", "[0,0][100,40]")),
+            sheet((android.ACS_MARKERS[0], "", "[0,0][100,40]")),
             sheet(
                 (android.CANCEL_TITLE, "", "[0,300][100,340]"),
                 (android.CANCEL_CONFIRM, "", "[0,400][100,440]"),
@@ -873,7 +873,7 @@ def test_cancel_form_confirms_without_waiting_for_the_acs_page():
 
     assert "shell input keyevent 4" in shell.argv_text()
     assert taps(shell) == ["shell input tap 50 420"]
-    assert not any(android.ACS_TITLE in c for c in shell.argv_text())
+    assert not any(android.ACS_MARKERS[0] in c for c in shell.argv_text())
 
 
 # -- present_token, tap_example_pay, enter_token -------------------------------
@@ -1074,7 +1074,7 @@ def test_launch_refuses_a_device_a_previous_cell_left_in_airplane_mode():
 def test_wait_acs_waits_for_the_page_without_answering_it():
     shell = FakeShell(
         tree=sheet(
-            (android.ACS_TITLE, "", "[0,0][100,40]"),
+            (android.ACS_MARKERS[0], "", "[0,0][100,40]"),
             ("approve", "", "[0,200][100,240]"),
         )
     )
@@ -1319,3 +1319,46 @@ def test_launch_ignores_a_stale_user_rotation_the_sensor_overrides():
     driver(shell).launch()
 
     assert any("monkey" in c for c in shell.argv_text())
+
+
+# -- the ACS page detector, after the sandbox redesigned it -------------------
+
+REDESIGNED_ACS = (FIXTURES / "android-acs-redesigned.uix").read_text()
+
+
+def test_wait_acs_recognises_the_redesigned_sandbox_page():
+    # MEASURED, and it cost a whole android run. `payment-sandbox` 687bf4e
+    # ("Redesign challenge page to match payment page design system") replaced
+    # `<strong>Sandbox 3DS Challenge</strong>` with
+    # `<div class="sandbox-badge">Sandbox</div>`, and the phrase now survives
+    # only in `<title>` -- which never reaches an accessibility tree, because a
+    # WebView exposes rendered DOM text and not the document title. TEST was
+    # redeployed onto that build mid-campaign: the page carried the old text at
+    # 22:07Z and did not at 11:41Z the next morning.
+    #
+    # The fixture IS the page that broke it, taken from the failing run.
+    shell = FakeShell(tree=REDESIGNED_ACS)
+
+    assert driver(shell).wait_acs(timeout=0) is True
+
+
+def test_wait_acs_still_recognises_the_old_page():
+    # Deployments lag. A detector that only knew the new wording would break
+    # every rig still serving the old one, which is the mistake in the mirror.
+    old = REDESIGNED_ACS.replace("AUTHENTICATION OUTCOMES", "Sandbox 3DS Challenge")
+
+    assert driver(FakeShell(tree=old)).wait_acs(timeout=0) is True
+
+
+def test_wait_acs_still_refuses_a_page_that_is_not_the_challenge():
+    with pytest.raises(DriverError) as excinfo:
+        driver(FakeShell(tree=screen())).wait_acs(timeout=0)
+
+    assert "sandbox ACS page" in str(excinfo.value)
+
+
+def test_the_acs_markers_are_page_text_rather_than_a_document_title():
+    # The rule this encodes: match something the page RENDERS. `<title>` is
+    # invisible to uiautomator, and matching on it is how this broke.
+    assert "Sandbox 3DS Challenge" in android.ACS_MARKERS
+    assert "AUTHENTICATION OUTCOMES" in android.ACS_MARKERS
