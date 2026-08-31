@@ -370,5 +370,118 @@ void main() {
         0,
       );
     });
+    testWidgets('a state that was passed in outlives the scope', (
+      tester,
+    ) async {
+      // Disposing it here would take it out from under whoever passed it: in
+      // a test, one that is still asserting on it; in the app, a state that
+      // is meant to outlive one subtree.
+      final state = fakeEnvironment();
+      addTearDown(state.dispose);
+      await tester.pumpWidget(
+        appWithEnvironment(
+          home: const Scaffold(body: Text('a screen')),
+          state: state,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+
+      expect(() => state.addListener(() {}), returnsNormally);
+    });
+
+    testWidgets('a state the scope made is disposed with it', (tester) async {
+      // The other half of the same rule. The one this widget owns has no
+      // other owner, so leaving it alive is a leak.
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => LiveModeScope(child: child!),
+          home: const Scaffold(body: Text('a screen')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final own = LiveModeScope.maybeOf(tester.element(find.text('a screen')));
+      expect(own, isNotNull);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+
+      expect(() => own!.addListener(() {}), throwsFlutterError);
+    });
+
+    testWidgets('readOf finds the same state without subscribing to it', (
+      tester,
+    ) async {
+      // The deep-link callback reads the environment outside build. If that
+      // read registered a dependency, every credential change would rebuild
+      // a widget that only ever wanted to look once.
+      //
+      // Already in Live before the first pump, on purpose: a Test-to-Live
+      // switch reparents the whole subtree under the banner, which rebuilds
+      // both builders and would prove nothing about either.
+      final state = fakeEnvironment();
+      await state.enterLive(liveConfirmationWord);
+      addTearDown(state.dispose);
+      var reads = 0;
+      var watches = 0;
+      DemoEnvironmentState? read;
+      DemoEnvironmentState? watched;
+
+      await tester.pumpWidget(
+        appWithEnvironment(
+          state: state,
+          home: Scaffold(
+            body: Column(
+              children: [
+                Builder(
+                  builder: (context) {
+                    reads++;
+                    read = LiveModeScope.readOf(context);
+                    return const Text('reader');
+                  },
+                ),
+                Builder(
+                  builder: (context) {
+                    watches++;
+                    watched = LiveModeScope.maybeOf(context);
+                    return const Text('watcher');
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(read, same(state));
+      expect(watched, same(state));
+      expect(reads, 1);
+      expect(watches, 1);
+
+      state.useForThisSession(
+        const Credentials(clientId: 'live-id', clientSecret: 'live-secret'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(watches, 2, reason: 'maybeOf subscribes');
+      expect(reads, 1, reason: 'readOf does not');
+    });
+
+    testWidgets('environmentOf says Live under a Live scope', (tester) async {
+      // Only the Test answer was pinned, and Test is also what an
+      // environmentOf that ignored the scope entirely would return.
+      await tester.pumpWidget(
+        await liveApp(home: const Scaffold(body: Text('a screen'))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        LiveModeScope.environmentOf(tester.element(find.text('a screen'))),
+        DemoEnvironment.live,
+      );
+    });
   });
 }

@@ -248,13 +248,27 @@ class LiveModeScope extends StatefulWidget {
 }
 
 class _LiveModeScopeState extends State<LiveModeScope> {
+  /// The state this widget made, or null when one was passed in.
+  ///
+  /// Non-null exactly when there is something to dispose, which is what
+  /// [dispose] below reads it for.
   DemoEnvironmentState? _own;
 
-  DemoEnvironmentState get _state =>
-      widget.state ??
-      (_own ??= DemoEnvironmentState(
+  @override
+  void initState() {
+    super.initState();
+    // Here rather than lazily in `build`, so that building this widget is
+    // not what brings its state into existence. Nothing depended on the
+    // laziness -- `build` runs immediately after this -- and a `build` with
+    // no side effects is one that can be called twice safely.
+    if (widget.state == null) {
+      _own = DemoEnvironmentState(
         googlePayMerchantId: widget.googlePayMerchantId,
-      ));
+      );
+    }
+  }
+
+  DemoEnvironmentState get _state => widget.state ?? _own!;
 
   @override
   void dispose() {
