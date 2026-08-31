@@ -115,11 +115,17 @@ CARDHOLDER = "Cardholder name input"
 #: design system") replaced `<strong>Sandbox 3DS Challenge</strong>` with
 #: `<div class="sandbox-badge">Sandbox</div>`. The phrase survives only in
 #: `<title>`, which never reaches an accessibility tree -- a WebView exposes
-#: rendered DOM text, not the document title. TEST was redeployed onto that
-#: build in the middle of this campaign: the page carried the old text at
-#: 22:07Z and did not at 11:41Z the next morning, and every android cell that
-#: waits for a challenge failed in between while the frictionless control
-#: passed five times.
+#: rendered DOM text, not the document title.
+#:
+#: What bit us was NOT that redesign landing. 687bf4e is dated 2026-04-13,
+#: four months earlier: what happened mid-campaign was the TEST DEPLOYMENT
+#: CATCHING UP to it. That is the worse failure mode, because a rig cannot see
+#: which build is deployed -- reading `main` would have shown this markup all
+#: along while the rig passed against an older deployed page. Source and
+#: behaviour disagreed for four months and nothing here could tell. The page
+#: carried the old text at 22:07Z and did not at 11:41Z the next morning, and
+#: every android cell that waits for a challenge failed in between while the
+#: frictionless control passed five times.
 #:
 #: `AUTHENTICATION OUTCOMES` is the section heading above the outcome buttons
 #: and is present in both designs. The old phrase is kept because deployments

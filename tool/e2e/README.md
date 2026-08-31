@@ -482,9 +482,13 @@ that is a scar rather than a design.** `payment-sandbox` 687bf4e redesigned the
 page, replacing `<strong>Sandbox 3DS Challenge</strong>` with a
 `<div class="sandbox-badge">Sandbox</div>`; the old phrase survives only in
 `<title>`, which never reaches an accessibility tree because a WebView exposes
-rendered DOM text and not the document title. TEST was redeployed onto that
-build **in the middle of this campaign** — the page carried the old text at
-22:07Z and did not at 11:41Z the next morning — and every android cell waiting
+rendered DOM text and not the document title. That commit is dated
+**2026-04-13**: what happened mid-campaign was the TEST deployment *catching up*
+to a four-month-old commit, not a redesign landing — which is worse, because a
+rig cannot see which build is deployed, and reading `main` would have shown this
+markup all along while the rig passed against an older deployed page. The page
+carried the old text at 22:07Z and did not at 11:41Z the next morning, and
+every android cell waiting
 for a challenge failed in between while the frictionless control passed five
 times interleaved with them. iOS was untouched, because it matches
 `threeDSCancel`, an accessibility identifier on the SDK's own cancel bar,
