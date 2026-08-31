@@ -1104,6 +1104,118 @@ def test_wait_acs_says_which_page_never_came():
     assert "sandbox ACS page" in str(excinfo.value)
 
 
+# -- D4: the wallet button, which Play services owns --------------------------
+
+
+#: The real node, lifted from this campaign's own evidence
+#: (`evidence/demo-rename-android/20260830-161244-android/control/01-paste_token.uix`):
+#: a wrapper carrying the description, with `clickable="false"` on it. Its
+#: centre is (540, 242), which is what every tap assertion below expects.
+GOOGLE_PAY_BOUNDS = "[42,179][1038,305]"
+
+
+def offered_sheet() -> str:
+    return sheet(
+        ("Pay \u20ac10.00", "", "[0,60][100,100]"),
+        ("", android.GOOGLE_PAY_DESC, GOOGLE_PAY_BOUNDS),
+    )
+
+
+def sheet_without_wallet() -> str:
+    return sheet(("Pay \u20ac10.00", "", "[0,60][100,100]"))
+
+
+def test_wait_google_pay_finds_the_button_play_services_draws():
+    shell = FakeShell(tree=offered_sheet())
+
+    assert driver(shell).wait_google_pay(timeout=5) is True
+
+
+def test_wait_google_pay_polls_rather_than_looking_once():
+    # Readiness is a LaunchedEffect that runs after the session loads and
+    # after an asynchronous isReadyToPay (PaymentActivity.kt), so the button
+    # is genuinely late rather than instant. A single look would fail the
+    # cell on a sheet that was about to offer the wallet.
+    shell = FakeShell(
+        trees=[sheet_without_wallet(), sheet_without_wallet(), offered_sheet()]
+    )
+    naps = []
+
+    assert driver(shell, naps).wait_google_pay(timeout=30) is True
+    assert naps == [2, 2]
+
+
+def test_wait_google_pay_answers_false_rather_than_raising():
+    # A falsy answer is what `_observe` turns into "expect: never observed
+    # 'google_pay'", which names the cell's own expectation. Raising here
+    # would report the device instead, and spend an interleaved control check
+    # on a screen that was read perfectly well.
+    shell = FakeShell(tree=sheet_without_wallet())
+
+    assert driver(shell).wait_google_pay(timeout=0) is False
+
+
+def test_wait_no_google_pay_is_disproved_by_a_button_that_is_merely_late():
+    # The one thing this expectation must never do is pass on every session.
+    # Absence has to be waited OUT rather than waited for: readiness is
+    # asynchronous, so a single look is satisfied by a button that has not
+    # rendered yet -- and the cell would then go green on a sheet that plainly
+    # offers the wallet, which is the failure it exists to catch.
+    shell = FakeShell(
+        trees=[sheet_without_wallet(), sheet_without_wallet(), offered_sheet()]
+    )
+    naps = []
+
+    assert driver(shell, naps).wait_no_google_pay(timeout=20) is False
+    assert naps == [2, 2]
+
+
+def test_wait_no_google_pay_answers_true_when_the_window_passes_empty():
+    shell = FakeShell(tree=sheet_without_wallet())
+
+    assert driver(shell).wait_no_google_pay(timeout=0) is True
+
+
+def test_wait_no_google_pay_rides_out_a_device_that_will_not_dump():
+    # A refused dump inside the window is not an absent button. Tolerated
+    # while the deadline is live, exactly as every other wait treats it --
+    # otherwise `uiautomator` refusing once would be recorded as the SDK
+    # suppressing the wallet.
+    refused = ["", ""] * 3  # one whole dump_tree's worth of attempts
+    shell = FakeShell(*refused, "", offered_sheet())
+
+    assert driver(shell).wait_no_google_pay(timeout=20) is False
+
+
+def test_tap_google_pay_taps_the_wrapper_because_the_node_is_not_clickable():
+    # The click handler lives on the AndroidView, not on a Compose node, so
+    # the node carrying the description reports clickable="false". Tapping its
+    # bounds centre is the only route in.
+    shell = FakeShell(tree=offered_sheet())
+
+    driver(shell).tap_google_pay()
+
+    assert taps(shell) == ["shell input tap 540 242"]
+
+
+def test_tap_google_pay_says_which_button_never_appeared():
+    shell = FakeShell(tree=sheet_without_wallet())
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).tap_google_pay(timeout=0)
+
+    assert "the Google Pay button" in str(excinfo.value)
+
+
+def test_the_google_pay_description_is_the_one_the_evidence_shows():
+    # It is Play services' string, not the SDK's: the SDK's own
+    # Modifier.testTag("google_pay_button") is invisible to uiautomator
+    # because testTagsAsResourceId is set nowhere in either repo (filed
+    # upstream). So this constant moves with the GMS version and the device
+    # locale, and pinning it here is what makes that visible when it moves.
+    assert android.GOOGLE_PAY_DESC == "Pay with GPay"
+
+
 # -- the vocabulary that later dimensions fill in ------------------------------
 
 
@@ -1119,11 +1231,8 @@ NOT_LANDED_YET = [
     ("kill_activity", ()),
     ("dont_keep_activities", (True,)),
     ("type_cvv", ("123",)),
-    ("tap_google_pay", ()),
     ("select_saved_card", ()),
     ("save_card", ()),
-    ("wait_google_pay", (30,)),
-    ("wait_no_google_pay", (20,)),
     ("wait_saved_card", (30,)),
 ]
 

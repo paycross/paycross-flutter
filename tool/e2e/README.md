@@ -358,7 +358,8 @@ Things worth knowing before you write an expectation:
 | `enter_token <literal>` | types a literal into the token field, for the malformed-token cells |
 | `relaunch` | cold-starts the app mid-cell. On iOS this keeps the console window the cell has already written; `launch` would truncate it |
 | `airplane on\|off` | cuts the device's network and reads the setting back. **Android only** |
-| `type_cvv`, `tap_google_pay`, `select_saved_card`, `save_card` | wallet and saved-card entry (D4, D5) |
+| `tap_google_pay` | taps the wallet button, by bounds — see below. **Android only** (D4) |
+| `type_cvv`, `select_saved_card`, `save_card` | saved-card entry (D5) |
 | `background <s>`, `rotate`, `kill_activity`, `dont_keep_activities on\|off` | lifecycle (D3) |
 
 Each `expect` argument has its own deadline, and a falsy answer fails the cell
@@ -373,6 +374,24 @@ naming the expectation and the number the wait really used:
 | `no_google_pay` | no wallet button. Waited **out**, not for | 20 s |
 | `saved_card` | a stored card on the sheet (D5) | 30 s |
 
+**The Google Pay button's handle belongs to Google.** `tap_google_pay`,
+`expect google_pay` and `expect no_google_pay` all match
+`content-desc="Pay with GPay"`, which is drawn by Play services rather than by
+the SDK — so it moves with the **GMS version** and with the **device locale**,
+and it can break without a line changing in either repo. The SDK does tag its
+own button (`Modifier.testTag("google_pay_button")`), but
+`testTagsAsResourceId` is set nowhere in either repo, so Compose test tags are
+invisible to `uiautomator`; that is filed as **payment-android-sdk#26**, and
+until it lands this is the only handle there is. The node is also **not
+clickable** — the click handler lives on the `AndroidView`, not on a Compose
+node — so it is tapped at its bounds centre.
+
+`expect no_google_pay` is the one expectation that waits its answer **out**
+rather than waiting for it. Readiness is a `LaunchedEffect` that runs after the
+session loads and after an asynchronous `isReadyToPay`, so a button that is
+merely late would satisfy a single look — and the expectation would then pass
+on every session, which is the one thing it must never do.
+
 `paste_token` and `present_token` differ in one thing, and it matters. Both
 enter the minted token and tap the example's Pay; **`paste_token` then waits for
 the sheet and `present_token` does not.** Use `present_token` where no sheet is
@@ -380,17 +399,16 @@ the expected answer: on iOS a malformed or expired token is refused before
 `present` is ever called, so waiting for a sheet costs a 60-second timeout and
 then reports the wrong failure.
 
-The last two rows are **in the grammar but not yet executable**, and so are
-`expect google_pay`, `expect no_google_pay` and `expect saved_card`. The
-vocabulary is opened a dimension at a time so cell files can be written against
-a stable list; the dimension that owns a verb writes the driver method, and
-every verb already reaches a `_perform` branch that calls it. Until the method
-lands, the declaration on `Driver` raises `NotImplementedError` and a cell using
-it fails as an **authoring mistake** rather than a device fault — so no control
-check is spent proving a rig that was never in doubt. That distinction is the
-whole reason the declarations exist: a missing attribute would raise
-`AttributeError`, which the runner reads as a broken device, and two of those in
-a row abort the run.
+The last two rows are **in the grammar but not yet executable**, and so is
+`expect saved_card`. The vocabulary is opened a dimension at a time so cell
+files can be written against a stable list; the dimension that owns a verb
+writes the driver method, and every verb already reaches a `_perform` branch
+that calls it. Until the method lands, the declaration on `Driver` raises
+`NotImplementedError` and a cell using it fails as an **authoring mistake**
+rather than a device fault — so no control check is spent proving a rig that
+was never in doubt. That distinction is the whole reason the declarations
+exist: a missing attribute would raise `AttributeError`, which the runner
+reads as a broken device, and two of those in a row abort the run.
 
 A verb outside the grammar, or an argument the verb does not take, is a
 different failure and stays a device-side `DriverError`: `load_cell` refuses

@@ -1,0 +1,59 @@
+# The wallet is NOT offered on an account-funding session.
+#
+# THIS CELL ONLY EXISTS BECAUSE THE TEST MERCHANT CARRIES THE `aft` EXTRA
+# ATTRIBUTE. That was confirmed before the cell was written, and NOT the way
+# the plan proposed: the merchant API's top-level `account_funding` is a plain
+# echo of the create request -- core's PaymentSessionResource says so itself
+# ("stored regardless of the merchant AFT flag") -- so reading it back truthy
+# proves only that the field was stored. The gate is the CHECKOUT SNAPSHOT the
+# SDK reads, GET /api/session/{id} on checkout.test-pay-cross.com, where
+# `data.account_funding` is core's computed isAccountFundingSession. Measured
+# there on TEST 2026-08-31: `true` with the block below, `false` without it,
+# and `data.wallets.google_pay` true either way. Were the merchant to lose
+# `aft`, AccountFundingIntent::check would return false on its first branch,
+# the wallet would stay eligible, the button would render, and this cell would
+# fail while reporting something that is not about the SDK at all.
+#
+# Given the attribute, the suppression key is `account_funding` -- not a
+# wallets flag and not transaction_type. GooglePayRequests.isSessionEligible's
+# second clause reads it with strict `!= true` semantics, so absent and null
+# both leave the wallet eligible and only an explicit true suppresses it.
+#
+# The spec's other route -- data.wallets.google_pay = false -- is not
+# implementable per session either: that field comes from a different merchant
+# extra attribute, written once at session creation and never rebuilt. Both
+# routes are merchant configuration; neither is something a cell can ask for.
+#
+# The absence is waited OUT, not looked for once. Readiness is a LaunchedEffect
+# that runs after the session loads and after an asynchronous isReadyToPay, so
+# a single look would be satisfied by a button that is merely late -- and this
+# cell would then pass on every session, which is the one thing it must never
+# do.
+id: google_pay_absent_on_aft
+platforms: [android]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+  options:
+    account_funding:
+      sender_is_recipient: true
+      recipient:
+        first_name: John
+        last_name: Doe
+        country: US
+        entity_type: individual
+actions:
+  - paste_token
+  - expect no_google_pay
+  - cancel_form
+  - wait_result 120
+expected:
+  label: "result:cancelled"
+  merchant:
+    session_status: open
+    txn_count: 0
+    no_succeeded_txn: true
