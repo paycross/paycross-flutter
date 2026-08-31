@@ -16,11 +16,32 @@ const List<String> currencies = <String>['EUR', 'USD', 'GBP'];
 /// which is why the two presets are ordered and share the string.
 const String cofCustomerReference = 'harness_cof_customer';
 
+/// The fake billing address every sandbox preset sends.
+///
+/// A default, and only a default: a Live body must not send it. Production
+/// AVS and fraud rules exist to refuse exactly this, and a smoke test that
+/// fails on a fabricated New York address has told you nothing about the
+/// SDK.
+const String _sandboxBilling = '''
+      "billing": {
+        "line1": "123 Main Street",
+        "line2": "Apt 4B",
+        "city": "New York",
+        "state": "NY",
+        "postal_code": "10001",
+        "country": "US"
+      }''';
+
 String _body({
   required int amount,
   String? extraTopLevel,
   String? customer,
   String reference = 'DEMO-{{timestamp}}',
+  String email = 'john.doe@example.com',
+  String firstName = 'John',
+  String lastName = 'Doe',
+  String phone = '+12025551234',
+  String? billing = _sandboxBilling,
 }) =>
     '''
 {
@@ -31,21 +52,11 @@ String _body({
   "return_url": "https://merchant.example.com/payment/return",
   "success_url": "https://merchant.example.com/payment/success",${extraTopLevel == null ? '' : '\n  $extraTopLevel,'}
   "customer": {
-    "email": "john.doe@example.com",
-    "first_name": "John",
-    "last_name": "Doe",
-    "phone": "+12025551234",
-    "merchant_reference": "${customer ?? 'CUST-{{timestamp}}'}",
-    "address": {
-      "billing": {
-        "line1": "123 Main Street",
-        "line2": "Apt 4B",
-        "city": "New York",
-        "state": "NY",
-        "postal_code": "10001",
-        "country": "US"
-      }
-    }
+    "email": "$email",
+    "first_name": "$firstName",
+    "last_name": "$lastName",
+    "phone": "$phone",
+    "merchant_reference": "${customer ?? 'CUST-{{timestamp}}'}"${billing == null ? '' : ',\n    "address": {\n$billing\n    }'}
   }
 }''';
 
@@ -79,6 +90,33 @@ final String cofPaySavedBody = _body(
 final String verifyProbeBody = _body(
   amount: 100,
   reference: 'DEMO-VERIFY-{{timestamp}}',
+);
+
+/// A body for an identity that is not the sandbox fake, with no billing
+/// address.
+///
+/// Public because `live.dart` needs it and `_body` is private, and a second
+/// copy of the helper in that file is precisely the drift PR #30 was about.
+///
+/// It takes the identity's three fields loose rather than the `LiveIdentity`
+/// they come from, because that type lives in `live.dart` and `live.dart`
+/// already imports this file -- naming it here would close a cycle that
+/// nothing needs. The call site unpacks the identity instead.
+String liveBody({
+  required int amount,
+  required String email,
+  required String firstName,
+  required String lastName,
+  required String customerReference,
+}) => _body(
+  amount: amount,
+  reference: 'LIVE-SMOKE-{{timestamp}}',
+  customer: customerReference,
+  email: email,
+  firstName: firstName,
+  lastName: lastName,
+  // Omitted, not faked. See `live.dart`.
+  billing: null,
 );
 
 /// A named scenario: what to mint, what should happen, and which card to type.
