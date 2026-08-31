@@ -116,9 +116,11 @@ void main() {
   });
 
   test('the smoke preset expects nothing a runner could misread', () {
-    // Same rule the sandbox presets are held to: no expectation may start
-    // with one of the five prefixes the matrix runner reads as "this build
-    // has no automation define".
+    // The rule the sandbox presets are held to, kept here so the two sets
+    // cannot diverge. The matrix runner never reads this one: automation
+    // always runs Test, and the E2E build never sees the toggle -- so this
+    // is the sandbox convention held in one place, not a constraint the
+    // runner imposes on Live.
     for (final prefix in const [
       'Paid ',
       'Declined',
