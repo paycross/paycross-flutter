@@ -44,6 +44,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// [DemoEnvironmentState] and only the typed word moves it.
   bool _askingForLive = false;
 
+  /// Whether this screen's first load happened in Live.
+  ///
+  /// Guards the prefill and nothing else: a screen pushed from Live must not
+  /// arrive with the stored sandbox credential in its fields. See [_load].
+  bool _openedInLive = false;
+
   /// Whether the first read has come back, whatever it found.
   ///
   /// Every button is dead until it has. Before that the fields are empty
@@ -68,6 +74,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    // `readOf`, not `maybeOf`: `initState` is outside build, where
+    // registering an inherited dependency is an error. The environment
+    // cannot change between here and the load anyway -- this screen is what
+    // changes it.
+    _openedInLive = LiveModeScope.readOf(context)?.isLive ?? false;
     _load();
   }
 
@@ -85,7 +96,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     setState(() {
       _stored = stored;
-      if (stored != null) {
+      // Read, but not shown. A screen pushed from Live -- by the tile with
+      // no credentials, or by the profile strip -- would otherwise arrive
+      // with the sandbox client id and secret already in its fields, one tap
+      // from being sent to the production merchant. `_stored` is still set,
+      // so the screen still knows what the next Test launch will use.
+      if (stored != null && !_openedInLive) {
         // Only what is still empty: a slow Keychain that answers after the
         // human started typing must not pull the text out from under them.
         if (_clientId.text.isEmpty) _clientId.text = stored.clientId;
@@ -221,6 +237,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _busy = false;
       _askingForLive = false;
       _message = refused;
+      // Cleared before the reload below, or the prefill guard would keep
+      // this screen's fields empty for the rest of its life: it is a
+      // snapshot of "was this screen loaded in Live", and it has stopped
+      // being true.
+      if (refused == null) _openedInLive = false;
     });
     // Only once back in Test is there a store to read: the fields fill again
     // from the sandbox credentials the human saved, which are the ones the

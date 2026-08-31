@@ -85,6 +85,31 @@ class _SlowBackend implements SecretBackend {
   Future<void> delete(String key) async => entries.remove(key);
 }
 
+/// Stores like the in-memory backend, and counts every write and delete.
+///
+/// The spy the memory-only rule is checked against: in Live the count must
+/// be zero, because there is no code path from that screen to a store.
+class _CountingBackend implements SecretBackend {
+  final Map<String, String> entries = <String, String>{};
+  int writes = 0;
+  int deletes = 0;
+
+  @override
+  Future<String?> read(String key) async => entries[key];
+
+  @override
+  Future<void> write(String key, String value) async {
+    writes++;
+    entries[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    deletes++;
+    entries.remove(key);
+  }
+}
+
 /// Whether the button carrying [label] is live.
 ///
 /// Found by predicate, not by type: `find.byType` matches the exact runtime
@@ -611,5 +636,46 @@ void main() {
     expect(state.environment, DemoEnvironment.test);
     expect(state.liveCredentials, isNull);
     expect(find.byKey(const ValueKey('liveBanner')), findsNothing);
+  });
+
+  testWidgets('Settings opened in Live never prefills the stored credential', (
+    tester,
+  ) async {
+    // The screen is pushed fresh from Live -- by the tile with no credentials
+    // held, and by the profile strip -- so its `initState` load runs while
+    // Live is already selected. Prefilling there puts a sandbox secret one
+    // tap from the production merchant.
+    final backend = _CountingBackend()
+      ..entries['paycross_demo_client_id'] = 'test-id'
+      ..entries['paycross_demo_client_secret'] = 'test-secret'
+      ..entries['paycross_demo_google_pay_merchant_id'] = 'gp-1';
+
+    await tester.pumpWidget(
+      await liveApp(
+        home: SettingsScreen(
+          store: SecretStore(backend: backend),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The fields, and only the fields. What the store holds is read; what it
+    // holds is not shown.
+    expect(_fieldText(tester, 'clientId'), '');
+    expect(_fieldText(tester, 'clientSecret'), '');
+
+    // And the guard is a snapshot, not a latch: coming back to Test has to
+    // fill the fields from the store again. Without the `_openedInLive =
+    // false` in `_chooseEnvironment`'s Test branch, this screen's fields stay
+    // empty for the rest of its life and the human silently cannot see or
+    // re-save the sandbox credential they had.
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+
+    expect(_fieldText(tester, 'clientId'), 'test-id');
+    expect(_fieldText(tester, 'clientSecret'), 'test-secret');
   });
 }
