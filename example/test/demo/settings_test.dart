@@ -638,6 +638,13 @@ void main() {
     expect(state.environment, DemoEnvironment.test);
     expect(find.byKey(const ValueKey('liveConfirm')), findsOneWidget);
     expect(find.byKey(const ValueKey('liveBanner')), findsNothing);
+    // The warning is the whole reason the gate is worth opening. Unpinned, a
+    // refactor could delete it and the suite would stay green -- in a plan
+    // whose stated purpose is that this app's copy stops being quietly false.
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('liveGateWarning'))).data,
+      contains('real card'),
+    );
   });
 
   testWidgets('the switch stays dead until the word is exactly right', (
@@ -1285,5 +1292,39 @@ void main() {
           .obscureText,
       isTrue,
     );
+  });
+
+  testWidgets('the dead switch says why it is dead, where it is dead', (
+    tester,
+  ) async {
+    // A dimmed button with no reason attached is a dead end for a screen
+    // reader: the instruction that explains it is a separate Text two
+    // siblings up, reachable only by swiping back. The Test branch already
+    // does this properly -- "Reading saved credentials…" sits inside the Wrap
+    // beside the buttons it explains, and says so in a comment -- and the
+    // gate did not inherit that care.
+    final semantics = tester.ensureSemantics();
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getSemantics(find.byKey(const ValueKey('switchToLive'))).hint,
+      contains(liveConfirmationWord),
+    );
+
+    // And it stops nagging once the word is there and the button is live.
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getSemantics(find.byKey(const ValueKey('switchToLive'))).hint,
+      isEmpty,
+    );
+    semantics.dispose();
   });
 }

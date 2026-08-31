@@ -386,6 +386,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final state = LiveModeScope.maybeOf(context);
     final live = state?.isLive ?? false;
+    // Named once and read twice, by the gate's button and by the hint that
+    // explains it, so the reason given and the reason applied cannot drift.
+    final armed = _liveConfirm.text.trim() == liveConfirmationWord;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
@@ -421,6 +424,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Live is the PayCross production environment. A payment there '
                 'charges a real card, and this app has no way to refund one. '
                 'Type $liveConfirmationWord to switch.',
+                key: const ValueKey('liveGateWarning'),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -443,15 +447,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 runSpacing: 12,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  FilledButton(
-                    key: const ValueKey('switchToLive'),
-                    style: FilledButton.styleFrom(backgroundColor: liveRed),
-                    onPressed:
-                        _busy ||
-                            _liveConfirm.text.trim() != liveConfirmationWord
-                        ? null
-                        : () => _enterLive(state),
-                    child: const Text('Switch to Live'),
+                  // The reason travels with the button. Sighted, the
+                  // instruction is a paragraph three rows up and obviously
+                  // related; to a screen reader it is two nodes back, so a
+                  // dimmed button with nothing attached is a dead end. The
+                  // Test branch keeps "Reading saved credentials…" inside the
+                  // Wrap beside the buttons it explains for the same reason.
+                  // Empty once the button is live: a hint that outlives the
+                  // condition it describes is noise on every later swipe.
+                  // Merged, so the hint lands on the button's own node rather
+                  // than on a parent one a screen reader reaches separately.
+                  MergeSemantics(
+                    child: Semantics(
+                      hint: armed
+                          ? ''
+                          : 'Type $liveConfirmationWord in the field above to '
+                                'enable this.',
+                      child: FilledButton(
+                        key: const ValueKey('switchToLive'),
+                        style: FilledButton.styleFrom(backgroundColor: liveRed),
+                        onPressed: _busy || !armed
+                            ? null
+                            : () => _enterLive(state),
+                        child: const Text('Switch to Live'),
+                      ),
+                    ),
                   ),
                   // Without this the gate is a dead end: the environment is
                   // still Test, so Test is the selected segment, and a
