@@ -119,6 +119,7 @@ void main() {
       'demoVersion',
       'pluginVersion',
       'nativeSdkVersion',
+      'live',
     });
   });
 
@@ -183,5 +184,71 @@ void main() {
     );
 
     expect((await store.read()).single.sessionId, 'sess-10');
+  });
+  test('a run is a Test run unless it says otherwise', () {
+    // The default is the whole upgrade story: `fromJson` is strict and
+    // `read` drops rows it cannot parse, so a required field here would
+    // silently wipe every tester's existing sandbox history.
+    expect(_entry().live, isFalse);
+  });
+
+  test('a row written before Live mode existed still reads', () async {
+    final old = <String, Object?>{
+      'at': '2026-08-29T15:04:05.000Z',
+      'presetName': 'Instant approve (no 3DS)',
+      'sessionId': 'sess-1',
+      'transactionId': 'txn-1',
+      'outcome': 'Approved.',
+      'demoVersion': '0.1.0+26',
+      'pluginVersion': '0.1.0',
+      'nativeSdkVersion': 'unknown',
+    };
+    final backend = InMemoryHistoryBackend()..entries = [jsonEncode(old)];
+
+    final read = await HistoryStore(backend: backend).read();
+
+    expect(read, hasLength(1));
+    expect(read.single.live, isFalse);
+  });
+
+  test('a Live run survives a round trip marked live', () async {
+    final store = HistoryStore(backend: InMemoryHistoryBackend());
+
+    await store.append(
+      HistoryEntry(
+        at: DateTime.utc(2026, 8, 31, 12),
+        presetName: 'Live smoke — €1.00 charge',
+        sessionId: 'sess-live',
+        transactionId: 'txn-live',
+        outcome: 'Approved.',
+        demoVersion: '0.1.1+27',
+        pluginVersion: '0.1.0',
+        nativeSdkVersion: 'unknown',
+        live: true,
+      ),
+    );
+
+    expect((await store.read()).single.live, isTrue);
+  });
+
+  test('a Live bug report says so, and a Test one is unchanged', () {
+    final live = bugReport(
+      HistoryEntry(
+        at: DateTime.utc(2026, 8, 31, 12),
+        presetName: 'Live smoke — €1.00 charge',
+        sessionId: 'sess-live',
+        transactionId: 'txn-live',
+        outcome: 'Approved.',
+        demoVersion: '0.1.1+27',
+        pluginVersion: '0.1.0',
+        nativeSdkVersion: 'unknown',
+        live: true,
+      ),
+    );
+
+    expect(live, contains('LIVE'));
+    // A Test report keeps exactly the shape people are already pasting into
+    // issues: the extra line appears only where it means something.
+    expect(bugReport(_entry()), isNot(contains('LIVE')));
   });
 }
