@@ -14,3 +14,15 @@ Podfile.lock
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+
+# Kotlin's build-session scratch directory, written by any Gradle run in
+# example/android. A build artifact, not a source file.
+.kotlin/
+
+# Signing material for the demo app. The keystore itself lives outside every
+# checkout (~/.paycross/), and key.properties names it -- neither belongs in
+# history, and history is the one place you cannot take them back out of.
+key.properties
+*.jks
+*.p12
+*.keystore
