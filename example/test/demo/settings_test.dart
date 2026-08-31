@@ -961,4 +961,80 @@ void main() {
     expect(state.environment, DemoEnvironment.live);
     expect(find.byKey(const ValueKey('liveBanner')), findsOneWidget);
   });
+
+  testWidgets('a store read still in flight cannot refill a Live screen', (
+    tester,
+  ) async {
+    // The door the `initState` snapshot left open. `SecretStore.read` is
+    // three sequential platform-channel round-trips, so on a real phone it
+    // outlives a human deciding to switch. If the guard is a snapshot of the
+    // environment at load START rather than a mirror of the environment now,
+    // the read lands after the switch and fills a Live screen from the
+    // Keychain -- and one tap on Use for this session sends the sandbox pair
+    // to the production merchant.
+    final backend = _SlowBackend()
+      ..entries['paycross_demo_client_id'] = 'test-id'
+      ..entries['paycross_demo_client_secret'] = 'test-secret';
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: backend)),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('switchToLive')));
+    await tester.pumpAndSettle();
+
+    // Only now does the Keychain answer, with the app already in Live.
+    backend.gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(state.isLive, isTrue);
+    expect(_fieldText(tester, 'clientId'), '');
+    expect(_fieldText(tester, 'clientSecret'), '');
+  });
+
+  testWidgets('a reload started on the way to Test cannot refill Live either', (
+    tester,
+  ) async {
+    // The wider door: `_chooseEnvironment` sets `_busy` back to false before
+    // it awaits its reload, so the switch is fully usable for the whole
+    // duration of that second read. Live -> Test -> Live, all before the
+    // store answers, and both parked reads land on a Live screen.
+    final backend = _SlowBackend()
+      ..entries['paycross_demo_client_id'] = 'test-id'
+      ..entries['paycross_demo_client_secret'] = 'test-secret';
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: SettingsScreen(
+          store: SecretStore(backend: backend),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('switchToLive')));
+    await tester.pumpAndSettle();
+
+    backend.gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(state.isLive, isTrue);
+    expect(_fieldText(tester, 'clientId'), '');
+    expect(_fieldText(tester, 'clientSecret'), '');
+  });
 }
