@@ -25,6 +25,41 @@ void main() {
     }
   });
 
+  test('every body the app mints carries the customer the schema requires', () {
+    // Measured against TEST on 2026-08-31, not assumed:
+    //   no `customer`                       -> 400 "The required properties
+    //                                          (customer) are missing", param "/"
+    //   `"customer": {}`                    -> 400 "The data (array) must match
+    //                                          the type: object"
+    //   customer with merchant_reference    -> 400 "The required properties
+    //                                          (first_name, last_name, email)
+    //                                          are missing", param "/customer"
+    //   customer with those three           -> created
+    // "Verify credentials" shipped in demo-v0.1.0 build 26 without a customer
+    // at all and 400d on the first tester's phone. Every body the app can send
+    // is pinned here, the probe included, because the probe's own test drives a
+    // stub client and a stub accepts a body the API would refuse.
+    final bodies = <String, String>{
+      for (final preset in demoPresets) preset.name: preset.body,
+      customPreset.name: customPreset.body,
+      'Verify credentials probe': verifyProbeBody,
+    };
+
+    for (final entry in bodies.entries) {
+      final body = jsonDecode(entry.value);
+      expect(body, isA<Map<String, Object?>>(), reason: entry.key);
+      final customer = (body as Map)['customer'];
+      expect(customer, isA<Map<String, Object?>>(), reason: entry.key);
+      for (final field in const ['first_name', 'last_name', 'email']) {
+        expect(
+          (customer as Map)[field],
+          isA<String>(),
+          reason: '${entry.key} is missing customer.$field',
+        );
+      }
+    }
+  });
+
   test('the two saved-card presets share the pinned customer', () {
     final store = demoPresets.firstWhere((p) => p.name.contains('Store card'));
     final pay = demoPresets.firstWhere((p) => p.name.contains('saved card'));

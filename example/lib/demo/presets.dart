@@ -16,13 +16,18 @@ const List<String> currencies = <String>['EUR', 'USD', 'GBP'];
 /// which is why the two presets are ordered and share the string.
 const String cofCustomerReference = 'harness_cof_customer';
 
-String _body({required int amount, String? extraTopLevel, String? customer}) =>
+String _body({
+  required int amount,
+  String? extraTopLevel,
+  String? customer,
+  String reference = 'DEMO-{{timestamp}}',
+}) =>
     '''
 {
   "amount": $amount,
   "currency": "EUR",
   "transaction_type": "sale",
-  "merchant_reference": "DEMO-{{timestamp}}",
+  "merchant_reference": "$reference",
   "return_url": "https://merchant.example.com/payment/return",
   "success_url": "https://merchant.example.com/payment/success",${extraTopLevel == null ? '' : '\n  $extraTopLevel,'}
   "customer": {
@@ -59,6 +64,21 @@ final String cofPaySavedBody = _body(
   amount: 1000,
   extraTopLevel: '"saved_cards": { "show": "all" }',
   customer: cofCustomerReference,
+);
+
+/// The body "Verify credentials" mints and immediately abandons.
+///
+/// Built from the same helper as every preset, and that is the fix rather
+/// than a tidy-up: this body used to be hand-written separately inside
+/// `minter.dart`, omitted the `customer` object the create schema requires,
+/// and answered 400 on the first tester's phone in demo-v0.1.0 build 26. Two
+/// definitions of one shape drift; one cannot.
+///
+/// A smaller amount and its own `merchant_reference` prefix, so a verify
+/// session abandoned in the sandbox is still tellable from a real demo run.
+final String verifyProbeBody = _body(
+  amount: 100,
+  reference: 'DEMO-VERIFY-{{timestamp}}',
 );
 
 /// A named scenario: what to mint, what should happen, and which card to type.
