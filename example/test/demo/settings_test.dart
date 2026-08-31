@@ -9,6 +9,7 @@ import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
 
 import '_environment.dart';
+import '_surface.dart';
 
 Widget _settings({
   required SecretStore store,
@@ -853,5 +854,53 @@ void main() {
 
     expect(_fieldText(tester, 'clientSecret'), 'test-secret');
     expect(backend.writes, 0);
+  });
+
+  testWidgets('Live lays out and scrolls at ordinary phone width', (
+    tester,
+  ) async {
+    // The switch, the gate field and the banner all landed on a screen that
+    // was already a long list. An overflow stripe is an exception in a widget
+    // test, and the default 800x600 surface every other case here uses is
+    // wider than any phone.
+    usePhoneSurface(tester);
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: SettingsScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('useForThisSession')),
+      200,
+      // Named, unlike Home's copy of this test, which lets it default to the
+      // only `Scrollable` on that screen. Settings has three: the `ListView`
+      // and one inside each `TextField`, since `EditableText` scrolls its own
+      // content. The default finder matches all three and throws "Too many
+      // elements" before it scrolls anything. The `ListView` is the outermost
+      // of them, so it is the first in a depth-first walk.
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(const ValueKey('useForThisSession')), findsOneWidget);
+
+    // And the gate, which is the one piece of this task that is never on
+    // screen in Live: it lives on the Test side of the switch, so reaching it
+    // means going back through it first.
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveConfirm')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }
