@@ -604,6 +604,24 @@ void main() {
     // the run shows and what it writes to History both hang off this, and a
     // Live run recorded as a Test one is a charge nobody goes looking for.
     expect(tester.widget<RunScreen>(find.byType(RunScreen)).live, isTrue);
+    // The fourth refusal, which is the only place it can be seen: Home is
+    // still mounted under the pushed route, and its one tile is dead for as
+    // long as the run it started is on screen. `skipOffstage: false` because
+    // that is exactly where Home now is.
+    expect(
+      tester
+          .widget<ListTile>(
+            find.descendant(
+              of: find.byKey(
+                const ValueKey('liveSmokeTile'),
+                skipOffstage: false,
+              ),
+              matching: find.byType(ListTile, skipOffstage: false),
+            ),
+          )
+          .onTap,
+      isNull,
+    );
 
     // Drain the two bookkeeping timeouts the pushed Run screen started
     // against platform stores that never answer under `flutter test`.
