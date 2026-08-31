@@ -133,6 +133,16 @@ run flutter build ios --release --config-only --no-codesign \
     --build-name "$BUILD_NAME" \
     --build-number "$BUILD_NUMBER"
 
+# CODE_SIGN_IDENTITY is an override, not a preference. All three PROJECT-level
+# configurations in Runner.xcodeproj set
+# CODE_SIGN_IDENTITY[sdk=iphoneos*] = "iPhone Developer" -- stock Flutter
+# template -- and the Runner target inherits it, so automatic signing looks for
+# a *Development* profile even for an archive and fails on a Mac with no
+# development certificate. Measured on the rig Mac on 2026-08-31 with the login
+# keychain unlocked, which is what rules out a locked keychain as the cause.
+# Overriding here rather than editing the project keeps `flutter run` on a
+# device working for developers -- their builds legitimately want a development
+# identity -- and keeps the example copy-paste-neutral for a merchant (B2).
 run xcodebuild \
     -workspace ios/Runner.xcworkspace \
     -scheme Runner \
@@ -145,7 +155,8 @@ run xcodebuild \
     -authenticationKeyID "$KEY_ID" \
     -authenticationKeyIssuerID "$ISSUER_ID" \
     DEVELOPMENT_TEAM="$TEAM_ID" \
-    CODE_SIGN_STYLE=Automatic
+    CODE_SIGN_STYLE=Automatic \
+    CODE_SIGN_IDENTITY="Apple Distribution"
 
 run xcodebuild -exportArchive \
     -archivePath "$ARCHIVE" \
