@@ -63,6 +63,10 @@ void main() {
     expect(jsonEncode(body), isNot(contains('123 Main Street')));
     expect(customer['email'], liveSmokeIdentity.email);
     expect(customer['first_name'], liveSmokeIdentity.firstName);
+    // `last_name` is in the create schema's `customer.required` list beside
+    // the other two, so a body that loses it is a €1.00 smoke that 400s on
+    // production -- the one place this app has no cheap way to find out.
+    expect(customer['last_name'], liveSmokeIdentity.lastName);
   });
 
   test('the smoke preset expects nothing a runner could misread', () {
