@@ -577,6 +577,43 @@ void main() {
     expect(find.textContaining('HTTP 401'), findsOneWidget);
   });
 
+  testWidgets('a refused Live run is not told to refund itself', (
+    tester,
+  ) async {
+    // A decline carries a transaction id, so it satisfies the block's guard
+    // -- and "Refund this in the back office now." then sends somebody to
+    // look for a charge that is not there. A declined smoke is an ordinary
+    // first result on a real card, so this would fire early and often, and
+    // this is the one red block in the app whose whole value is that it is
+    // never noise.
+    //
+    // Not suppressed, though: the SDK saying "refused" is not proof that no
+    // money moved -- an auth that took and a capture that failed look like
+    // this too -- so the id and the copy button stay exactly where they are
+    // and only the claim changes.
+    await tester.pumpWidget(
+      _run(
+        live: true,
+        present: (_) async => const PayCrossFailure(
+          transactionId: 'txn_declined',
+          recovery: RecoveryDoNotRetry(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsOneWidget);
+    expect(find.textContaining('Refund this in the back office'), findsNothing);
+    expect(
+      find.textContaining('nothing should have been captured'),
+      findsOneWidget,
+    );
+    // The id a lookup needs, and the button that copies it, are the half of
+    // this block that is right on a decline.
+    expect(find.textContaining('txn_declined'), findsWidgets);
+    expect(find.byKey(const ValueKey('copyRefundId')), findsOneWidget);
+  });
+
   testWidgets('a Test run says nothing about refunds', (tester) async {
     await tester.pumpWidget(_run(present: (_) async => _success('txn-9')));
     await tester.pumpAndSettle();
@@ -628,9 +665,46 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // Inside the block, not anywhere on screen: the outcome card prints its
+    // own `Session sess-9` and `Transaction txn-live` lines above this, and
+    // a finder that matched those would pass with the block showing either.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('refundInstruction')),
+        matching: find.textContaining('Transaction txn-live'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const ValueKey('copyRefundId')));
     await tester.pumpAndSettle();
 
     expect(copied, ['txn-live']);
+
+    // And the other branch, in the same case on purpose: the display and the
+    // clipboard are two separate expressions of one rule, and a screen that
+    // shows one id while copying the other is exactly how a refund lands on
+    // the wrong charge.
+    //
+    // Torn down first. Pumping a second `_run` straight over the first is a
+    // widget UPDATE at the same position, not a new screen -- `initState`
+    // never runs again and the first run's transaction id stays on screen.
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      _run(live: true, present: (_) async => const PayCrossCancelled()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('refundInstruction')),
+        matching: find.textContaining('Session sess-9'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('copyRefundId')));
+    await tester.pumpAndSettle();
+
+    expect(copied, ['txn-live', 'sess-9']);
   });
 }

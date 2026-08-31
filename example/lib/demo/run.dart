@@ -72,6 +72,14 @@ class _RunScreenState extends State<RunScreen> {
   String? _human;
   String? _sessionId;
   String? _transactionId;
+
+  /// Whether the sheet came back with a refusal.
+  ///
+  /// Read only by the refund block, and only to stop it claiming a refund is
+  /// owed. A decline carries a transaction id, so it satisfies that block's
+  /// guard as readily as an approval does -- and it is the one outcome that
+  /// is not unknown.
+  bool _refused = false;
   HistoryEntry? _entry;
 
   @override
@@ -104,10 +112,12 @@ class _RunScreenState extends State<RunScreen> {
     String? label;
     String human;
     String? transactionId;
+    var refused = false;
     try {
       final paid = await widget.present(minted.token);
       label = labelForResult(paid);
       human = humanOutcome(paid);
+      refused = paid is PayCrossFailure;
       transactionId = switch (paid) {
         PayCrossSuccess(:final transactionId) => transactionId,
         PayCrossFailure(:final transactionId) => transactionId,
@@ -142,6 +152,7 @@ class _RunScreenState extends State<RunScreen> {
       _contractLabel = label;
       _human = human;
       _transactionId = transactionId;
+      _refused = refused;
     });
 
     final versions = await _versionsOrUnknown();
@@ -246,9 +257,23 @@ class _RunScreenState extends State<RunScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'Refund this in the back office now.',
-                                style: TextStyle(
+                              Text(
+                                // Not suppressed on a refusal, and not left
+                                // saying "refund this" either. A decline
+                                // means nothing was captured, so there is
+                                // nothing to refund and the red block would
+                                // be pure noise on the commonest first
+                                // result a real card gives. But "refused" is
+                                // the SDK's word, not the ledger's -- an auth
+                                // that took and a capture that failed reads
+                                // the same from here -- so the id stays and
+                                // so does the instruction to go and look.
+                                _refused
+                                    ? 'Refused, so nothing should have been '
+                                          'captured. Check the back office by '
+                                          'this id before you assume it.'
+                                    : 'Refund this in the back office now.',
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
                                 ),
