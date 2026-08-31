@@ -1,0 +1,44 @@
+# The network goes before the shopper presses Pay. The submit never reaches
+# the backend, so no transaction is ever created -- txn_count 0 is the
+# assertion, and a transaction appearing here would mean the SDK reached a
+# network it should not have had.
+#
+# Shaped as a re-arm because that is what the Android source predicts:
+# PaymentViewModel renders "Network error. Please try again." and offers the
+# form again, which tree.ANDROID_REARM_BANNERS now matches alongside the
+# decline banner. If the sheet resolves terminally instead, that is a
+# legitimate finding and the cell is re-shaped to a plain wait_result -- not
+# a bug to fix before recording.
+#
+# Android only: the iOS simulator shares the host's network and has no
+# airplane mode. Every route to cutting it needs sudo or the GUI, so
+# IosDriver.airplane refuses rather than pretending.
+#
+# The network is restored before `cancel_form`, not after the cell: airplane
+# mode outlives a cell and would fail every cell after it, including the
+# interleaved control.
+id: airplane_before_submit
+platforms: [android]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - airplane on
+  - tap_pay
+  - expect rearmed
+  - airplane off
+  - cancel_form
+  - wait_result 120
+expected:
+  label: "result:cancelled"
+  rearmed: true
+  merchant:
+    session_status: open
+    txn_count: 0
+    no_succeeded_txn: true

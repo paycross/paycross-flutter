@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
-import 'package:paycross_flutter_example/e2e_label.dart';
+import 'package:paycross_demo/e2e_label.dart';
 
 PayCrossSuccess _success(String txn) => PayCrossSuccess(
   transactionId: txn,

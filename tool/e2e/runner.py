@@ -44,12 +44,23 @@ import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from . import evidence, tree, verify
-from .cells import ARG_ACTIONS, BARE_ACTIONS, Action, Card, Cell, CellError, load_cells
+from .cells import (
+    ARG_ACTIONS,
+    BARE_ACTIONS,
+    TEARDOWN,
+    Action,
+    Card,
+    Cell,
+    CellError,
+    load_cells,
+)
 from .drivers.android import DIGIT_PACING_SECONDS
 from .drivers.base import DriverError
 from .sandbox import Sandbox, SandboxError
@@ -64,6 +75,54 @@ MAX_CONSECUTIVE_CONTROL_FAILURES = 2
 #: answering False when the device will not dump, so this bounds a live
 #: device's slowness and nothing else.
 REARM_TIMEOUT_SECONDS = 30
+
+#: How often `wait_expired` asks the merchant API.
+SESSION_POLL_SECONDS = 30
+
+#: What `expect no_result` gives a result that must never arrive. Long enough
+#: that a slow one would still be caught, short enough that a cell asserting an
+#: absence does not dominate a matrix run.
+NO_RESULT_TIMEOUT_SECONDS = 60
+
+#: The sandbox ACS page's own load. The same 120 s `acs()` already allows it.
+ACS_PAGE_TIMEOUT_SECONDS = 120
+
+#: The wallet button appears only after the session loads and after an
+#: asynchronous isReadyToPay, so it is genuinely late rather than instant.
+WALLET_TIMEOUT_SECONDS = 30
+
+#: And its absence is waited OUT rather than waited for -- this is how long a
+#: late button gets to turn up and disprove the expectation.
+WALLET_ABSENT_TIMEOUT_SECONDS = 20
+
+#: A stored card is in the session snapshot before the sheet renders, so this
+#: only covers the sheet coming up at all.
+SAVED_CARD_TIMEOUT_SECONDS = 30
+
+#: How long each `expect` predicate is given, in one place so the failure
+#: message can name the number the wait actually used.
+#:
+#: The drivers keep their own literal defaults for these -- `runner` imports
+#: `drivers`, so a driver cannot import back -- and `_observe` always passes
+#: `timeout=` explicitly, which makes this table the value that is really used
+#: and the driver defaults only a courtesy to a direct caller. Keep the pairs
+#: equal; a test asserts it, over the predicates that carry a literal default
+#: on the CONCRETE drivers. `Driver`'s declarations deliberately have none --
+#: they raise before a timeout could matter -- and `wait_rearmed` and
+#: `wait_no_label` take the deadline without a default by design, so a sweep
+#: over all six would read `Parameter.empty` and fail on three of them.
+#:
+#: `no_google_pay` is the odd one and deliberately short: it waits an absence
+#: OUT rather than waiting for something, so its number is how long a late
+#: button gets to appear, not how long anything gets to arrive.
+EXPECT_TIMEOUT_SECONDS = {
+    "rearmed": REARM_TIMEOUT_SECONDS,
+    "no_result": NO_RESULT_TIMEOUT_SECONDS,
+    "acs": ACS_PAGE_TIMEOUT_SECONDS,
+    "google_pay": WALLET_TIMEOUT_SECONDS,
+    "no_google_pay": WALLET_ABSENT_TIMEOUT_SECONDS,
+    "saved_card": SAVED_CARD_TIMEOUT_SECONDS,
+}
 
 #: The only verbs that run with the native sheet or the ACS page foreground,
 #: and therefore the only steps a frame may ever be taken of. `redact()` is
@@ -120,23 +179,36 @@ VERB_BUDGET_SECONDS = {
     # iOS is the worst case here: 60 s for the example's own screen to come
     # up, 60 s for the sheet after it, a 10 s read-back, and the paste itself.
     "paste_token": 180,
+    # The same entry and the same read-back, minus the wait for a sheet that
+    # is never going to open -- but the example's own screen still has to come
+    # up first, which is where most of the 180 goes.
+    "present_token": 180,
+    "enter_token": 60,
+    "tap_example_pay": 30,
     "type_card": PAN_DIGITS * DIGIT_PACING_SECONDS + CARD_FIELDS_SECONDS,
+    "type_cvv": 60,
     "tap_pay": 60,
+    "tap_google_pay": 60,
+    "select_saved_card": 60,
+    "save_card": 60,
     "acs": 240,
     "cancel_challenge": 180,
     "cancel_form": 90,
     "expect": 90,
+    # A cold start plus the settle, which is `launch` again from inside a cell.
+    "relaunch": 90,
     "rotate": 60,
     "airplane": 60,
+    "dont_keep_activities": 60,
     "kill_activity": 60,
 }
 DEFAULT_VERB_SECONDS = 120
 
-#: Verbs whose argument already says how long they may take. `wait_expired` is
-#: here for the definition rather than for a cell that exists yet: D2 waits 16
-#: and 30 minutes for a session to pass its own expiry, and on the default
-#: budget such a cell would breach mid-wait and report a hang.
-TIMED_VERBS = ("wait_result", "wait_expired", "background")
+#: Verbs whose argument already says how long they may take. D2 waits 16 and
+#: 30 minutes for a session to pass its own expiry, and on the default budget
+#: such a cell would breach mid-wait and report a hang -- which is a false
+#: finding, and the expensive direction to be wrong in.
+TIMED_VERBS = ("wait", "wait_result", "wait_expired", "background")
 
 #: On top of such a verb's own deadline, because that deadline bounds when the
 #: next look starts, not how long one takes: a dump's transport timeout is
@@ -265,16 +337,27 @@ def _kind(error: BaseException) -> str:
     return type(error).__name__
 
 
-def _shows_the_example_screen(dump: bytes, platform: str, token: str | None) -> bool:
+def _shows_the_example_screen(
+    dump: bytes, platform: str, secrets: Sequence[str | None]
+) -> bool:
     """Whether this dump is of the example app rather than of the sheet.
 
-    Three tells, any of which is enough: the token itself, anything else
-    JWT-shaped, or a result label -- the example renders one only once the
-    sheet has closed. An unreadable dump counts as a yes, because a leaked
-    frame cannot be un-leaked and a missing one costs nothing.
+    Three tells, any of which is enough: a credential this cell is known to
+    hold, anything else JWT-shaped, or a result label -- the example renders
+    one only once the sheet has closed. An unreadable dump counts as a yes,
+    because a leaked frame cannot be un-leaked and a missing one costs
+    nothing.
+
+    Every known credential rather than the one the cell minted, because
+    `wait_expired` re-mints on every poll: by a later step the string in the
+    example's token field is one the runner learned about afterwards, and the
+    original's prefix is not on screen at all. That would leave only the shape
+    rule -- which `evidence.scrub_resource` refuses to rely on for exactly
+    this, having twice been shown to miss a token.
     """
-    if token and token[:_TOKEN_PREFIX_CHARS].encode("utf-8") in dump:
-        return True
+    for secret in secrets:
+        if secret and secret[:_TOKEN_PREFIX_CHARS].encode("utf-8") in dump:
+            return True
     if evidence.JWT_RE.search(dump):
         return True
     try:
@@ -288,7 +371,9 @@ def _shows_the_example_screen(dump: bytes, platform: str, token: str | None) -> 
     return tree.label_from_tree(nodes) is not None
 
 
-def _may_screenshot(verb: str, dump: bytes, platform: str, token: str | None) -> bool:
+def _may_screenshot(
+    verb: str, dump: bytes, platform: str, secrets: Sequence[str | None]
+) -> bool:
     """Whether a frame of this step can be filed without leaking the token.
 
     Both conditions are required. The verb has to be one that runs with the
@@ -298,38 +383,255 @@ def _may_screenshot(verb: str, dump: bytes, platform: str, token: str | None) ->
     `grep eyJ` over the evidence tree cannot see into a compressed PNG, so
     that leak would be invisible to the check meant to catch it.
     """
-    return verb in SHOT_VERBS and not _shows_the_example_screen(dump, platform, token)
+    return verb in SHOT_VERBS and not _shows_the_example_screen(dump, platform, secrets)
 
 
-def _perform(driver, action: Action, *, card: Card, token_path: Path, amount_text: str):
+@dataclass
+class Step:
+    """Everything one action may need, so `_perform` takes two arguments.
+
+    `wait_expired` reaches the merchant API and rewrites the cell's token
+    file, so an action now needs more than a driver. Threading five more
+    keyword arguments would put the same five at every call site in the
+    runner's tests; one object does not.
+    """
+
+    driver: Any
+    sandbox: Any
+    card: Card
+    token_path: Path
+    amount_text: str
+    session_id: str | None
+    #: The cell's growing list of known credentials. `wait_expired` appends to
+    #: it: every read of an open session re-mints a token the runner never
+    #: minted, and everything filed afterwards is scrubbed of it by literal.
+    secrets: list[str | None]
+
+
+def _wait_expired(step: Step, seconds: float, *, sleep=None) -> None:
+    """Waits for the backend to mark the session `expired`, refreshing the token.
+
+    Two jobs on one poll, because they are the same read. A session's
+    `expires_at` is mint + 1200 s (session_ttl + session_grace_period, both
+    env-overridable) while the token minted with it dies at mint + 900 s, so
+    re-presenting the original token after the flip would measure the JWT
+    expiry all over again rather than the server's verdict. A GET on an open
+    session re-mints a token (`PaymentSessionResource.php`, gated on
+    `effective_status === OPEN`), so every poll leaves a fresher one on the
+    cell's 0600 file and the last read before the flip hands it one good for
+    another ~900 s.
+
+    `payments:expire-sessions` runs every minute over sessions that are OPEN
+    and past `expires_at` (`ExpirePaymentSessions.php:29-31`) -- it does not
+    look at transactions at all, so a session holding a failed one expires
+    exactly like an empty one.
+
+    May overshoot `seconds` by up to SESSION_POLL_SECONDS plus one read: the
+    deadline is checked before the sleep, so a poll that starts just inside it
+    still sleeps and reads once more. `budget_for` covers that -- a timed verb
+    gets its own argument plus WAIT_SLACK_SECONDS, which is twice the poll.
+    """
+    # Resolved here rather than as a default, so patching `time.sleep` reaches
+    # this from a whole-cell test as well as from a direct one.
+    sleep = sleep or time.sleep
+    deadline = time.monotonic() + seconds
+    while True:
+        resource = step.sandbox.read(step.session_id)
+        _, minted = evidence.scrub_resource(resource)
+        step.secrets.extend(minted)
+        status = resource.get("status")
+        if status == "expired":
+            return
+        token = resource.get("session_token")
+        if isinstance(token, str) and token:
+            # Read by key from the unscrubbed resource rather than taken from
+            # what the scrub returned: the checkout_url carries the same string
+            # and the order those two are found in is the resource's key order,
+            # not something to depend on.
+            step.token_path.write_text(token, encoding="utf-8")
+        if time.monotonic() >= deadline:
+            raise BudgetExceeded(
+                f"the session was still {status!r} after {seconds:.0f}s, expected "
+                "'expired'"
+            )
+        sleep(SESSION_POLL_SECONDS)
+
+
+def _observe(step: Step, what: str) -> tuple[bool, str | None]:
+    """Runs one `expect` predicate and answers (observed, what was seen).
+
+    Uniform on purpose, and this is the whole reason it exists. The obvious
+    shape -- an `elif` per argument in `run_cell` -- silently discards the
+    answer of every expectation it has no branch for, and the expectations
+    that arrive later are exactly the ones whose only job is to look:
+    `expect google_pay` returning False would leave `google_pay_offered`
+    passing on a sheet with no wallet button on it at all. So the rule is that
+    a **falsy answer is a cell failure**, stated once, and a new expectation is
+    one line here rather than a branch someone has to remember to wire.
+
+    `no_result` is the one inverted case: it hands back the label that should
+    not exist, so it is converted here rather than leaving every caller to know
+    which way round it reads.
+    """
+    driver = step.driver
+    timeout = EXPECT_TIMEOUT_SECONDS.get(what)
+    if timeout is None:
+        # `.get` and a guard rather than a direct lookup, because a direct one
+        # raises KeyError -- and KeyError is exactly the miscategorised error
+        # this whole design is about: `run_cell` reads DriverError and
+        # NotImplementedError as things it knows how to report, and anything
+        # else as a device problem worth spending an interleaved control check
+        # on. An expectation added to EXPECTATIONS without a deadline would
+        # take that path.
+        raise DriverError(f"the runner cannot observe {what!r}: no deadline")
+    if what == "rearmed":
+        return driver.wait_rearmed(step.amount_text, timeout=timeout), None
+    if what == "no_result":
+        label = driver.wait_no_label(timeout=timeout)
+        return label is None, label
+    if what == "acs":
+        return driver.wait_acs(timeout=timeout), None
+    if what == "google_pay":
+        return driver.wait_google_pay(timeout=timeout), None
+    if what == "no_google_pay":
+        return driver.wait_no_google_pay(timeout=timeout), None
+    if what == "saved_card":
+        return driver.wait_saved_card(timeout=timeout), None
+    # Not dead, and not the same drift as the guard above: this one catches an
+    # expectation that HAS a deadline and no branch. Falling off the end
+    # instead would return None, which `run_cell` unpacks as a tuple.
+    raise DriverError(f"the runner cannot observe {what!r}: no predicate")
+
+
+def _teardown_left_undone(actions: Sequence[Action], reached: int) -> list[Action]:
+    """The rig settings this cell turned on and did not live to turn off.
+
+    `reached` is the 1-based index of the action that raised, so
+    `actions[:reached]` is everything that ran -- the failing action included,
+    deliberately: `AndroidDriver.airplane` reads the setting back and raises
+    if it disagrees, which leaves the flip ambiguous rather than undone, and
+    an `off` replayed over a setting that never went on costs nothing.
+    `actions[reached:]` is the tail that now never runs.
+
+    Both halves are required. The `on` must have run, or there is nothing to
+    put back and the runner would be changing a device no cell asked it to
+    change; the `off` must be in the un-run tail, or the cell already did it.
+
+    Ordered by `TEARDOWN` rather than by the cell, because a cell holding two
+    of these has no meaningful order between them -- they are independent
+    device settings, not a stack.
+    """
+    ran = {(a.verb, a.arg) for a in actions[:reached]}
+    un_run = {(a.verb, a.arg) for a in actions[reached:]}
+    return [
+        Action(verb, off)
+        for verb, off in sorted(TEARDOWN)
+        if (verb, "on") in ran and (verb, off) in un_run
+    ]
+
+
+def _replay_teardown(
+    step: Step, actions: Sequence[Action], reached: int
+) -> tuple[list[str], list[str]]:
+    """Puts back what a cell turned on and did not live to turn off.
+
+    Answers with what was replayed and what to say about it, so the caller
+    decides where both go and this stays testable without a whole cell around
+    it. Best effort by construction: every failure here is recorded and none
+    of them is raised, because the cell already has a verdict and a device
+    left dirty must not replace the reason it was.
+    """
+    replayed: list[str] = []
+    problems: list[str] = []
+    for undone in _teardown_left_undone(actions, reached):
+        spelled = f"{undone.verb} {undone.arg}"
+        try:
+            _perform(step, undone)
+        except Exception as error:  # noqa: BLE001
+            problems.append(
+                f"teardown: could not replay {spelled!r} ({error}); "
+                "the device is left for the next cell to refuse"
+            )
+        else:
+            replayed.append(spelled)
+            problems.append(
+                f"teardown: the cell died before {spelled!r}, so the runner replayed it"
+            )
+    return replayed, problems
+
+
+def _on_or_off(verb: str, arg: str | None) -> bool:
+    """`on` or `off`, with nothing else quietly read as `off`.
+
+    `load_cell` refuses any other argument, so no cell file reaches here. But
+    the branches below match on the **verb** alone, so a hand-built `Action`
+    carrying "ON" would have been performed as `off` -- and the cell would
+    have measured the opposite of what it asked for and passed or failed on
+    it. Every other malformed argument in `_perform` is a DriverError; so is
+    this one.
+    """
+    if arg == "on":
+        return True
+    if arg == "off":
+        return False
+    raise DriverError(f"{verb} takes 'on' or 'off', not {arg!r}")
+
+
+def _perform(step: Step, action: Action):
     """Executes one action and returns whatever it answers with.
 
-    `wait_result` answers with a label and `expect rearmed` with a bool.
-    Everything else answers with None.
+    `wait_result` answers with a label and `expect` with an (observed, seen)
+    pair. Everything else answers with None.
     """
-    verb, arg = action.verb, action.arg
+    driver, verb, arg = step.driver, action.verb, action.arg
+    # -- the example app's own screen ---------------------------------------
     if verb == "paste_token":
-        driver.paste_token(token_path)
+        driver.paste_token(step.token_path)
+    elif verb == "present_token":
+        driver.present_token(step.token_path)
+    elif verb == "tap_example_pay":
+        driver.tap_example_pay()
+    elif verb == "enter_token":
+        driver.enter_token(arg)
+    # -- the SDK's sheet ------------------------------------------------------
     elif verb == "type_card":
-        driver.type_card(card)
+        driver.type_card(step.card)
+    elif verb == "type_cvv":
+        driver.type_cvv(step.card.cvv)
     elif verb == "tap_pay":
-        driver.tap_pay(amount_text)
+        driver.tap_pay(step.amount_text)
+    elif verb == "tap_google_pay":
+        driver.tap_google_pay()
+    elif verb == "select_saved_card":
+        driver.select_saved_card()
+    elif verb == "save_card":
+        driver.save_card()
     elif verb == "acs":
         driver.acs(arg)
     elif verb == "cancel_challenge":
         driver.cancel_challenge()
     elif verb == "cancel_form":
         driver.cancel_form()
-    elif verb == "expect" and arg == "rearmed":
-        return driver.wait_rearmed(amount_text, timeout=REARM_TIMEOUT_SECONDS)
+    # -- looking, and spending time -------------------------------------------
+    elif verb == "expect":
+        return _observe(step, arg)
     elif verb == "wait_result":
         return driver.wait_label(timeout=float(arg))
+    elif verb == "wait":
+        time.sleep(float(arg))
+    elif verb == "wait_expired":
+        _wait_expired(step, float(arg))
+    # -- the app process and the device ---------------------------------------
+    elif verb == "relaunch":
+        driver.relaunch()
     elif verb == "background":
         driver.background(float(arg))
     elif verb == "rotate":
         driver.rotate()
     elif verb == "airplane":
-        driver.airplane(arg == "on")
+        driver.airplane(_on_or_off(verb, arg))
+    elif verb == "dont_keep_activities":
+        driver.dont_keep_activities(_on_or_off(verb, arg))
     elif verb == "kill_activity":
         driver.kill_activity()
     elif _grammar_accepts(verb, arg):
@@ -337,13 +639,14 @@ def _perform(driver, action: Action, *, card: Card, token_path: Path, amount_tex
         # -- so the cell has reached for a dimension that has not landed. That
         # is a cell-authoring fault, and NotImplementedError is what `_kind`
         # classifies as one, which is what stops a control check being spent
-        # proving a rig that was never in doubt. `expect <expectation>` lands
-        # here on the same reasoning: the grammar vets the argument too, so a
-        # legal one with no branch is "not landed yet" rather than malformed.
+        # proving a rig that was never in doubt.
         #
-        # The message says *branch* rather than driver method, because the two
-        # can be apart: `relaunch` is implemented on both drivers and is still
-        # unreachable until a branch calls it.
+        # Every verb the grammar holds today does have a branch, so this guard
+        # is about the next one somebody adds: without it a new verb would
+        # raise DriverError below and be read as a device problem. The message
+        # says *branch* rather than driver method, because the two can be
+        # apart -- `relaunch` was implemented on both drivers for a whole
+        # phase while nothing called it.
         raise NotImplementedError(
             f"{verb} is in the action grammar but the runner has no branch "
             f"for it yet (arg {arg!r})"
@@ -357,18 +660,6 @@ def _perform(driver, action: Action, *, card: Card, token_path: Path, amount_tex
         # wrong.
         raise DriverError(f"the runner cannot perform {verb} with {arg!r}")
     return None
-
-
-def _rearm_problem(rearmed: bool | None) -> str:
-    if rearmed is None:
-        # A cell that asserts `rearmed: true` without an `expect rearmed`
-        # action never looked. Saying "the sheet never re-armed" would send
-        # whoever is triaging after an SDK bug that is not there.
-        return (
-            "rearm: the cell expects a re-armed sheet but has no "
-            "'expect rearmed' action to look for one"
-        )
-    return f"rearm: the sheet never re-armed within {REARM_TIMEOUT_SECONDS}s"
 
 
 def run_cell(
@@ -399,6 +690,11 @@ def run_cell(
     #: it is otherwise indistinguishable from a screenshot path that is
     #: quietly broken -- which is a live question for the campaign report.
     screenshots_skipped: list[str] = []
+    #: Rig settings the cell turned on, never reached the `off` for, and that
+    #: the runner put back on its behalf. Filed by name: "the device was left
+    #: dirty and I cleaned it" is a different story from "it was never dirty",
+    #: and the next cell's launch guard cannot tell them apart afterwards.
+    teardown_replayed: list[str] = []
     reached_the_end = False
     authoring = False
 
@@ -429,7 +725,18 @@ def run_cell(
         # 0700 directory, 0600 file, outside the evidence root, gone in the
         # finally even when the driver dies mid-cell.
         token_dir = Path(tempfile.mkdtemp(prefix="paycross-e2e-"))
-        step, verb = "00-launch", "launch"
+        stem, verb = "00-launch", "launch"
+        #: How far into the action list the cell got. Read by the teardown
+        #: replay below, which runs whether or not the loop was ever entered:
+        #: a launch that raises has run no action, and zero is the honest
+        #: answer rather than an undefined name in the handler.
+        index = 0
+        #: The same, for the object the replay performs through. It is built
+        #: below, after the token file; a failure before that point has run no
+        #: action, so `index` is 0 and there is nothing to put back either
+        #: way. Named here so the handler cannot raise NameError over it,
+        #: which is the worst place in this function to acquire a second bug.
+        step = None
         try:
             os.chmod(token_dir, 0o700)
             # The same guard the evidence tree puts on a directory name: this
@@ -443,31 +750,57 @@ def run_cell(
             # and the actions, and the merchant API bounds its own calls.
             clock = time.monotonic()
             driver.launch()
+            # One object rather than five keyword arguments, because
+            # `wait_expired` needs the merchant API and the token file as well
+            # as the driver. `secrets` is the cell's own list, so what that
+            # verb learns is scrubbed from everything filed afterwards.
+            step = Step(
+                driver=driver,
+                sandbox=sandbox,
+                card=cell.card,
+                token_path=token_path,
+                amount_text=amount_text,
+                session_id=session.get("id"),
+                secrets=secrets,
+            )
             for index, action in enumerate(cell.actions, start=1):
-                step, verb = f"{index:02d}-{action.verb}", action.verb
+                stem, verb = f"{index:02d}-{action.verb}", action.verb
                 if time.monotonic() - clock >= budget:
                     raise BudgetExceeded(
-                        f"the cell used its {budget:.1f}s budget before {step}"
+                        f"the cell used its {budget:.1f}s budget before {stem}"
                     )
 
-                answer = _perform(
-                    driver,
-                    action,
-                    card=cell.card,
-                    token_path=token_path,
-                    amount_text=amount_text,
-                )
+                answer = _perform(step, action)
                 if action.verb == "wait_result":
                     # Scrubbed where it is read: the label comes off the
                     # device, and main prints it. Doing it here means the
                     # match, the ledger, result.json and stdout all see the
                     # same value.
-                    label = _redacted(answer, token)
-                elif action.verb == "expect" and action.arg == "rearmed":
-                    # Only this expectation answers with a re-arm. The others
-                    # observe something else entirely, and storing their answer
-                    # here would put it in front of the `rearmed` check.
-                    rearmed = answer
+                    #
+                    # The whole `secrets` list, not the token this cell
+                    # minted: `wait_expired` re-mints on every poll and
+                    # appends, so by a later action the credential on the
+                    # device is one the runner learned about mid-cell -- and a
+                    # re-minted token with short segments is invisible to the
+                    # shape rule, leaving the literal as the only tell.
+                    label = _redacted(answer, *secrets)
+                elif action.verb == "expect":
+                    observed, detail = answer
+                    if action.arg == "rearmed":
+                        # Recorded for result.json. Every expectation's
+                        # verdict is reached below, by name; this one is also
+                        # the field a reader looks for.
+                        rearmed = observed
+                    if not observed:
+                        seen = (
+                            f", saw {_redacted(str(detail), *secrets)!r}"
+                            if detail
+                            else ""
+                        )
+                        problems.append(
+                            f"expect: never observed {action.arg!r} within "
+                            f"{EXPECT_TIMEOUT_SECONDS[action.arg]:.0f}s{seen}"
+                        )
 
                 # Unguarded, unlike the screenshot below and the log
                 # fetch at the end. Those are collected beside a verdict; the
@@ -476,16 +809,16 @@ def run_cell(
                 # nothing left to observe, so the cell ends here rather than
                 # carrying on blind.
                 dump = driver.dump_tree()
-                write(f"{step}.uix", dump)
-                if _may_screenshot(verb, dump, platform, token):
+                write(f"{stem}.uix", dump)
+                if _may_screenshot(verb, dump, platform, secrets):
                     try:
-                        write(f"{step}.png", driver.screenshot())
+                        write(f"{stem}.png", driver.screenshot())
                     except Exception as error:  # noqa: BLE001
                         # A frame is the least of what a cell collects, and
                         # the cell still has a verdict to reach.
                         problems.append(f"screenshot: {error}")
                 elif verb in SHOT_VERBS:
-                    screenshots_skipped.append(step)
+                    screenshots_skipped.append(stem)
             reached_the_end = True
         except Exception as error:  # noqa: BLE001
             # DriverError is the expected shape, but subprocess.TimeoutExpired
@@ -503,19 +836,34 @@ def run_cell(
                 # Best effort by now: a dump that fails here is the second
                 # failure in a row and costs only a diagnosis.
                 dump = driver.dump_tree()
-                write(f"{step}-failed.uix", dump)
+                write(f"{stem}-failed.uix", dump)
             except Exception as secondary:  # noqa: BLE001
                 problems.append(f"driver: no dump after the failure ({secondary})")
             else:
-                if _may_screenshot(verb, dump, platform, token):
+                if _may_screenshot(verb, dump, platform, secrets):
                     try:
-                        write(f"{step}-failed.png", driver.screenshot())
+                        write(f"{stem}-failed.png", driver.screenshot())
                     except Exception as secondary:  # noqa: BLE001
                         problems.append(
                             f"screenshot: none after the failure ({secondary})"
                         )
                 elif verb in SHOT_VERBS:
-                    screenshots_skipped.append(f"{step}-failed")
+                    screenshots_skipped.append(f"{stem}-failed")
+            # After the dump and the frame above, never before them: the tree
+            # at the moment of failure is most of the diagnosis, and putting
+            # the radios back changes the screen it is a picture of.
+            #
+            # This spends time a cell that tripped its budget has already run
+            # out of, and that is the right trade. Airplane mode outlives the
+            # process; left on it fails every remaining cell and the two
+            # controls between them, so the run aborts and the tail of the
+            # matrix goes unrun. `AndroidDriver.launch` still refuses a device
+            # in airplane mode -- this makes that backstop rare rather than
+            # replacing it, because a replay can fail too.
+            if step is not None:
+                replayed, said = _replay_teardown(step, cell.actions, index)
+                teardown_replayed.extend(replayed)
+                problems.extend(said)
         finally:
             try:
                 shutil.rmtree(token_dir)
@@ -536,8 +884,6 @@ def run_cell(
         # second finding invented out of the first one.
         if not matched:
             problems.append(f"label: expected {expected.label!r}, got {label!r}")
-        if expected.rearmed and rearmed is not True:
-            problems.append(_rearm_problem(rearmed))
 
     if session:
         try:
@@ -614,6 +960,7 @@ def run_cell(
                 "expected_label": expected.label,
                 "problems": problems,
                 "screenshots_skipped": screenshots_skipped,
+                "teardown_replayed": teardown_replayed,
                 "budget_seconds": budget,
                 "seconds": (datetime.now(timezone.utc) - started).total_seconds(),
             },

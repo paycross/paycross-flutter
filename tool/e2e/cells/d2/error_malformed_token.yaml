@@ -1,0 +1,36 @@
+# A non-empty token that is not a JWT. `invalidToken` is emitted only for a
+# BLANK token, so what this produces is genuinely open: on iOS
+# SessionTokenDecoder throws and PaymentSheet.swift:45-47 turns it into
+# .failed(recovery: .restart) with no transaction and NO SHEET AT ALL -- the
+# refusal happens on line 46, and `present` is line 65. Android's path has
+# not been read.
+#
+# MEASURED 2026-08-29/30, and PINNED: `result:failure:restart:` with an
+# EMPTY transaction field, on BOTH platforms. So R9's prediction holds on iOS
+# and holds on Android too, whose path R9 said was unread -- there is no
+# divergence to put in the outcome table. The literal is pinned without a
+# <txn> placeholder on purpose: the emptiness is part of what was measured
+# (no transaction is ever created), and <txn> would accept a transaction id
+# here without complaint.
+#
+# The literal is capped at 200 printable characters by cells.py, which is
+# what makes it impossible for a live token to be committed here.
+id: error_malformed_token
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - enter_token:not-a-real-session-token
+  - tap_example_pay
+  - wait_result 60
+expected:
+  label: "result:failure:restart:"
+  merchant:
+    session_status: open
+    txn_count: 0
+    no_succeeded_txn: true

@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
-import 'e2e_label.dart';
-
-/// True when built with `--dart-define=PAYCROSS_E2E=true`.
-///
-/// Off by default and invisible to merchants: it swaps the human-readable
-/// outcome line for the frozen contract label the matrix runner reads out of
-/// the accessibility tree. Nothing else about the app changes.
-const bool _e2e = bool.fromEnvironment('PAYCROSS_E2E');
+import 'automation_screen.dart';
+import 'demo/deeplink.dart';
+import 'demo/home.dart';
+import 'demo/minter.dart';
+import 'demo/presets.dart';
+import 'demo/secrets.dart';
+import 'e2e_mode.dart';
 
 /// Google Pay merchant id, passed straight to `PayCross.configure`.
 ///
@@ -18,20 +17,51 @@ const String _googlePayMerchantId = String.fromEnvironment(
   'PAYCROSS_E2E_GOOGLE_PAY_MERCHANT_ID',
 );
 
+/// The secure store `main` reads the saved merchant id from.
+///
+/// A variable rather than a parameter: `main` is the entrypoint and cannot
+/// take one, and the read has to happen inside the compile-time conditional
+/// below rather than above it. `PayCross.debugHostApi` is the same shape for
+/// the same reason -- a seam a test replaces, and nothing else touches.
+@visibleForTesting
+SecretStore mainSecretStore = const SecretStore();
+
 /// Runs a real payment against sandbox with no backend of your own.
 ///
-/// Paste a session token your server minted and press Pay. That is the whole
-/// integration: the SDK owns the card form, 3-D Secure and the polling.
+/// Under `--dart-define=PAYCROSS_E2E=true` this awaits exactly one thing and
+/// cannot fail: no stored credentials are read, no deep-link subscription is
+/// opened, and the app goes straight to the automation screen. An unguarded
+/// await here would take down all six D0 cells on both platforms, and the
+/// failure would look like an SDK hang.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Under the define this whole expression is the constant branch -- no
+  // storage read, no extra await -- so the frozen build still awaits exactly
+  // one thing and still cannot fail before runApp.
+  final merchantId = kE2e
+      ? (_googlePayMerchantId.isEmpty ? null : _googlePayMerchantId)
+      : await _storedGooglePayMerchantId();
   // Awaited so a fast first tap on Pay cannot race the configure call.
   await PayCross.configure(
     environment: PayCrossEnvironment.sandbox,
-    googlePayMerchantId: _googlePayMerchantId.isEmpty
-        ? null
-        : _googlePayMerchantId,
+    googlePayMerchantId: merchantId,
   );
   runApp(const ExampleApp());
+}
+
+/// The Google Pay merchant id a colleague saved in Settings, or null.
+///
+/// `PayCross.configure` is called once per launch, so this is read here and
+/// nowhere else -- which is why Settings tells the reader that a change takes
+/// effect next launch. Guarded twice over: `SecretStore.read` already answers
+/// null on any failure, and this catches anything it could still throw,
+/// because an exception here would kill the app before `runApp`.
+Future<String?> _storedGooglePayMerchantId() async {
+  try {
+    return (await mainSecretStore.read())?.googlePayMerchantId;
+  } catch (_) {
+    return null;
+  }
 }
 
 class ExampleApp extends StatelessWidget {
@@ -39,116 +69,114 @@ class ExampleApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'PayCross Example',
+    // The automation build keeps the old title: it is the Android recents
+    // label, and the frozen build should look to a runner exactly as it did
+    // before. It reaches no accessibility tree either way.
+    title: kE2e ? 'PayCross Example' : 'PayCross Demo',
     theme: ThemeData(colorSchemeSeed: Colors.indigo),
     darkTheme: ThemeData.dark(useMaterial3: true),
-    home: const CheckoutScreen(),
+    home: kE2e ? const CheckoutScreen() : const DemoHome(),
   );
 }
 
-class CheckoutScreen extends StatefulWidget {
-  const CheckoutScreen({super.key});
+/// Home, wrapped in the deep-link subscription.
+///
+/// Separate from [ExampleApp] so the subscription is opened under a
+/// `Navigator` and a `ScaffoldMessenger` -- a rejected link has somewhere to
+/// report itself, and a run link has somewhere to push to.
+///
+/// Reached only from the demo branch above, so the automation build registers
+/// no deep-link handler at all rather than one that is switched off.
+class DemoHome extends StatefulWidget {
+  const DemoHome({
+    super.key,
+    this.links,
+    this.store = const SecretStore(),
+    this.mintWith = mintWithCredentials,
+  });
+
+  /// Injected by tests. Null means the real platform stream.
+  final Stream<Uri>? links;
+
+  /// The one store both entrances to a run read, so a link and a tile cannot
+  /// disagree about whether this build is configured.
+  ///
+  /// A constructor argument rather than a `main`-level variable like
+  /// [mainSecretStore]: that one exists only because `main` is an entrypoint
+  /// and cannot take parameters. This is a widget, and every other widget in
+  /// this app reaches its platform edges the same way.
+  final SecretStore store;
+  final Future<MintedSession> Function(Credentials, String body) mintWith;
 
   @override
-  State<CheckoutScreen> createState() => _CheckoutScreenState();
+  State<DemoHome> createState() => _DemoHomeState();
 }
 
-class _CheckoutScreenState extends State<CheckoutScreen> {
-  final _token = TextEditingController();
-  String? _outcome;
+class _DemoHomeState extends State<DemoHome> {
+  /// True from a link's arrival until the run it started has been left.
+  ///
+  /// Home's own tiles go dead while a run is being set up, but a tile cannot
+  /// be tapped from under a pushed Run screen and a link can arrive at any
+  /// moment. Without this a second `am start` while the first run is still
+  /// open mints a second live session and stacks a second Run screen on it.
+  ///
+  /// Deliberately not `setState`: nothing renders this, and a link that
+  /// rebuilt the tree under an open run would be a worse bug than this one.
   bool _busy = false;
 
-  @override
-  void dispose() {
-    _token.dispose();
-    super.dispose();
+  /// Says something on the channel a malformed link already uses.
+  ///
+  /// Silence reads as a broken build: the phone is in somebody's hand and the
+  /// link they just fired did nothing they can see. What is said names the
+  /// way out, or a type -- never a platform message, which can carry the URL
+  /// that failed.
+  void _say(BuildContext context, String message) {
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _pay() async {
-    setState(() {
-      _busy = true;
-      _outcome = null;
-    });
+  /// The one refusal with a way out to name: something is over Home.
+  void _refuse(BuildContext context) =>
+      _say(context, 'Link ignored — close the open screen first.');
 
-    String describe;
-    try {
-      final result = await PayCross.presentPayment(_token.text.trim());
-      // Exhaustive: adding a result case makes this a compile error rather
-      // than a silently unhandled outcome.
-      describe = _e2e
-          ? labelForResult(result)
-          : switch (result) {
-              PayCrossSuccess(:final transactionId, :final amount) =>
-                'Paid ${amount.minorUnits} ${amount.currencyCode} — $transactionId',
-              PayCrossFailure(:final recovery) when recovery.isRetryable =>
-                'Declined, retryable — $recovery',
-              PayCrossFailure(:final recovery) => 'Declined — $recovery',
-              PayCrossCancelled() => 'Cancelled',
-            };
-    } on PayCrossIntegrationError catch (e) {
-      describe = _e2e
-          ? labelForError(e)
-          : e.code == PayCrossErrorCode.resultUnknown
-          // Distinct from a failure on purpose: the payment may have gone
-          // through, so the merchant reconciles rather than re-charging.
-          ? 'Outcome unknown — reconcile server-side. ${e.message}'
-          : 'Integration error (${e.code.name}) — ${e.message}';
+  Future<void> _run(BuildContext context, Preset preset) async {
+    if (_busy) {
+      _refuse(context);
+      return;
     }
-
-    if (!mounted) return;
-    setState(() {
+    // Anything pushed over Home -- a Run screen a tile started, Settings, the
+    // editor -- makes Home no longer the current route; `_busy` only knows
+    // about runs this widget started.
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) {
+      _refuse(context);
+      return;
+    }
+    _busy = true;
+    try {
+      await runPreset(
+        context,
+        preset,
+        preset.body,
+        store: widget.store,
+        mintWith: widget.mintWith,
+      );
+    } catch (problem) {
+      // A link is fire-and-forget -- `onRun` returns void -- so anything that
+      // escapes here has no owner and lands as an async error with no screen
+      // attached. Only the type, for the reason `_say` gives.
+      if (context.mounted) {
+        _say(context, 'Could not start the run: ${problem.runtimeType}');
+      }
+    } finally {
       _busy = false;
-      _outcome = describe;
-    });
+    }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('PayCross Example')),
-    body: Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Paste a sandbox session token minted by your server.'),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _token,
-            minLines: 3,
-            maxLines: 5,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: const InputDecoration(
-              labelText: 'Session token',
-              border: OutlineInputBorder(),
-              hintText: 'eyJhbGciOi…',
-            ),
-          ),
-          const SizedBox(height: 20),
-          FilledButton(
-            onPressed: _busy ? null : _pay,
-            child: _busy
-                ? const SizedBox(
-                    height: 18,
-                    width: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Pay'),
-          ),
-          if (_outcome != null) ...[
-            const SizedBox(height: 24),
-            // Plain Text, and deliberately unwrapped. Verified against a
-            // live simulator: SelectableText produces no node in the iOS
-            // accessibility tree at all, and wrapping either widget in
-            // Semantics suppressed it too -- only a bare Text surfaced. The
-            // payment outcome is the one string here that must never be
-            // silent, so it trades selection for being readable at all.
-            // The E2E matrix runner reads this same node, so the shape of
-            // this widget is part of a frozen contract -- see e2e_label.dart.
-            Text(_outcome!, style: const TextStyle(height: 1.4)),
-          ],
-        ],
-      ),
-    ),
+  Widget build(BuildContext context) => DeepLinkListener(
+    links: widget.links,
+    onRun: (preset) => _run(context, preset),
+    child: HomeScreen(store: widget.store, mintWith: widget.mintWith),
   );
 }

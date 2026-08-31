@@ -26,10 +26,15 @@ LEGACY_LABEL_PREFIXES = (
     "Integration error",
 )
 
-#: `PaymentViewModel.kt:244,269,393`. Identical after any non-cancel submit
-#: failure, so on its own it does not mean "retryable decline" -- pass criterion
-#: 2's merchant check is what separates those.
-ANDROID_REARM_BANNER = "Payment failed. Please try again."
+#: `PaymentViewModel.kt` renders one of these after any non-cancel submit
+#: failure -- the first when the backend declined, the second when the request
+#: never got there. Both mean the same thing to `sheet_rearmed`: the sheet took
+#: a failure and offered the form again. Neither means "retryable decline" on
+#: its own; pass criterion 2's merchant check is what separates those.
+ANDROID_REARM_BANNERS = (
+    "Payment failed. Please try again.",
+    "Network error. Please try again.",
+)
 
 _BOUNDS = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 _CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
@@ -216,7 +221,7 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
         raise ValueError("sheet_rearmed needs the cell's amount text")
     if platform == "android":
         return bool(
-            find_text_exact(nodes, ANDROID_REARM_BANNER)
+            any(find_text_exact(nodes, banner) for banner in ANDROID_REARM_BANNERS)
             and find_text_exact(nodes, f"Pay {amount_text}")
         )
     if platform == "ios":

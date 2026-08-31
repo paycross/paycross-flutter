@@ -30,7 +30,7 @@ ADB = rig_path(
     "PAYCROSS_E2E_ADB",
     "/mnt/c/Users/Syllo/AppData/Local/Android/Sdk/platform-tools/adb.exe",
 )
-PACKAGE = "com.paycross.paycross_flutter_example"
+PACKAGE = "com.paycross.flutterdemo"
 
 #: Every adb call is bounded. A wedged emulator would otherwise hold the whole
 #: matrix on one round trip.
@@ -82,10 +82,31 @@ _KEYCODE_DEL = 67
 _KEYCODE_BACK = 4
 _KEYCODE_MOVE_END = 123
 
+#: The example app's own Pay, which is a Flutter widget and therefore a
+#: content-desc. The SDK's Compose Pay carries the amount in `text` instead.
+EXAMPLE_PAY = "Pay"
+
+#: How long the radios take to settle after the toggle. Measured generously:
+#: a cell that submits into a half-cut network measures neither state.
+AIRPLANE_SETTLE_SECONDS = 8
+
+#: How much raw device text a driver message may carry. These reach stdout and
+#: the cell's `problems`, and a wedged adb answers with a screenful.
+QUOTED_DEVICE_TEXT_CHARS = 80
+
 CARD_NUMBER = "Card number input"
 EXPIRY = "Expiry date input"
 CVV = "CVV input"
 CARDHOLDER = "Cardholder name input"
+
+#: Rendered by Google Play services, not by the SDK -- so it moves with the
+#: GMS version and with the device locale. The SDK's own testTag is invisible
+#: to uiautomator because testTagsAsResourceId is never set; that is filed as
+#: payment-android-sdk#26, and until it lands this is the only handle there
+#: is. Confirmed
+#: against this campaign's own dumps, most recently 2026-08-30.
+GOOGLE_PAY_DESC = "Pay with GPay"
+
 ACS_TITLE = "Sandbox 3DS Challenge"
 CANCEL_TITLE = "Cancel Payment?"
 CANCEL_CONFIRM = "Yes, Cancel"
@@ -257,6 +278,32 @@ class AndroidDriver(Driver):
                 f"device locale is {locale!r}, expected 'en-US': the sheet's Pay "
                 "button text would not match"
             )
+        # Fails OPEN, and the read-back in `airplane()` fails closed. The
+        # asymmetry is deliberate: a device that has never had this setting
+        # written answers `null`, and refusing to launch on that would break
+        # every rig where nothing has ever touched it -- whereas `null` from
+        # the read-back means the write we just asked for did nothing. `null`
+        # cannot reach `airplane('off')`, because `cell_rules` only lets a
+        # cell turn it off after turning it on, which writes it.
+        airplane = self._shell(["shell", "settings get global airplane_mode_on"])
+        if airplane.strip() == "1":
+            # A cell that failed between `airplane on` and `airplane off` left
+            # it on, and every cell after it would fail for that reason while
+            # looking like an SDK finding. Refusing here makes the interleaved
+            # control fail too, which is exactly right: this is a rig fault,
+            # and exit 3 says so.
+            #
+            # `run_cell` now replays a teardown the cell did not live to
+            # reach, so arriving here means that replay was REACHED AND
+            # FAILED -- or never ran, because the runner itself died. Either
+            # way the device is dirty and nothing in this process knows how to
+            # clean it. Which is why this still refuses rather than clearing
+            # the setting: a run that silently repaired the rig would be a run
+            # that had stopped reporting that it broke it.
+            raise DriverError(
+                "the device is in airplane mode: a previous cell left it on. "
+                "Run: adb shell cmd connectivity airplane-mode disable"
+            )
         self._shell(["shell", "am", "force-stop", PACKAGE])
         self._shell(["shell", "monkey", "-p", PACKAGE, "-c", _LAUNCHER, "1"])
         self._sleep(LAUNCH_SETTLE_SECONDS)
@@ -277,16 +324,18 @@ class AndroidDriver(Driver):
         )
         self._shell(["shell"], stdin=script)
 
-    def paste_token(self, token_path: Path) -> None:
-        token_path = Path(token_path)
-        text = read_token(token_path, verb="type")
-        expected = len(text)
-
-        field = self._find(
+    def _find_token_field(self):
+        # By class, because the example's field carries no identifier: it is
+        # the only EditText the screen has.
+        return self._find(
             lambda nodes, _: [n for n in nodes if n.type.endswith("EditText")],
             "",
             "the token field",
         )
+
+    def _enter_token_text(self, text: str) -> None:
+        """Everything `paste_token` does up to and including the read-back."""
+        field = self._find_token_field()
         self._tap(field.centre)
         self._sleep(SETTLE_SECONDS)
 
@@ -295,7 +344,7 @@ class AndroidDriver(Driver):
         self._key(_KEYCODE_BACK)  # drop the IME
         self._sleep(SETTLE_SECONDS)
 
-        seen = 0
+        expected, seen = len(text), 0
 
         def agreed(nodes):
             nonlocal seen
@@ -310,11 +359,79 @@ class AndroidDriver(Driver):
             # an SDK bug. Fail here instead, without echoing the token.
             raise DriverError(
                 f"token entry never agreed with the file: {seen} characters on "
-                f"screen, {expected} in {token_path}"
+                f"screen, {expected} expected"
             )
 
-        self._tap_desc("Pay")
+    def paste_token(self, token_path: Path) -> None:
+        self._enter_token_text(read_token(Path(token_path), verb="type"))
+        self.tap_example_pay()
         self._find(tree.find_content_desc, CARD_NUMBER, "the card form", timeout=60)
+
+    def present_token(self, token_path: Path) -> None:
+        """The token and the example's Pay, with no wait for a sheet.
+
+        `paste_token` ends by waiting 60 s for the SDK's card form. For a
+        token the SDK is expected to refuse there is never going to be one --
+        on iOS the refusal happens before `present` is called at all
+        (PaymentSheet.swift:42-51 against line 65) -- so that wait spends a
+        minute and then reports "the card form never appeared" instead of the
+        label the app has been showing the whole time.
+        """
+        self._enter_token_text(read_token(Path(token_path), verb="type"))
+        self.tap_example_pay()
+
+    def tap_example_pay(self) -> None:
+        # content-desc, not text: a Flutter widget surfaces as content-desc
+        # with an empty text, and the SDK's own Compose Pay does the opposite.
+        self._tap_desc(EXAMPLE_PAY)
+
+    def enter_token(self, literal: str) -> None:
+        """Types a short literal into the example's token field.
+
+        Deliberately not through `read_token`: what the SDK does with
+        something that is *not* a credential is the whole point of the cells
+        that use this. `cells.py` caps the literal at 200 printable,
+        space-free, colon-free characters, so nothing a live token could be
+        fits through here.
+        """
+        field = self._find_token_field()
+        self._tap(field.centre)
+        self._sleep(SETTLE_SECONDS)
+        self._input_text(literal)
+        self._key(_KEYCODE_BACK)
+        self._sleep(SETTLE_SECONDS)
+
+    def airplane(self, on: bool) -> None:
+        """Cuts the device's network, and proves it was cut.
+
+        `cmd connectivity airplane-mode` rather than the older
+        `settings put global airplane_mode_on` plus a broadcast: that
+        broadcast needs a system permission on modern Android, and without it
+        the setting flips while the radios stay up -- so a cell would report
+        that the SDK "survived a network cut" having measured nothing at all.
+        The read-back is what makes that impossible.
+
+        API 30 and up. D6's API 24 floor image runs D0 only, which never
+        reaches this.
+        """
+        want = "1" if on else "0"
+        said = self._shell(
+            ["shell", f"cmd connectivity airplane-mode {'enable' if on else 'disable'}"]
+        )
+        self._sleep(AIRPLANE_SETTLE_SECONDS)
+        got = self._shell(["shell", "settings get global airplane_mode_on"]).strip()
+        if got != want:
+            # The toggle's own answer as well as the read-back. Below API 30
+            # the service is not there and `cmd` says exactly that, while the
+            # read-back reports a perfectly ordinary '0' -- so without this
+            # the message describes the symptom and hides the cause. Both are
+            # bounded: they are raw device text on their way to stdout.
+            raise DriverError(
+                f"airplane mode reads {got[:QUOTED_DEVICE_TEXT_CHARS]!r} after "
+                f"asking for {want!r}: the cut did not take, so anything this "
+                "cell measured is meaningless. The toggle said "
+                f"{said.strip()[:QUOTED_DEVICE_TEXT_CHARS]!r}"
+            )
 
     def type_card(self, card: Card, *, verify_pan: bool = True) -> None:
         for field in (CARD_NUMBER, CARDHOLDER):
@@ -356,6 +473,19 @@ class AndroidDriver(Driver):
     def tap_pay(self, amount_text: str) -> None:
         self._tap_text(f"Pay {amount_text}")
 
+    def tap_google_pay(self, **kw) -> None:
+        # Tapped by bounds: the node carrying the description is a
+        # non-clickable wrapper, because the click handler lives on the
+        # AndroidView rather than on a Compose node. `**kw` reaches `_find`'s
+        # timeout, exactly as `_tap_text` and `_tap_desc` pass theirs -- the
+        # runner never uses it, and a test that means to reach the deadline
+        # would otherwise spend thirty real seconds getting there.
+        self._tap(
+            self._find(
+                tree.find_content_desc, GOOGLE_PAY_DESC, "the Google Pay button", **kw
+            ).centre
+        )
+
     def wait_label(
         self,
         timeout: float,
@@ -370,13 +500,20 @@ class AndroidDriver(Driver):
             raise self.no_label_error(timeout)
         return label
 
+    def wait_acs(self, timeout: float = 120) -> bool:
+        """Waits for the sandbox ACS page without answering it."""
+        self._find(
+            tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=timeout
+        )
+        return True
+
     def acs(self, outcome: str) -> None:
-        self._find(tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=120)
+        self.wait_acs()
         # The outcome is chosen by which button is tapped, not by the PAN.
         self._tap_text(outcome)
 
     def cancel_challenge(self) -> None:
-        self._find(tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=120)
+        self.wait_acs()
         self._confirm_cancel()
 
     def cancel_form(self) -> None:
@@ -399,6 +536,38 @@ class AndroidDriver(Driver):
             interval,
         )
         return found is not None
+
+    def wait_google_pay(self, timeout: float = 30) -> bool:
+        found = self._poll(
+            lambda nodes: bool(tree.find_content_desc(nodes, GOOGLE_PAY_DESC)) or None,
+            timeout,
+            2,
+        )
+        return found is not None
+
+    def wait_no_google_pay(self, timeout: float = 20) -> bool:
+        """True only if the button is absent for the WHOLE window.
+
+        Absence has to be waited out rather than waited for. Readiness is a
+        LaunchedEffect that runs after the session loads and after an
+        asynchronous isReadyToPay (PaymentActivity.kt), so a button that is
+        merely late would satisfy a single look -- and this expectation would
+        then pass on every session, which is the one thing it must never do.
+
+        Written out rather than expressed through `_poll`, which answers as
+        soon as its `look` finds something: here finding something is the
+        answer False, and finding nothing has to keep going. Tolerating a
+        refused dump while the deadline is live is the one rule it does share,
+        because a device that will not dump is not a device with no button.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            live = time.monotonic() < deadline
+            if tree.find_content_desc(self._nodes(tolerate=live), GOOGLE_PAY_DESC):
+                return False
+            if not live:
+                return True
+            self._sleep(2)
 
     # -- evidence ------------------------------------------------------------
 

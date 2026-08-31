@@ -235,6 +235,7 @@ def test_arg_actions_still_reads_as_a_set_of_verbs():
         "dont_keep_activities",
         "enter_token",
         "expect",
+        "wait",
         "wait_expired",
         "wait_result",
     }
@@ -466,6 +467,7 @@ def test_a_new_bare_verb_parses_and_takes_no_argument(verb):
     [
         ("dont_keep_activities on", "dont_keep_activities maybe"),
         ("enter_token not.a.real.token", "enter_token has spaces"),
+        ("wait 300", "wait soon"),
         ("wait_expired 960", "wait_expired soon"),
     ],
 )
@@ -482,6 +484,21 @@ def test_expect_takes_every_expectation_and_nothing_else(expectation):
     assert cells.parse_action(f"expect {expectation}", "w").arg == expectation
     with pytest.raises(cells.CellError, match="argument must be"):
         cells.parse_action("expect success", "w")
+
+
+@pytest.mark.parametrize("bad", ["wait 0", "wait -30", "wait inf"])
+def test_wait_refuses_a_duration_that_would_never_end(bad):
+    # A bare `wait` exists to spend the 300 s between a token's JWT `exp` and
+    # its session's `expires_at`. Zero spends nothing and `inf` parses as a
+    # float, so a cell carrying one would hang the run rather than time out.
+    with pytest.raises(cells.CellError, match="argument must be"):
+        cells.parse_action(bad, "w")
+
+
+def test_expect_acs_observes_the_page_without_answering_it():
+    # The network-cut-during-challenge cell has to see the sandbox ACS page
+    # and leave it alone; `acs:<outcome>` would tap a button.
+    assert cells.parse_action("expect acs", "w") == cells.Action("expect", "acs")
 
 
 def test_enter_token_refuses_a_token_long_enough_to_be_a_real_one():
@@ -558,11 +575,69 @@ def test_expecting_no_label_without_the_action_that_looks_is_refused(tmp_path):
     assert "no_result" in message
 
 
-def test_looking_for_no_label_the_cell_does_not_expect_is_refused(tmp_path):
+def test_a_literal_label_with_nothing_that_captures_one_is_refused(tmp_path):
+    # `wait_result` is the only action that sets the label the expectation is
+    # compared against, so a cell expecting one without it cannot pass -- it
+    # would reach the verdict with `label` still None and fail on a device.
     body = CONTROL.replace("  - wait_result 120\n", "  - expect no_result\n")
 
     message = expect_rejected(tmp_path, body)
-    assert "does not expect" in message
+    # Both new rules name `wait_result`, so matching that alone would pass
+    # whichever fired. Pin the clause only this one has.
+    assert "nothing would ever capture one" in message
+
+
+def test_expecting_no_label_while_still_waiting_for_one_is_refused(tmp_path):
+    # The other half of the same rule, and the sharper one: `wait_result`
+    # RAISES when no label turns up, so a cell holding one can never reach a
+    # verdict with `label` None. Expecting `<none>` beside it is a cell that
+    # cannot pass either way -- it fails in the driver if the label is absent
+    # and on the expectation if it is not.
+    body = CONTROL.replace('label: "result:success:<txn>"', 'label: "<none>"')
+    body = body.replace("  - tap_pay\n", "  - tap_pay\n  - expect no_result\n")
+
+    message = expect_rejected(tmp_path, body)
+    assert "raises rather than answering None" in message
+
+
+def test_one_platform_wanting_silence_beside_one_wanting_a_label_is_refused(tmp_path):
+    # The divergence the replaced pairing rule used to catch, and the reason
+    # dropping it costs nothing. One action list is shared, so a cell where
+    # ios wants silence and android wants a label needs `wait_result` to be
+    # both absent (for ios, which cannot pass with one) and present (for
+    # android, which cannot capture a label without one). The two halves of
+    # the rule disagree, and the `<none>` half fires first and names ios.
+    body = CONTROL.replace(
+        "  - wait_result 120\n",
+        "  - wait_result 120\n  - expect no_result\n",
+    ) + textwrap.dedent(
+        """\
+        expected.ios:
+          label: "<none>"
+        """
+    )
+
+    message = expect_rejected(tmp_path, body)
+    assert "['ios']" in message
+    assert "raises rather than answering None" in message
+
+
+def test_a_label_captured_before_an_absence_is_asserted_is_allowed(tmp_path):
+    # The two-phase shape `session_expired_server` needs: a first phase that
+    # produces a label (the cancel) and a second that must produce none (a
+    # dead session re-presented). The label expectation describes the LAST
+    # `wait_result`, and `expect no_result` is an independent assertion about
+    # what comes after it -- so a literal label and an absence check are not
+    # in conflict, and the runner checks the absence on its own verdict.
+    body = CONTROL.replace(
+        "  - wait_result 120\n",
+        "  - wait_result 120\n  - relaunch\n  - expect no_result\n",
+    )
+
+    cell = cells.load_cell(write(tmp_path, "control.yaml", body))
+
+    assert cell.expected_for("android").label == "result:success:<txn>"
+    assert ("expect", "no_result") in [(a.verb, a.arg) for a in cell.actions]
 
 
 def test_a_platform_override_alone_can_require_the_no_result_action(tmp_path):

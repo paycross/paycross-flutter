@@ -1,0 +1,95 @@
+# The SERVER has expired the session, and the token presented is still valid.
+#
+# Three moving parts, in order:
+#
+#  1. A retryable decline first, so the session holds a FAILED transaction
+#     and this cell's <txn> is non-empty -- which is the only thing that
+#     distinguishes it from session_expired_jwt. The do-not-honor PAN is used
+#     rather than a challenge because it reaches the same state in a third of
+#     the time. `payments:expire-sessions` does not look at transactions
+#     (ExpirePaymentSessions.php:29-31), so a session holding one expires
+#     exactly like an empty one.
+#  2. `wait_expired` polls the merchant API until the every-minute job flips
+#     the session, AND rewrites the token file from every read on the way --
+#     an open session re-mints a token on every GET
+#     (PaymentSessionResource.php, gated on effective_status === OPEN --
+#     ANY non-open status returns a null token, and `effective_status` reads
+#     `expired` as soon as expires_at passes, BEFORE the sweeper runs), so
+#     the last read before the flip leaves a token good for another ~900 s.
+#     Without that refresh this cell would measure the JWT expiry again
+#     rather than the server's verdict.
+#  3. `relaunch` clears the example's token field and the previous result, so
+#     `present_token` presents into a clean app.
+#
+# MEASURED 2026-08-29/30, and it contradicted the source reading this comment
+# used to carry. That reading cited SessionResolution.swift:37-40 answering
+# `expired` with .failed(transactionID: resumeID, recovery: .restart) AFTER
+# presenting the sheet, and concluded a sheet appears "briefly". It appears
+# and it STAYS. On BOTH platforms the dump 90 s after present_token still
+# carries the whole payment form -- card number, expiry, CVV, a live Pay
+# button, no error banner -- on a session the server had already expired.
+# Android differs from its own present_token dump by exactly ONE node, a
+# transient com.google.android.gms pay_button_loading_logo inside the Google
+# Pay button; every element of the form itself is unchanged. Neither SDK
+# detects a server-expired session at present time while the JWT is still
+# valid.
+#
+# So this cell asserts two things, in two phases, and the action list is
+# ordered to keep them apart:
+#
+#  1. THE CANCEL PRODUCED A LABEL. `wait_result 120` captures
+#     `result:cancelled`, and because it is now the only wait_result in the
+#     cell, `expected.label` compares against it directly. It used to be an
+#     intermediate the label check ignored; it is the label check now.
+#  2. RE-PRESENTING A DEAD SESSION RESOLVES NOTHING. `expect no_result` waits
+#     out NO_RESULT_TIMEOUT_SECONDS and passes only if no label appears --
+#     which is the payable-sheet measurement stated as an assertion instead of
+#     as a driver timeout.
+#
+# The cell used to end on a second `wait_result 90` with `label: <any>`, and
+# that could never pass: nothing after `present_token` can resolve a label, so
+# the driver spent 90 s and reported "no contract label within 90.0s" on both
+# platforms, every run. It was a guaranteed red recording a real measurement,
+# which is the worst of both -- the finding was in the failure message rather
+# than in an assertion. `expect no_result` is the same measurement, green when
+# the behaviour holds and red when it changes.
+#
+# Note the two phases needed a rule change in cells.py: `expect no_result`
+# used to force `label: <none>` on every platform, which forbade capturing a
+# label earlier in the same cell. The label expectation describes the LAST
+# wait_result and `expect no_result` is a separate assertion about what comes
+# after it, so the two are not in conflict.
+#
+# Expected duration is about 30 minutes, most of it the wait_expired. The
+# runner's budget for it is 2966.4 s (49.4 min) -- a hang backstop sized off
+# the action list, not a prediction, and deliberately clear of the real
+# time so a slow sweeper does not present as a hang. It is one cell and it
+# resumes like any other.
+id: session_expired_server
+platforms: [android, ios]
+card:
+  pan: "4111111111150002"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - expect rearmed
+  - cancel_form
+  - wait_result 120
+  - wait_expired 1400
+  - relaunch
+  - present_token
+  - expect no_result
+expected:
+  label: "result:cancelled"
+  rearmed: true
+  merchant:
+    session_status: expired
+    txn_count: 1
+    txn_status: failed
+    no_succeeded_txn: true

@@ -144,6 +144,12 @@ ever becomes possible, `ios-0.1.1-release`.
 | `--build-id` | names the build under test, e.g. `android-0.3.3-release-r8`. Written into every progress record; a resume only trusts a pass whose build-id matches. |
 | `--only` | run just this cell; repeatable |
 
+A run executes every `*.yaml` in `--cells` that declares this platform, in
+**filename order**. The glob is not recursive, so point it at a dimension
+directory such as `cells/d0` rather than at `cells/`. Filename order is the
+only ordering there is — a pair of cells that must run in sequence, such as
+D5's save-then-reuse, is ordered by naming them so.
+
 A rerun **skips what already passed** under the same evidence root, so an
 interrupted matrix is resumed rather than restarted.
 
@@ -212,10 +218,11 @@ dimensions, and do not share an evidence root either: `passed_cells` keys on the
 cell id alone, so D0's `control` pass would otherwise satisfy D2's resume.
 
 `tool/e2e/tests/cell_rules.py` holds the authoring rules every dimension's
-directory must satisfy — a control cell, a terminal verb last, no PAN that
-approves on TEST, `no_succeeded_txn` pinned to a session that exists, no
-airplane mode on iOS. A new dimension's test file calls `check_cell_dir` rather
-than restating them.
+directory must satisfy — a control cell, a terminal verb last (teardown aside),
+no PAN that approves on TEST, `no_succeeded_txn` pinned to a session that
+exists, no airplane mode on iOS, every rig setting a cell turns on turned off
+again, and no bare `wait` outside the expiry recipes. A new dimension's test
+file calls `check_cell_dir` rather than restating them.
 
 ### Pass criteria
 
@@ -271,8 +278,10 @@ expected:
 # cell needs it. No D0 cell carries an override: both platforms return
 # change_method for authentication_failed, which is what the live runs measured.
 # Merged one key deep over `expected`; `merchant` is merged key by key, so an
-# override restates only the field that actually differs. D2 is expected to be
-# the first live user of this path.
+# override restates only the field that actually differs. No D2 cell carries
+# one either: where its platforms may diverge it records the label per
+# platform with `<any>` rather than asserting two different ones. Phase 3 is
+# where an override lands, once a live run has shown one is needed.
 expected.ios:
   merchant:
     failure_recovery: retry
@@ -342,13 +351,46 @@ Things worth knowing before you write an expectation:
 | `acs:<outcome>` | waits for the sandbox ACS page and taps one outcome button |
 | `cancel_challenge` | abandons an in-flight challenge and confirms |
 | `cancel_form` | abandons the sheet from the card form and confirms |
-| `expect <what>` | observes a non-result: `rearmed`, `no_result`, `google_pay`, `no_google_pay`, `saved_card`. `expect rearmed` waits up to 30 s for the `sheet_rearmed` predicate |
+| `expect <what>` | observes a non-result — see the table below |
 | `wait_result <s>` | waits up to `<s>` for a contract label |
-| `wait_expired <s>` | waits `<s>` for a session to pass its own expiry |
+| `wait <s>` | spends `<s>` and does nothing else — see below |
+| `wait_expired <s>` | waits up to `<s>` for a session to pass its own expiry, refreshing the cell's token on every poll |
 | `enter_token <literal>` | types a literal into the token field, for the malformed-token cells |
 | `relaunch` | cold-starts the app mid-cell. On iOS this keeps the console window the cell has already written; `launch` would truncate it |
-| `type_cvv`, `tap_google_pay`, `select_saved_card`, `save_card` | wallet and saved-card entry (D4, D5) |
-| `background <s>`, `rotate`, `airplane on\|off`, `kill_activity`, `dont_keep_activities on\|off` | lifecycle (D3) |
+| `airplane on\|off` | cuts the device's network and reads the setting back. **Android only** |
+| `tap_google_pay` | taps the wallet button, by bounds — see below. **Android only** (D4) |
+| `type_cvv`, `select_saved_card`, `save_card` | saved-card entry (D5) |
+| `background <s>`, `rotate`, `kill_activity`, `dont_keep_activities on\|off` | lifecycle (D3) |
+
+Each `expect` argument has its own deadline, and a falsy answer fails the cell
+naming the expectation and the number the wait really used:
+
+| `expect` | Waits for | Deadline |
+|---|---|---|
+| `rearmed` | `tree.sheet_rearmed` — the sheet took a failure and offered the form again | 30 s |
+| `no_result` | nothing to appear. Hands back the label that did, if one does | 60 s |
+| `acs` | the sandbox ACS page, **without** tapping an outcome | 120 s |
+| `google_pay` | the wallet button (D4) | 30 s |
+| `no_google_pay` | no wallet button. Waited **out**, not for | 20 s |
+| `saved_card` | a stored card on the sheet (D5) | 30 s |
+
+**The Google Pay button's handle belongs to Google.** `tap_google_pay`,
+`expect google_pay` and `expect no_google_pay` all match
+`content-desc="Pay with GPay"`, which is drawn by Play services rather than by
+the SDK — so it moves with the **GMS version** and with the **device locale**,
+and it can break without a line changing in either repo. The SDK does tag its
+own button (`Modifier.testTag("google_pay_button")`), but
+`testTagsAsResourceId` is set nowhere in either repo, so Compose test tags are
+invisible to `uiautomator`; that is filed as **payment-android-sdk#26**, and
+until it lands this is the only handle there is. The node is also **not
+clickable** — the click handler lives on the `AndroidView`, not on a Compose
+node — so it is tapped at its bounds centre.
+
+`expect no_google_pay` is the one expectation that waits its answer **out**
+rather than waiting for it. Readiness is a `LaunchedEffect` that runs after the
+session loads and after an asynchronous `isReadyToPay`, so a button that is
+merely late would satisfy a single look — and the expectation would then pass
+on every session, which is the one thing it must never do.
 
 `paste_token` and `present_token` differ in one thing, and it matters. Both
 enter the minted token and tap the example's Pay; **`paste_token` then waits for
@@ -357,16 +399,16 @@ the expected answer: on iOS a malformed or expired token is refused before
 `present` is ever called, so waiting for a sheet costs a 60-second timeout and
 then reports the wrong failure.
 
-Everything in this table below `cancel_form` is **in the grammar but not yet
-executable**: the vocabulary is opened a dimension at a time so cell files can
-be written against a stable list, and the dimension that owns a verb adds the
-runner branch and the driver method together. Until then a cell using one fails
-as an **authoring mistake** rather than a device fault, so no control check is
-spent proving a rig that was never in doubt.
-
-`relaunch` is the one that is only half missing: both drivers implement it, and
-only the runner branch is outstanding. `expect` behaves the same way per
-argument — `rearmed` executes, the other four do not yet.
+The last two rows are **in the grammar but not yet executable**, and so is
+`expect saved_card`. The vocabulary is opened a dimension at a time so cell
+files can be written against a stable list; the dimension that owns a verb
+writes the driver method, and every verb already reaches a `_perform` branch
+that calls it. Until the method lands, the declaration on `Driver` raises
+`NotImplementedError` and a cell using it fails as an **authoring mistake**
+rather than a device fault — so no control check is spent proving a rig that
+was never in doubt. That distinction is the whole reason the declarations
+exist: a missing attribute would raise `AttributeError`, which the runner
+reads as a broken device, and two of those in a row abort the run.
 
 A verb outside the grammar, or an argument the verb does not take, is a
 different failure and stays a device-side `DriverError`: `load_cell` refuses
@@ -386,7 +428,61 @@ literal would leave the cell measuring a string it never sent.
 
 `acs:<outcome>` must match the sandbox ACS button's text **verbatim** — the
 outcome is chosen by which button is tapped, not by the PAN. A typo there buys a
-120-second page wait before it fails.
+120-second page wait before it fails. Use `expect acs` where the cell has to see
+the page and then leave it alone.
+
+`wait` exists for exactly one recipe and it is not slowness. A session token's
+JWT `exp` is mint + 900 s while the session's own `expires_at` is mint + 1200 s
+(`session_ttl` + `session_grace_period`), so the only way to present a token
+that is expired while its session is still open is to wait out the difference.
+`cell_rules` refuses it in any cell whose id does not name an expiry.
+
+### Rig guards, and putting a cell's toys away
+
+`airplane on` and `dont_keep_activities on` change the **device**, not the app,
+and the device undoes neither: not at the end of the cell, not on a failure,
+not when the process exits. Left on, they fail every cell that follows —
+including the interleaved control, so the run aborts as a rig fault after two
+of them.
+
+Three things guard against that.
+
+`cell_rules` refuses a cell that turns either on without turning it off, and
+allows only that teardown to follow the action that reads the outcome.
+
+**The runner replays a teardown the cell did not live to reach.** Declaring the
+`off` is not the same as running it: `wait_label` raises on a timeout, so a cell
+whose wait runs out unwinds its action loop with the `airplane off` still ahead
+of it. When the loop exits through an exception, `run_cell` looks at how far the
+cell got, and for every pair in `cells.TEARDOWN` whose `on` ran and whose `off`
+is in the un-run tail, it performs the `off` itself — after the failure dump and
+frame, so the evidence is of the failure rather than of the cleanup. It is best
+effort and it says what it did: the cell gains a `teardown:` problem naming what
+was replayed, or a second one if the replay itself failed, and `result.json`
+carries `teardown_replayed`. The original failure is never displaced by it, and
+a cell that put the device back is still a cell that failed.
+
+And `AndroidDriver.launch` still refuses to start on a device that is already in
+airplane mode, quoting the command to clear it:
+
+```bash
+$ADB shell cmd connectivity airplane-mode disable
+```
+
+That last one is the backstop rather than the plan: a replay can fail too, and
+`launch` is what catches a device left dirty by anything the replay could not
+fix. It does **not** clear airplane mode itself — a run that silently repaired
+the rig would be a run that had stopped telling you the rig was broken.
+
+`airplane` reads the setting back after toggling it, and raises if it disagrees.
+That is not defensive: the older `settings put global airplane_mode_on` plus a
+broadcast needs a system permission on modern Android, and without it the
+setting flips while the radios stay up — so a cell would report that the SDK
+survived a network cut having measured nothing at all.
+
+On iOS `airplane` raises instead. The simulator shares the host's network and
+every route to cutting it — Network Link Conditioner, `pfctl` — needs sudo or
+the GUI, so every network-cut cell is `platforms: [android]`.
 
 ## The example app's automation contract
 
@@ -424,10 +520,13 @@ A retryable decline produces no Dart result at all: the native sheet re-arms the
 form and waits. `tree.sheet_rearmed` is how the runner sees that.
 
 * **Android** — a node whose `text` is exactly `Payment failed. Please try
-  again.` *and* one whose `text` is exactly `Pay <formatted amount>`. Exact
-  match, because the amount header renders a bare `€10.00` node, the example's
-  own button is `content-desc="Pay"`, and the wallet row is
-  `content-desc="Pay with GPay"`.
+  again.` **or** exactly `Network error. Please try again.`, *and* one whose
+  `text` is exactly `Pay <formatted amount>`. `PaymentViewModel` renders the
+  first when the backend declined and the second when the request never got
+  there, and a network-cut cell would otherwise look at a plainly re-armed
+  sheet and report that it never re-armed. Exact match, because the amount
+  header renders a bare `€10.00` node, the example's own button is
+  `content-desc="Pay"`, and the wallet row is `content-desc="Pay with GPay"`.
 * **iOS** — the identifiers `errorBanner` and `payButton`, with the payButton's
   label required to carry the cell's amount. Identifiers rather than copy,
   because the banner's wording is slated to change. Visibility is not required:
@@ -557,8 +656,9 @@ accepts the swap and then end-anchors, so `Pay €10,000.00` no longer satisfies
   <cell>/NN-<action>-failed.uix     the tree at the moment a step failed
   <cell>/merchant.json              the session resource, scrubbed
   <cell>/logs.txt                   device log for the cell's window
-  <cell>/result.json                label, ids, timings, problems, budget, and
-                                    the frames the screenshot guard refused
+  <cell>/result.json                label, ids, timings, problems, budget, the
+                                    frames the screenshot guard refused, and any
+                                    teardown the runner replayed for the cell
 ```
 
 `report.json` is what a reader downstream — the nightly, the campaign report —
@@ -682,11 +782,12 @@ credential is read. Add a control cell, or check the cell's `platforms:` list.
 
 ## What is not here
 
-Phases 1–4, apart from the release builds above: the decline and
-integration-error matrix, lifecycle, Google Pay, saved cards and version
-floors. The four lifecycle actions are declared in the driver protocol and
-raise `NotImplementedError`, so cell files can be written against a stable
-vocabulary before the drivers implement them.
+Phases 2–4: lifecycle, Google Pay, saved cards and version floors (the release
+builds and the decline and integration-error matrix are above). Every action and
+expectation those dimensions own is declared in the driver protocol and raises
+`NotImplementedError`, so cell files can be written against a stable vocabulary
+before the drivers implement them — and a cell that reaches one early fails as
+the authoring mistake it is rather than as a broken device.
 
 Known gaps, tracked for the next phase:
 

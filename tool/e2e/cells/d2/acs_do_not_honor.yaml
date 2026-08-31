@@ -1,0 +1,40 @@
+# do_not_honor again, reached AFTER a successful authentication rather than
+# before 3DS ever starts. It is the pair to `decline_do_not_honor`: same
+# outcome, two routes to it, and a difference between them is a finding --
+# the same decline should not become a different failure_code, a different
+# recovery or a different sheet behaviour because a challenge preceded it.
+#
+# Retryable -- change_method -- so the sheet re-arms rather than resolving.
+#
+# No threeds assertion: this is an authorization decline that follows a
+# successful authentication, and what the sandbox records in threeds_result
+# for that pairing has never been measured. The run records it; Phase 3 pins
+# it if it proves stable.
+id: acs_do_not_honor
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - acs:do_not_honor
+  - expect rearmed
+  - cancel_form
+  - wait_result 120
+expected:
+  label: "result:cancelled"
+  rearmed: true
+  merchant:
+    session_status: open
+    txn_count: 1
+    txn_status: failed
+    no_succeeded_txn: true
+    failure_code: do_not_honor
+    failure_recovery: change_method
+    network_decline_code: "05"

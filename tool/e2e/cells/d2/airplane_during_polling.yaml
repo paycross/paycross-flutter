@@ -1,0 +1,57 @@
+# The money moves and the shopper is told it did not.
+#
+# The challenge is approved, the provider authorizes, and THEN the network
+# goes. The SDK is left polling a status endpoint it cannot reach and
+# eventually gives up on its own deadline (iOS: 480 s, and the catch at
+# PaymentFlowRunner.swift:179-182 swallows every network error until then).
+# Meanwhile the merchant API has a SUCCEEDED transaction and a COMPLETED
+# session.
+#
+# That gap -- Dart reporting a failure over a payment that went through -- is
+# the single most important thing this matrix can measure for a merchant, and
+# it is why no_succeeded_txn is `false` here: this cell asserts that the money
+# DID move, and records what Dart said about it.
+#
+# MEASURED three times on android (2026-08-29, and twice 2026-08-30) and
+# PINNED:
+# `result:failure:retry:<txn>` over a COMPLETED session whose transaction is
+# `succeeded` with liability_shifted true and eci 05. Filed as
+# paycross/payment-android-sdk#25.
+#
+# THE PIN ASSERTS A BUG, DELIBERATELY. Every line of this cell now states the
+# contradiction: the merchant assertions say the money moved, the label says
+# retry. When #25 is fixed this cell WILL go red, and that red is the fix
+# landing, not a regression -- re-pin it then to whatever the fixed SDK
+# reports for an unknown outcome. Leaving <any> here would have let the fix
+# pass silently and told a later reader nothing about what was found.
+#
+# Ordering caveat to check on the first run: `acs:approve` returns as soon as
+# the button is tapped, so there is a short race between the tap and
+# `airplane on` in which the authorization may not have reached the provider.
+# If the merchant state comes back open/failed instead, insert a short `wait`
+# before `airplane on` and re-run -- and say so here rather than silently
+# loosening the expectation.
+id: airplane_during_polling
+platforms: [android]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - acs:approve
+  - airplane on
+  - wait_result 600
+  - airplane off
+expected:
+  label: "result:failure:retry:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    no_succeeded_txn: false

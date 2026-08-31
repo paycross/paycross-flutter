@@ -107,8 +107,34 @@ def test_sheet_rearmed_on_android_needs_the_banner_and_the_pay_button():
     assert tree.sheet_rearmed(rearmed, "android", "€12.50") is False
     # The result screen happens to carry neither half, so it cannot show that
     # the banner is required. Drop only the banner from a tree that has both.
-    without_banner = [n for n in rearmed if n.text != tree.ANDROID_REARM_BANNER]
+    without_banner = [n for n in rearmed if n.text not in tree.ANDROID_REARM_BANNERS]
     assert tree.sheet_rearmed(without_banner, "android", amount) is False
+
+
+@pytest.mark.parametrize(
+    "banner", ["Payment failed. Please try again.", "Network error. Please try again."]
+)
+def test_sheet_rearmed_on_android_takes_either_banner(banner):
+    # PaymentViewModel renders the second for a submit that never reached the
+    # backend, so without it an airplane-mode cell would look at a plainly
+    # re-armed sheet and report that it never re-armed. iOS is unaffected: its
+    # predicate matches the errorBanner identifier, which covers both.
+    assert banner in tree.ANDROID_REARM_BANNERS
+    rearmed = android("android-rearmed.uix")
+    amount = tree.format_amount_en_us(1000, "EUR")
+    showing = [
+        replace(node, text=banner) if node.text in tree.ANDROID_REARM_BANNERS else node
+        for node in rearmed
+    ]
+
+    assert tree.sheet_rearmed(showing, "android", amount) is True
+    # Still both halves: a banner on its own is not a re-armed sheet.
+    assert (
+        tree.sheet_rearmed(
+            [n for n in showing if n.text != f"Pay {amount}"], "android", amount
+        )
+        is False
+    )
 
 
 def test_sheet_rearmed_on_ios_matches_identifiers_not_copy():

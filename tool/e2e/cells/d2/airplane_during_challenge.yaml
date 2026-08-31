@@ -1,0 +1,45 @@
+# The network goes while the bank's challenge page is on screen, and does not
+# come back. Nothing can complete: the ACS page cannot post its result and the
+# SDK cannot poll. `expect acs` waits for the page without answering it, which
+# is the only reason that expectation exists.
+#
+# The transaction sits at threeds_challenge_requested and must never become an
+# authorization -- the same assertion cancel_mid_challenge makes, reached a
+# different way. txn_status is left unasserted because the row may or may not
+# have been swept by core's stuck-transaction recovery by the time the runner
+# reads the session; no_succeeded_txn is the half that carries the finding.
+#
+# MEASURED three times on android (2026-08-29, and twice 2026-08-30) and
+# PINNED:
+# `result:failure:retry:<txn>`, over a session still `open` whose single
+# transaction is still `threeds_challenge_requested` with no threeds_result.
+# Nothing succeeded and nothing shifted, so `retry` is a defensible report
+# here -- this cell is a measurement, NOT the finding its sibling
+# airplane_during_polling carries. Do not read the two labels as one result
+# just because they read alike.
+#
+# iOS is absent by R6, not by omission: the simulator shares the host's
+# network and every route to cutting it needs sudo or the GUI.
+id: airplane_during_challenge
+platforms: [android]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - expect acs
+  - airplane on
+  - wait_result 600
+  - airplane off
+expected:
+  label: "result:failure:retry:<txn>"
+  merchant:
+    session_status: open
+    txn_count: 1
+    no_succeeded_txn: true
