@@ -127,6 +127,16 @@ NEW_CARD_ROW = "Use a new card"
 #: is part of the string and the driver has no way to know it.
 SAVED_CARD_CVV_PROMPT = "Enter CVV for "
 
+#: The shape the backend renders a stored card's PAN in -- six digits, a run of
+#: asterisks, the last four (`411111******0000`, measured). Matched by SHAPE
+#: because the driver cannot know which card a customer has stored.
+#:
+#: `fullmatch` and not `search`, deliberately: the COLLAPSED selector reads
+#: `411111******0000 (12/2028)` once a card is chosen (`SavedCardSelector.kt:89`),
+#: so a substring rule would re-find the selection it had just made and read a
+#: no-op as a success.
+_MASKED_PAN = re.compile(r"\d{6}\*+\d{4}")
+
 ACS_TITLE = "Sandbox 3DS Challenge"
 CANCEL_TITLE = "Cancel Payment?"
 CANCEL_CONFIRM = "Yes, Cancel"
@@ -609,6 +619,65 @@ class AndroidDriver(Driver):
             tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=timeout
         )
         return True
+
+    def select_saved_card(self, *, timeout: float = 30) -> None:
+        """Chooses the first stored card, and proves the form switched.
+
+        Three measured facts shape this (2026-08-31 dumps).
+
+        The dropdown opens as **its own window**: the dump taken after the
+        selector is tapped is 3.4 KB and holds only the popup -- the form
+        behind it is not in the tree at all. So the row search runs against
+        something that contains nothing else, which is why matching a PAN
+        shape is safe here and would not be on the full sheet.
+
+        The row's text sits on a **non-clickable** `TextView` inside a
+        clickable `android.view.View`. Tapping the label nevertheless works,
+        because it is a CHILD of the clickable row and the touch bubbles up --
+        unlike the save checkbox, whose label is a SIBLING and where the same
+        tap does nothing. That difference is why this is three lines and
+        `save_card` is thirty.
+
+        And the verification is the `Enter CVV for ` prompt rather than the
+        absence of the card-number field. Both are true after a selection, but
+        the prompt is the positive signal: it proves the saved-card branch
+        actually rendered, where an absence would also be satisfied by a form
+        that failed to render at all.
+        """
+        self._tap_desc(SAVED_CARD_SELECTOR, timeout=timeout)
+        self._sleep(SETTLE_SECONDS)
+
+        row = self._poll(
+            lambda nodes: next(
+                (n for n in nodes if _MASKED_PAN.fullmatch(n.text)), None
+            ),
+            timeout,
+            SETTLE_SECONDS,
+        )
+        if row is None:
+            raise DriverError(
+                f"no stored-card row in the selector within {timeout}s: the "
+                "session's options are missing saved_cards, or this customer "
+                "has no stored card"
+            )
+        self._tap(row.centre)
+        self._sleep(SETTLE_SECONDS)
+
+        switched = self._poll(
+            lambda nodes: next(
+                (n for n in nodes if n.text.startswith(SAVED_CARD_CVV_PROMPT)),
+                None,
+            ),
+            timeout,
+            SETTLE_SECONDS,
+        )
+        if switched is None:
+            raise DriverError(
+                f"after tapping the stored card at {row.centre} the sheet is "
+                f"still showing the new-card form ({SAVED_CARD_CVV_PROMPT!r} "
+                "never appeared); the CVV would be typed into a fresh card and "
+                "the payment would not use the stored one"
+            )
 
     def wait_saved_card(self, timeout: float = 30) -> bool:
         """Whether the sheet is offering a stored card.

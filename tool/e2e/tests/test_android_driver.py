@@ -391,6 +391,75 @@ def test_verify_pan_reports_what_the_field_actually_reads():
     assert "formatter" not in message
 
 
+# -- select_saved_card --------------------------------------------------------
+
+#: The dropdown once opened, dumped 2026-08-31. It arrives as its OWN window:
+#: the whole dump is 3.4 KB and the form behind it is simply not in it, which
+#: is why the row search runs against a tree that holds nothing else.
+#:
+#: Its shape is the third instance of this dimension's recurring trap -- the
+#: text sits on a NON-clickable `TextView` inside a clickable `android.view.View`
+#: parent. Unlike the save checkbox, though, here the tap works: the label is a
+#: CHILD of the clickable row rather than a sibling, so the touch bubbles up.
+#: Measured, not assumed.
+SAVED_MENU = (FIXTURES / "android-saved-card-menu.uix").read_text()
+
+#: And the form after the row was tapped: the fresh-card fields are gone and
+#: the saved-card branch has rendered its prompt.
+SAVED_CHOSEN = (FIXTURES / "android-saved-card-chosen.uix").read_text()
+
+
+def test_select_saved_card_opens_the_selector_then_picks_the_stored_row():
+    shell = FakeShell(trees=[SAVED_SHEET, SAVED_MENU, SAVED_CHOSEN])
+
+    driver(shell).select_saved_card()
+
+    taps = [a for a in shell.argv_text() if a.startswith("shell input tap")]
+    # First the selector at the centre of its bounds [42,431][1038,578],
+    # then the stored row's label at the centre of [74,741][375,794].
+    assert taps == ["shell input tap 540 504", "shell input tap 224 767"]
+
+
+def test_select_saved_card_verifies_the_form_really_switched():
+    """The failure mode the card says is worth spending code on.
+
+    A selection that silently did nothing leaves the sheet on the FRESH form.
+    The cell would then type its CVV into a blank card, submit it, and report a
+    saved-card payment -- and `saved_card_used` is the only assertion that would
+    ever notice, an hour into a matrix run. So this raises.
+    """
+    # The menu opens and the tap lands, but the form never switches.
+    shell = FakeShell(trees=[SAVED_SHEET, SAVED_MENU, SAVED_SHEET])
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).select_saved_card(timeout=0)
+
+    assert "still showing the new-card form" in str(excinfo.value)
+
+
+def test_select_saved_card_matches_the_masked_pan_by_shape_not_by_value():
+    # The driver cannot know the stored PAN, so the row is found by the shape
+    # the backend renders -- six digits, asterisks, last four. The neighbouring
+    # `Use a new card` row and the `JOHN DOE - 12/2028` detail line are both in
+    # the same popup and neither matches.
+    assert android._MASKED_PAN.fullmatch("411111******0000")
+    assert not android._MASKED_PAN.fullmatch("Use a new card")
+    assert not android._MASKED_PAN.fullmatch("JOHN DOE - 12/2028")
+    # And not the COLLAPSED selector's own text, which carries the expiry --
+    # so a search run after the selection cannot re-match what it just chose.
+    assert not android._MASKED_PAN.fullmatch("411111******0000 (12/2028)")
+
+
+def test_select_saved_card_says_so_when_no_stored_row_is_offered():
+    # `saved_cards` missing from the session, or the customer has no card.
+    shell = FakeShell(tree=SAVED_SHEET)  # the selector opens onto nothing
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).select_saved_card(timeout=0)
+
+    assert "no stored-card row" in str(excinfo.value)
+
+
 # -- wait_saved_card ----------------------------------------------------------
 
 #: The saved-card sheet, dumped from the emulator on 2026-08-31 against a
@@ -1261,7 +1330,6 @@ NOT_LANDED_YET = [
     ("kill_activity", ()),
     ("dont_keep_activities", (True,)),
     ("tap_google_pay", ()),
-    ("select_saved_card", ()),
     ("wait_google_pay", (30,)),
     ("wait_no_google_pay", (20,)),
 ]
