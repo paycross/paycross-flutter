@@ -43,6 +43,24 @@ Widget _settingsIn(
   ),
 );
 
+/// Settings under a scope that is already switched to Live.
+///
+/// The Live twin of [_settingsIn]. `liveApp` switches before it builds, so
+/// the screen's `initState` runs with Live already selected -- which is the
+/// entrance task 04 creates and the one the prefill guard exists for.
+Future<Widget> _liveSettings({
+  required SecretStore store,
+  DemoEnvironmentState? state,
+}) => liveApp(
+  state: state,
+  home: SettingsScreen(
+    store: store,
+    verifyCredentials: (_) async => 'ok',
+    readVersions: () async =>
+        (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+  ),
+);
+
 /// Stores like the in-memory backend but fails the one operation a test
 /// names -- which is what an iOS Keychain without the entitlement and an
 /// Android KeyStore whose key is gone both look like from Dart.
@@ -587,14 +605,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      await liveApp(
-        home: SettingsScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
-      ),
+      await _liveSettings(store: SecretStore(backend: InMemorySecretBackend())),
     );
     await tester.pumpAndSettle();
 
@@ -694,14 +705,9 @@ void main() {
     // Becoming safer needs no ceremony. The gate is on the way in only.
     final state = fakeEnvironment();
     await tester.pumpWidget(
-      await liveApp(
+      await _liveSettings(
         state: state,
-        home: SettingsScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
+        store: SecretStore(backend: InMemorySecretBackend()),
       ),
     );
     await tester.pumpAndSettle();
@@ -713,6 +719,12 @@ void main() {
     await tester.tap(find.text('Test'));
     await tester.pumpAndSettle();
 
+    // The environment assertion is what carries this test. The line below
+    // it reads like a proof that the credentials were dropped and is not
+    // one: `liveCredentials` is `isLive ? _liveCredentials : null`, so once
+    // the environment is Test it answers null whether or not the field was
+    // cleared. The drop itself is task 01's to pin, and environment_test
+    // does.
     expect(state.environment, DemoEnvironment.test);
     expect(state.liveCredentials, isNull);
     expect(find.byKey(const ValueKey('liveBanner')), findsNothing);
@@ -731,14 +743,7 @@ void main() {
       ..entries['paycross_demo_google_pay_merchant_id'] = 'gp-1';
 
     await tester.pumpWidget(
-      await liveApp(
-        home: SettingsScreen(
-          store: SecretStore(backend: backend),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
-      ),
+      await _liveSettings(store: SecretStore(backend: backend)),
     );
     await tester.pumpAndSettle();
 
@@ -763,14 +768,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      await liveApp(
-        home: SettingsScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
-      ),
+      await _liveSettings(store: SecretStore(backend: InMemorySecretBackend())),
     );
     await tester.pumpAndSettle();
 
@@ -793,14 +791,9 @@ void main() {
     final backend = _CountingBackend();
     final state = fakeEnvironment();
     await tester.pumpWidget(
-      await liveApp(
+      await _liveSettings(
         state: state,
-        home: SettingsScreen(
-          store: SecretStore(backend: backend),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
+        store: SecretStore(backend: backend),
       ),
     );
     await tester.pumpAndSettle();
@@ -819,6 +812,8 @@ void main() {
     // reached a store, so there is nothing on the device to leak, to back up,
     // or to forget to forget.
     expect(backend.writes, 0);
+    // A delete is a store touch too, and the rule is that Live makes none.
+    expect(backend.deletes, 0);
     expect(backend.entries, isEmpty);
   });
 
@@ -827,14 +822,9 @@ void main() {
   ) async {
     final state = fakeEnvironment();
     await tester.pumpWidget(
-      await liveApp(
+      await _liveSettings(
         state: state,
-        home: SettingsScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
+        store: SecretStore(backend: InMemorySecretBackend()),
       ),
     );
     await tester.pumpAndSettle();
@@ -883,14 +873,9 @@ void main() {
       ..entries['paycross_demo_client_secret'] = 'test-secret';
     final state = fakeEnvironment();
     await tester.pumpWidget(
-      await liveApp(
+      await _liveSettings(
         state: state,
-        home: SettingsScreen(
-          store: SecretStore(backend: backend),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
+        store: SecretStore(backend: backend),
       ),
     );
     await tester.pumpAndSettle();
@@ -904,9 +889,10 @@ void main() {
 
     expect(_fieldText(tester, 'clientSecret'), 'test-secret');
     expect(backend.writes, 0);
+    expect(backend.deletes, 0);
   });
 
-  testWidgets('Live lays out and scrolls at ordinary phone width', (
+  testWidgets('both branches lay out and scroll at ordinary phone width', (
     tester,
   ) async {
     // The switch, the gate field and the banner all landed on a screen that
@@ -916,21 +902,37 @@ void main() {
     usePhoneSurface(tester);
     final state = fakeEnvironment();
     await tester.pumpWidget(
-      await liveApp(
+      await _liveSettings(
         state: state,
-        home: SettingsScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
+        store: SecretStore(backend: InMemorySecretBackend()),
       ),
     );
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('useForThisSession')), findsOneWidget);
+
+    // Back to Test and straight into the gate, which is where this screen is
+    // longest: three fields, the wallet id, three buttons and the gate's own
+    // paragraph. Measured at 390x844 the Live branch has a maxScrollExtent of
+    // 0 -- it fits -- so a scroll assertion there would scroll nothing and
+    // pass with the call deleted. This branch overflows by ~423px.
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveConfirm')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    final list = tester.widget<Scrollable>(find.byType(Scrollable).first);
+    // Pinned, so that a screen which later shrinks back inside one phone
+    // screen turns this into a failure to look at rather than a scroll
+    // assertion that quietly stops meaning anything.
+    expect(list.controller!.position.maxScrollExtent, greaterThan(0));
+
     await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('useForThisSession')),
+      find.text('Forget credentials'),
       200,
       // Named, unlike Home's copy of this test, which lets it default to the
       // only `Scrollable` on that screen. Settings has three: the `ListView`
@@ -940,17 +942,8 @@ void main() {
       // of them, so it is the first in a depth-first walk.
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.byKey(const ValueKey('useForThisSession')), findsOneWidget);
 
-    // And the gate, which is the one piece of this task that is never on
-    // screen in Live: it lives on the Test side of the switch, so reaching it
-    // means going back through it first.
-    await tester.tap(find.text('Test'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Live'));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('liveConfirm')), findsOneWidget);
+    expect(find.text('Forget credentials'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -965,14 +958,9 @@ void main() {
     // test exists to stop.
     final state = _stuckInLive();
     await tester.pumpWidget(
-      await liveApp(
+      await _liveSettings(
         state: state,
-        home: SettingsScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
+        store: SecretStore(backend: InMemorySecretBackend()),
       ),
     );
     await tester.pumpAndSettle();
@@ -1039,14 +1027,9 @@ void main() {
       ..entries['paycross_demo_client_secret'] = 'test-secret';
     final state = fakeEnvironment();
     await tester.pumpWidget(
-      await liveApp(
+      await _liveSettings(
         state: state,
-        home: SettingsScreen(
-          store: SecretStore(backend: backend),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
+        store: SecretStore(backend: backend),
       ),
     );
     await tester.pump();
@@ -1080,14 +1063,9 @@ void main() {
     // equivalent.
     final state = fakeEnvironment();
     await tester.pumpWidget(
-      await liveApp(
+      await _liveSettings(
         state: state,
-        home: SettingsScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
+        store: SecretStore(backend: InMemorySecretBackend()),
       ),
     );
     await tester.pumpAndSettle();
@@ -1183,14 +1161,9 @@ void main() {
     // screen for a switch that has not failed.
     final parked = _ParkedSwitch(PayCrossEnvironment.sandbox);
     await tester.pumpWidget(
-      await liveApp(
+      await _liveSettings(
         state: parked.state,
-        home: SettingsScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          verifyCredentials: (_) async => 'ok',
-          readVersions: () async =>
-              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
-        ),
+        store: SecretStore(backend: InMemorySecretBackend()),
       ),
     );
     await tester.pumpAndSettle();
