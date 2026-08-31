@@ -95,26 +95,16 @@ def test_both_xcodebuild_calls_carry_the_auth_flags(ios_repo):
         assert "-authenticationKeyPath" in call
 
 
-def test_the_archive_overrides_the_projects_development_identity(ios_repo):
+def test_neither_xcodebuild_call_pins_a_signing_identity(ios_repo):
     out = dry_run(ios_repo, "release-ios.sh", "--tag", "demo-v0.1.0")
 
-    calls = [line for line in out.splitlines() if line.startswith("+ xcodebuild")]
-    archive = next(line for line in calls if "-exportArchive" not in line)
-    export = next(line for line in calls if "-exportArchive" in line)
-
-    # All three PROJECT-level configurations in Runner.xcodeproj set
-    # CODE_SIGN_IDENTITY[sdk=iphoneos*] = "iPhone Developer" and the Runner
-    # target inherits it, so automatic signing hunts for a *Development*
-    # profile even during an archive -- measured on the rig Mac with an
-    # unlocked keychain, which is what rules out the keychain as the cause.
-    # Overriding here rather than editing the project keeps `flutter run` on a
-    # device working for developers, whose builds do want a development
-    # identity, and keeps the example copy-paste-neutral for a merchant.
-    assert "CODE_SIGN_IDENTITY=Apple Distribution" in archive
-    # Not on the export: what the export signs with comes from
-    # ExportOptions.plist (method app-store-connect + signingStyle automatic),
-    # and a second, contradictory source of truth is how these get confusing.
-    assert "CODE_SIGN_IDENTITY" not in export
+    # Pinning an identity does not override automatic signing's own choice, it
+    # conflicts with it -- "Runner is automatically signed for development, but
+    # a conflicting code signing identity ... has been manually specified",
+    # measured on the rig Mac for every pod and Swift package target too. The
+    # project-level default is what steers the choice.
+    for call in [line for line in out.splitlines() if line.startswith("+ xcodebuild")]:
+        assert "CODE_SIGN_IDENTITY" not in call
 
 
 def test_the_dry_run_never_prints_the_key_path_or_any_key_material(ios_repo):
