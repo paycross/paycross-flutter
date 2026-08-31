@@ -158,6 +158,33 @@ EXIT_FAILED = 1
 EXIT_SETUP = 2
 EXIT_ABORTED = 3
 
+#: How far the wall clock and the monotonic clock may drift apart within one
+#: cell before the runner calls it a host suspend rather than clock jitter.
+#:
+#: A minute is far above an NTP step and far below any suspend worth having.
+#: Measured 2026-08-31: WSL slept for six and a half hours with two runs in
+#: flight, and because the monotonic clock does not advance across a suspend,
+#: `timeout` never fired and neither run died -- each froze mid-cell and thawed
+#: hours later against a session minted before the sleep.
+SUSPEND_SECONDS = 60
+
+
+def host_suspended_seconds(*, wall: float, monotonic: float) -> float:
+    """How long the host was asleep during a cell, or 0.0.
+
+    The two clocks agree to within scheduling noise while the machine is
+    awake and diverge by exactly the suspend when it is not. Clamped at zero
+    in both directions: below the threshold it is jitter, and a wall clock
+    stepped BACKWARDS by NTP would otherwise report a negative suspend, which
+    helps nobody.
+
+    A pure function because the interesting cases are hours apart and no test
+    should have to spend them.
+    """
+    slept = wall - monotonic
+    return slept if slept >= SUSPEND_SECONDS else 0.0
+
+
 #: How much of the token has to appear in a dump for the runner to conclude
 #: that the example's own screen is showing. Short enough to survive a viewer
 #: that truncates long attribute values, and a false positive here costs a
@@ -680,6 +707,8 @@ def run_cell(
     amount_text = tree.format_amount_en_us(cell.session.amount, cell.session.currency)
     budget = budget_for(cell)
     started = datetime.now(timezone.utc)
+    # Both clocks, because only their disagreement can see a host suspend.
+    started_monotonic = time.monotonic()
 
     problems: list[str] = []
     run_problems: list[str] = []
@@ -981,6 +1010,23 @@ def run_cell(
                     "something else"
                 )
 
+    # Before the verdict is assembled, because a cell that straddled a suspend
+    # has produced meaningless evidence whatever else it says: its session was
+    # minted before the sleep and expired during it. The failure it reports on
+    # its own is a misdiagnosis -- the one that cost two runs said `the sandbox
+    # ACS page never appeared within 120s`, which reads as a sandbox fault.
+    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+    suspended = host_suspended_seconds(
+        wall=elapsed, monotonic=time.monotonic() - started_monotonic
+    )
+    if suspended:
+        problems.append(
+            f"host: the machine was suspended for about {suspended / 3600:.1f}h "
+            "during this cell, so its session expired mid-flight and nothing it "
+            "measured is evidence of anything. Rerun it; do not triage the "
+            "failure above"
+        )
+
     problems = [_redacted(problem, *secrets) for problem in problems]
     result = CellResult(
         cell_id=cell.id,
@@ -1017,7 +1063,8 @@ def run_cell(
                     _redacted(line.strip(), *secrets) for line in tolerated_crash_lines
                 ],
                 "budget_seconds": budget,
-                "seconds": (datetime.now(timezone.utc) - started).total_seconds(),
+                "host_suspended_seconds": suspended,
+                "seconds": elapsed,
             },
             indent=2,
         ).encode(),

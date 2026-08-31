@@ -265,12 +265,28 @@ Three things bound that, and they are the point:
 
 ### Budgets
 
-Each cell gets a wall-clock budget derived from its actions. It is a **hang
-backstop, not a performance assertion**: it is checked between steps, never
+Each cell gets a budget derived from its actions. It is a **hang backstop, not
+a performance assertion**: it is checked between steps, never
 interrupts a driver call in progress, and a cell that finishes inside it has
 proved nothing about how quickly it did so. The same goes for the `wait_result`
 seconds in a cell file — they bound a hang, they do not describe expected
 latency.
+
+The budget is measured on the **monotonic** clock, which cannot see a host
+suspend — and a suspend always lands *inside* a driver call, because that is
+where the process spends its time, while the budget is only checked *between*
+steps. So each cell also compares wall-clock elapsed against monotonic
+elapsed. They agree to within scheduling noise while the machine is awake and
+diverge by exactly the suspend when it is not; a divergence over a minute is
+recorded as `host_suspended_seconds` and fails the cell saying so.
+
+That is not defensive. Measured 2026-08-31: WSL slept for six and a half hours
+with two runs in flight, `timeout` never fired because its alarm is monotonic
+too, and both runs froze mid-cell and thawed against sessions minted before
+the sleep. The cost was not the lost time but the **misdiagnosis** — the cell
+failed with `the sandbox ACS page never appeared within 120s`, which reads as
+a sandbox fault, and the only clue was `seconds: 23963` against
+`budget_seconds: 1446` in a field nothing asserted on.
 
 ## Cell files
 
@@ -835,7 +851,7 @@ trailing it means a rule ran in the wrong order.
 pytest tool/e2e/tests -q
 ```
 
-773 tests, no device needed: every driver call is faked, so this covers the
+788 tests, no device needed: every driver call is faked, so this covers the
 parsing, the redaction, the label matching and the merchant verification — the
 places where a silent mistake would be read as an SDK finding. The shipped cell
 files are validated here too. CI runs this on Linux on every PR, in its own job,

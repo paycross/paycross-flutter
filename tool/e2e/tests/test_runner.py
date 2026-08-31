@@ -2971,3 +2971,43 @@ def test_a_cell_declaring_nothing_is_not_held_to_that_rule(tmp_path):
     report = run(keeping_no_activities(tmp_path, declared=False), tmp_path, driver)
 
     assert report.results[0].passed, report.results[0].problems
+
+
+# --- Plan B D3: a cell that straddled a host suspend says so -----------------
+
+
+def test_the_two_clocks_only_disagree_across_a_suspend():
+    # Measured 2026-08-31, and it cost two runs. WSL slept for six and a half
+    # hours with two runs in flight. The monotonic clock does not advance
+    # across a suspend, so `timeout` never fired and neither run died -- each
+    # froze mid-cell and thawed hours later against a session minted before the
+    # sleep. `budget_for` cannot catch it: it is checked BETWEEN steps, and a
+    # suspend always lands INSIDE a driver call, because that is where the
+    # process spends its time.
+    #
+    # A pure function because the interesting cases are hours apart and no test
+    # should have to spend them.
+    assert runner.host_suspended_seconds(wall=100.0, monotonic=99.5) == 0.0
+    assert runner.host_suspended_seconds(wall=23963.0, monotonic=1400.0) > 3600
+    # Never negative: NTP can step the wall clock backwards, and "the host
+    # suspended for minus four seconds" helps nobody.
+    assert runner.host_suspended_seconds(wall=10.0, monotonic=14.0) == 0.0
+
+
+def test_a_short_divergence_is_not_called_a_suspend():
+    # Clock jitter and an NTP step are not a suspend, and a cell failed for
+    # one would be a rig fault invented out of nothing.
+    assert runner.SUSPEND_SECONDS >= 60
+    assert (
+        runner.host_suspended_seconds(wall=runner.SUSPEND_SECONDS - 1, monotonic=0.0)
+        == 0.0
+    )
+
+
+def test_an_ordinary_cell_records_no_suspend(tmp_path, cell_dir):
+    driver = FakeDriver(labels=["result:success:txn-1"])
+
+    report = run(cell_dir, tmp_path, driver)
+
+    assert report.results[0].passed, report.results[0].problems
+    assert result_json(tmp_path)["host_suspended_seconds"] == 0.0
