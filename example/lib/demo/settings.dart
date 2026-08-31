@@ -243,6 +243,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _busy = false;
       _askingForLive = false;
+      // With it, not just beside it: this screen cannot be in Live with the
+      // gate open, but a second surface driving the same state can flip to
+      // Live and back, which hides the gate and shows it again. A word left
+      // in the field across that round trip is a red button armed the moment
+      // it reappears.
+      _liveConfirm.clear();
       _message = refused;
       // Cleared before the reload below, or the prefill guard would keep
       // this screen's fields empty for the rest of its life. Only on
@@ -278,6 +284,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _askingForLive = refused != null;
       _message = refused;
       _liveConfirm.clear();
+    });
+  }
+
+  /// Closes the gate without switching, forgetting what was typed into it.
+  ///
+  /// The word is cleared rather than left for next time, and that is the
+  /// whole value of the button: a gate that reopens with [liveConfirmationWord]
+  /// already in it is a red button armed on arrival.
+  void _abandonTheGate() {
+    setState(() {
+      _askingForLive = false;
+      _liveConfirm.clear();
+      _message = null;
     });
   }
 
@@ -406,14 +425,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              FilledButton(
-                key: const ValueKey('switchToLive'),
-                style: FilledButton.styleFrom(backgroundColor: liveRed),
-                onPressed:
-                    _busy || _liveConfirm.text.trim() != liveConfirmationWord
-                    ? null
-                    : () => _enterLive(state),
-                child: const Text('Switch to Live'),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  FilledButton(
+                    key: const ValueKey('switchToLive'),
+                    style: FilledButton.styleFrom(backgroundColor: liveRed),
+                    onPressed:
+                        _busy ||
+                            _liveConfirm.text.trim() != liveConfirmationWord
+                        ? null
+                        : () => _enterLive(state),
+                    child: const Text('Switch to Live'),
+                  ),
+                  // Without this the gate is a dead end: the environment is
+                  // still Test, so Test is the selected segment, and a
+                  // SegmentedButton makes tapping the selected one a no-op.
+                  // Nothing is at risk while it is open, but a screen whose
+                  // job is to be unambiguous should not have a corner with no
+                  // way out of it.
+                  TextButton(
+                    key: const ValueKey('cancelLive'),
+                    onPressed: _busy ? null : _abandonTheGate,
+                    child: const Text('Cancel'),
+                  ),
+                ],
               ),
               const SizedBox(height: 20),
             ],

@@ -1083,4 +1083,62 @@ void main() {
     // about text the human has since changed is not.
     expect(state.liveCredentials?.clientSecret, 'live-secret');
   });
+
+  testWidgets('the gate can be backed out of', (tester) async {
+    // Once the gate is open there is otherwise no way out of it: the
+    // environment is still Test, so Test is the selected segment, and
+    // SegmentedButton makes tapping the already-selected one a no-op. An
+    // unlabelled dead end, on the one screen whose job is to be unambiguous.
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('cancelLive')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveConfirm')), findsNothing);
+    expect(state.environment, DemoEnvironment.test);
+
+    // And it does not come back armed with the word still in it.
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, 'Switch to Live'), isFalse);
+  });
+
+  testWidgets('a gate reopened after a trip through Live is not pre-armed', (
+    tester,
+  ) async {
+    // The door task 04 opens. A second surface drives the same state into
+    // Live, which hides this screen's gate without closing it, and back to
+    // Test, which shows it again -- with LIVE still typed, so the red button
+    // is armed on arrival, one stray tap from production.
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+
+    // Not this screen's button: something else moved the environment.
+    await state.enterLive(liveConfirmationWord);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('liveConfirm')), findsNothing);
+
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+
+    expect(_fieldText(tester, 'liveConfirm'), '');
+    expect(_enabled(tester, 'Switch to Live'), isFalse);
+  });
 }
