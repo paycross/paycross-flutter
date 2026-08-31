@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/home.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/presets.dart';
@@ -322,5 +324,41 @@ void main() {
 
     expect(find.byType(SettingsScreen), findsNothing);
     expect(find.byType(HomeScreen), findsOneWidget);
+  });
+  testWidgets('the demo build mounts the environment scope over Home', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+
+    await tester.pumpWidget(const app.ExampleApp());
+    await tester.pumpAndSettle();
+
+    // The builder is the whole mechanism: it wraps the Navigator, so a route
+    // pushed later reads the same environment and sits under the same banner.
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp)).builder,
+      isNotNull,
+    );
+
+    final home = tester.element(find.byType(HomeScreen));
+    expect(LiveModeScope.maybeOf(home), isNotNull);
+    expect(LiveModeScope.environmentOf(home), DemoEnvironment.test);
+  });
+
+  test('the automation build installs no environment scope', () {
+    // kE2e is a compile-time constant, so a test process cannot be both
+    // builds at once. What is checkable here is that the builder is behind
+    // the same conditional every other E2E branch in this file is behind --
+    // the frozen build has no toggle in it, rather than one switched off.
+    //
+    // Two short fragments rather than one long one: `dart format` breaks
+    // this expression across three lines, so a match on the whole
+    // `builder: kE2e ? null :` would go red on formatting alone. Neither
+    // fragment survives deleting the conditional, which is the edit worth
+    // catching.
+    final source = File('lib/main.dart').readAsStringSync();
+
+    expect(source, contains('builder: kE2e'));
+    expect(source, contains('? null'));
   });
 }

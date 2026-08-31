@@ -3,6 +3,7 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 
 import 'automation_screen.dart';
 import 'demo/deeplink.dart';
+import 'demo/environment.dart';
 import 'demo/home.dart';
 import 'demo/minter.dart';
 import 'demo/presets.dart';
@@ -46,7 +47,7 @@ Future<void> main() async {
     environment: PayCrossEnvironment.sandbox,
     googlePayMerchantId: merchantId,
   );
-  runApp(const ExampleApp());
+  runApp(ExampleApp(googlePayMerchantId: merchantId));
 }
 
 /// The Google Pay merchant id a colleague saved in Settings, or null.
@@ -65,7 +66,11 @@ Future<String?> _storedGooglePayMerchantId() async {
 }
 
 class ExampleApp extends StatelessWidget {
-  const ExampleApp({super.key});
+  const ExampleApp({super.key, this.googlePayMerchantId});
+
+  /// What `configure` was given at launch, carried down so that returning
+  /// from Live to Test restores it rather than clearing it.
+  final String? googlePayMerchantId;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -75,6 +80,16 @@ class ExampleApp extends StatelessWidget {
     title: kE2e ? 'PayCross Example' : 'PayCross Demo',
     theme: ThemeData(colorSchemeSeed: Colors.indigo),
     darkTheme: ThemeData.dark(useMaterial3: true),
+    // Wraps the Navigator, so every pushed route reads one environment and
+    // sits under one banner. Null under the define: the frozen build has no
+    // environment toggle in it at all, which is a stronger statement than
+    // having one that is switched off.
+    builder: kE2e
+        ? null
+        : (context, child) => LiveModeScope(
+            googlePayMerchantId: googlePayMerchantId,
+            child: child!,
+          ),
     home: kE2e ? const CheckoutScreen() : const DemoHome(),
   );
 }
