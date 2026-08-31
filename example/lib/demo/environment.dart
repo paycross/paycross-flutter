@@ -73,6 +73,14 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// each assign the environment, and nothing makes the last configure to
   /// land and the last assignment to land the same call -- so the banner
   /// ends up describing an environment the SDK is not in.
+  ///
+  /// There is no timeout on this, and that is a decision rather than an
+  /// omission. A `configure` that never comes back leaves both switches
+  /// refusing until the app is relaunched, which is the accepted trade: this
+  /// is a tool a few people reach for a few times, relaunching is cheap, and
+  /// a timeout would have to guess when the SDK has really given up. Guessing
+  /// that wrong puts a second configure in flight beside the first, which is
+  /// exactly the disagreement this flag exists to prevent.
   bool _switching = false;
 
   DemoEnvironment _environment = DemoEnvironment.test;
@@ -150,9 +158,13 @@ class DemoEnvironmentState extends ChangeNotifier {
 
   /// Returns to Test, or returns why it did not.
   ///
-  /// The credentials go first and unconditionally -- they are the human's
-  /// to revoke the moment they ask, whatever the SDK says next. The
-  /// environment flips only on proof, for the same reason [enterLive]
+  /// On every exit this actually performs, the credentials go first: they
+  /// are the human's to revoke the moment they ask, whatever the SDK says
+  /// next. An exit refused at the door -- because another switch is already
+  /// in flight -- returns before touching them, which is the point of
+  /// refusing at the door: it performed nothing, so it forgets nothing.
+  ///
+  /// The environment flips only on proof, for the same reason [enterLive]
   /// flips only on proof.
   Future<String?> leaveLive() async {
     // Before the credentials are touched: a refused exit must not be an exit
@@ -276,6 +288,20 @@ class _LiveModeScopeState extends State<LiveModeScope> {
   }
 
   DemoEnvironmentState get _state => widget.state ?? _own!;
+
+  @override
+  void didUpdateWidget(LiveModeScope old) {
+    super.didUpdateWidget(old);
+    // Whether a scope owns its state is decided once, in initState, so a
+    // rebuild that changes the answer would find `_own` null and read as a
+    // null-check failure somewhere in `build` rather than as the misuse it
+    // is. Nothing in the app does this -- `main` never passes a state -- but
+    // a suite that pumps a scope both ways at one position would.
+    assert(
+      (widget.state == null) == (old.state == null),
+      'Whether a scope owns its state is fixed for its lifetime.',
+    );
+  }
 
   @override
   void dispose() {

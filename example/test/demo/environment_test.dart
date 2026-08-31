@@ -506,5 +506,39 @@ void main() {
         DemoEnvironment.live,
       );
     });
+    testWidgets('a scope cannot change whether it owns its state', (
+      tester,
+    ) async {
+      // The state is built once, in initState, so a rebuild that flipped this
+      // would leave `_own` null and fail somewhere in `build` with nothing in
+      // it about ownership. The assert is what turns that into a sentence.
+      // Nothing in the app can reach it -- `main` never passes a state -- but
+      // a suite that pumps a scope both ways at one position can.
+      //
+      // The scope is the root here on purpose: it is the same widget type at
+      // the same position both times, which is what makes the framework
+      // update the element rather than replace it, which is what runs
+      // didUpdateWidget at all.
+      const screen = Directionality(
+        textDirection: TextDirection.ltr,
+        child: Text('a screen'),
+      );
+      final state = fakeEnvironment();
+      addTearDown(state.dispose);
+
+      await tester.pumpWidget(LiveModeScope(state: state, child: screen));
+      await tester.pump();
+
+      await tester.pumpWidget(const LiveModeScope(child: screen));
+
+      expect(
+        tester.takeException(),
+        isA<AssertionError>().having(
+          (error) => error.message,
+          'message',
+          contains('fixed for its lifetime'),
+        ),
+      );
+    });
   });
 }
