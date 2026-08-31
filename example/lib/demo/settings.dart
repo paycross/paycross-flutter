@@ -226,6 +226,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     DemoEnvironmentState state,
     DemoEnvironment chosen,
   ) async {
+    // The handler, not just the widget. `onSelectionChanged: _busy ? null`
+    // and `onPressed: _busy ? null` only take effect on the NEXT build, so
+    // two taps inside one frame both arrive here. The second would get
+    // `switchAlreadyInProgress` back, render it for a switch that has not
+    // failed, and set `_busy` back to false underneath the first -- reopening
+    // the toggle while the SDK call is still in flight.
+    if (_busy) return;
     if (chosen == DemoEnvironment.live) {
       setState(() {
         _askingForLive = true;
@@ -262,6 +269,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _enterLive(DemoEnvironmentState state) async {
+    if (_busy) return;
     setState(() {
       _busy = true;
       _message = null;

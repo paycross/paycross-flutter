@@ -132,6 +132,29 @@ DemoEnvironmentState _stuckInLive() => DemoEnvironmentState(
       },
 );
 
+/// A state whose SDK call parks until a test lets it finish.
+///
+/// The window a second tap lands in: `_busy` is set, the switch is in
+/// flight, and nothing has come back yet. [parkOn] names the direction to
+/// park -- the other one completes at once, so a test can get itself into
+/// Live before parking the way out, or park the way in from the start.
+class _ParkedSwitch {
+  _ParkedSwitch(this.parkOn);
+
+  final PayCrossEnvironment parkOn;
+  final Completer<void> gate = Completer<void>();
+
+  late final DemoEnvironmentState state = DemoEnvironmentState(
+    configure:
+        ({
+          required PayCrossEnvironment environment,
+          String? googlePayMerchantId,
+        }) async {
+          if (environment == parkOn) await gate.future;
+        },
+  );
+}
+
 /// Whether the button carrying [label] is live.
 ///
 /// Found by predicate, not by type: `find.byType` matches the exact runtime
@@ -1140,5 +1163,90 @@ void main() {
 
     expect(_fieldText(tester, 'liveConfirm'), '');
     expect(_enabled(tester, 'Switch to Live'), isFalse);
+  });
+
+  testWidgets('a second tap mid-switch cannot un-gate the first', (
+    tester,
+  ) async {
+    // `onSelectionChanged: _busy ? null : ...` disables the widget on the
+    // NEXT build, so two taps inside one frame both reach the handler. The
+    // second one gets `switchAlreadyInProgress` back and then, on its way
+    // out, sets `_busy = false` underneath a switch that is still awaiting
+    // the SDK -- re-enabling the toggle mid-flight and putting a refusal on
+    // screen for a switch that has not failed.
+    final parked = _ParkedSwitch(PayCrossEnvironment.sandbox);
+    await tester.pumpWidget(
+      await liveApp(
+        state: parked.state,
+        home: SettingsScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Both inside one frame: no pump between them.
+    await tester.tap(find.text('Test'));
+    await tester.tap(find.text('Test'), warnIfMissed: false);
+    await tester.pump();
+
+    // Mid-switch. The SDK has not answered, so nothing has failed and the
+    // toggle must still be shut.
+    expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
+    expect(
+      tester
+          .widget<SegmentedButton<DemoEnvironment>>(
+            find.byKey(const ValueKey('environmentToggle')),
+          )
+          .onSelectionChanged,
+      isNull,
+    );
+
+    parked.gate.complete();
+    await tester.pumpAndSettle();
+    expect(parked.state.environment, DemoEnvironment.test);
+  });
+
+  testWidgets('a second tap mid-enter cannot report a refusal', (tester) async {
+    // The same shape on the way in, where it is worse: the refusal on screen
+    // would be for a switch to production that is still in flight and about
+    // to succeed.
+    //
+    // Tall on purpose. The open gate adds a paragraph, a field and two
+    // buttons, which pushes `settingsMessage` past the bottom of the default
+    // 800x600 view -- and a `findsNothing` that passes because a ListView
+    // never built the row is a green assertion that checks nothing.
+    useTallSurface(tester);
+    final parked = _ParkedSwitch(PayCrossEnvironment.production);
+    await tester.pumpWidget(
+      _settingsIn(
+        parked.state,
+        store: SecretStore(backend: InMemorySecretBackend()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('switchToLive')));
+    await tester.tap(
+      find.byKey(const ValueKey('switchToLive')),
+      warnIfMissed: false,
+    );
+    // Twice: the refused second call resolves on a microtask, and one pump
+    // is not a guaranteed chance for it to land before the frame is drawn.
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
+
+    parked.gate.complete();
+    await tester.pumpAndSettle();
+    expect(parked.state.environment, DemoEnvironment.live);
   });
 }
