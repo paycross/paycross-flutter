@@ -48,6 +48,7 @@ Widget _run({
   required Future<PayCrossResult> Function(String) present,
   HistoryStore? history,
   bool e2e = false,
+  bool live = false,
   Future<MintedSession> Function(String)? mint,
   Future<DemoVersions> Function()? readVersions,
 }) => MaterialApp(
@@ -55,6 +56,7 @@ Widget _run({
     preset: _preset,
     body: _preset.body,
     e2e: e2e,
+    live: live,
     mintSession:
         mint ??
         (_) async => const MintedSession(
@@ -521,5 +523,114 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(sent, '{"amount":2500,"currency":"USD"}');
+  });
+  testWidgets('a Live run says to refund it, and gives the transaction id', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _run(live: true, present: (_) async => _success('txn-live')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsOneWidget);
+    expect(find.textContaining('Refund this in the back office'), findsWidgets);
+    expect(find.textContaining('txn-live'), findsWidgets);
+    expect(find.byKey(const ValueKey('copyRefundId')), findsOneWidget);
+  });
+
+  testWidgets('a Live run with no transaction id falls back to the session', (
+    tester,
+  ) async {
+    // Cancelled sheet, thrown error, timeout mid-poll: one of the two ids
+    // always exists, because the session is minted before the sheet opens.
+    // The money is findable either way, and that is the whole point of this
+    // block.
+    await tester.pumpWidget(
+      _run(live: true, present: (_) async => const PayCrossCancelled()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsOneWidget);
+    expect(find.textContaining('No transaction id'), findsOneWidget);
+    expect(find.textContaining('sess-9'), findsWidgets);
+  });
+
+  testWidgets('a Live mint that failed offers nothing to refund', (
+    tester,
+  ) async {
+    // No id at all -- and also no charge, so there is nothing to refund. The
+    // ordinary scrubbed error is the whole story.
+    await tester.pumpWidget(
+      _run(
+        live: true,
+        mint: (_) async => throw const MinterError('POST -> HTTP 401'),
+        present: (_) async => _success('never'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsNothing);
+    // Not vacuous: the outcome card itself IS on screen, so the block above
+    // was skipped by its own guard rather than by there being no card to put
+    // it in.
+    expect(find.byKey(const ValueKey('runOutcome')), findsOneWidget);
+    expect(find.textContaining('HTTP 401'), findsOneWidget);
+  });
+
+  testWidgets('a Test run says nothing about refunds', (tester) async {
+    await tester.pumpWidget(_run(present: (_) async => _success('txn-9')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsNothing);
+    // Same guard against a vacuous findsNothing: everything the Live version
+    // of this run would have rendered the block beside is here.
+    expect(find.byKey(const ValueKey('runOutcome')), findsOneWidget);
+    expect(find.textContaining('txn-9'), findsWidgets);
+  });
+
+  testWidgets('a Live run is written to history as a Live run', (tester) async {
+    final backend = InMemoryHistoryBackend();
+    await tester.pumpWidget(
+      _run(
+        live: true,
+        history: HistoryStore(backend: backend),
+        present: (_) async => _success('txn-live'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final row = jsonDecode(backend.entries.single) as Map<String, Object?>;
+    expect(row['live'], isTrue);
+  });
+
+  testWidgets('the copy button puts the id on the clipboard', (tester) async {
+    // The id is what a refund needs, and retyping a transaction id off a
+    // phone screen is how a refund lands on the wrong charge.
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _run(live: true, present: (_) async => _success('txn-live')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('copyRefundId')));
+    await tester.pumpAndSettle();
+
+    expect(copied, ['txn-live']);
   });
 }

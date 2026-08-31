@@ -4,6 +4,7 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 
 import '../e2e_label.dart';
 import '../e2e_mode.dart';
+import 'environment.dart';
 import 'history.dart';
 import 'minter.dart';
 import 'outcome.dart';
@@ -153,6 +154,7 @@ class _RunScreenState extends State<RunScreen> {
       demoVersion: versions.demo,
       pluginVersion: versions.plugin,
       nativeSdkVersion: versions.nativeSdk,
+      live: widget.live,
     );
     await _remember(entry);
 
@@ -225,6 +227,73 @@ class _RunScreenState extends State<RunScreen> {
                       const SizedBox(height: 12),
                       Text('Session ${_sessionId ?? '(none)'}'),
                       Text('Transaction ${_transactionId ?? '(none)'}'),
+                      // Both conditions carry weight. This block lives inside
+                      // the outcome card, which is built only once there is an
+                      // outcome; and a mint that failed sets that outcome
+                      // while leaving both ids null, which is a run that took
+                      // no money and has nothing to refund.
+                      if (widget.live &&
+                          (_transactionId ?? _sessionId) != null) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          key: const ValueKey('refundInstruction'),
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: liveRed,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Refund this in the back office now.',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                // One of the two always exists, because the
+                                // session is minted before the sheet opens. A
+                                // transaction id is what a refund takes;
+                                // without one the session id is what the back
+                                // office can be searched by, and an unknown
+                                // outcome is exactly when somebody needs to be
+                                // able to find the money.
+                                _transactionId != null
+                                    ? 'Transaction $_transactionId'
+                                    : 'No transaction id — search the back '
+                                          'office by this session id.\n'
+                                          'Session $_sessionId',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                key: const ValueKey('copyRefundId'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  side: const BorderSide(color: Colors.white),
+                                ),
+                                icon: const Icon(Icons.copy, size: 18),
+                                label: const Text('Copy id'),
+                                onPressed: () async {
+                                  await Clipboard.setData(
+                                    ClipboardData(
+                                      text: _transactionId ?? _sessionId!,
+                                    ),
+                                  );
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Copied.')),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       if (_entry != null) ...[
                         const SizedBox(height: 8),
                         // The same block History copies, offered where the run
