@@ -351,14 +351,18 @@ void main() {
     // the same conditional every other E2E branch in this file is behind --
     // the frozen build has no toggle in it, rather than one switched off.
     //
-    // Two short fragments rather than one long one: `dart format` breaks
-    // this expression across three lines, so a match on the whole
-    // `builder: kE2e ? null :` would go red on formatting alone. Neither
-    // fragment survives deleting the conditional, which is the edit worth
+    // Whitespace is collapsed first because `dart format` breaks the
+    // conditional across three lines, and a source match that a reformat can
+    // redden is a test about formatting. Collapsing it also allows the whole
+    // fragment to be matched at once, which is the point: `? null` on its own
+    // matches the merchant-id ternary higher up the same file, so it would
+    // stay green with this conditional deleted -- which is the one edit worth
     // catching.
     final source = File('lib/main.dart').readAsStringSync();
 
-    expect(source, contains('builder: kE2e'));
-    expect(source, contains('? null'));
+    expect(
+      source.replaceAll(RegExp(r'\s+'), ' '),
+      contains('builder: kE2e ? null :'),
+    );
   });
 }

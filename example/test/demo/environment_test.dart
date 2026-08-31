@@ -344,6 +344,12 @@ void main() {
       tester,
     ) async {
       usePhoneSurface(tester);
+      // A real notch, because without one this asserts nothing: the SafeArea
+      // has no inset to take and removePadding has none to remove, so the
+      // double gap the pair exists to prevent cannot appear either way.
+      tester.view.viewPadding = const FakeViewPadding(top: 47);
+      tester.view.padding = const FakeViewPadding(top: 47);
+
       await tester.pumpWidget(
         await liveApp(home: const Scaffold(body: Text('a screen'))),
       );
@@ -353,6 +359,16 @@ void main() {
       // the Scaffold below pads for the status bar a second time and the
       // result is a visible double gap. An overflow is an exception here.
       expect(tester.takeException(), isNull);
+      // The banner cleared the notch,
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('liveBanner'))).dy,
+        greaterThan(47.0),
+      );
+      // and the screen below is not asked to clear it a second time.
+      expect(
+        MediaQuery.of(tester.element(find.text('a screen'))).padding.top,
+        0,
+      );
     });
   });
 }
