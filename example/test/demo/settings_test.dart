@@ -678,4 +678,151 @@ void main() {
     expect(_fieldText(tester, 'clientId'), 'test-id');
     expect(_fieldText(tester, 'clientSecret'), 'test-secret');
   });
+
+  testWidgets('Live hides Save, Verify, Forget and the wallet id', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      await liveApp(
+        home: SettingsScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Save'), findsNothing);
+    // There is no Verify in Live on purpose: the €1.00 smoke is the
+    // verification, and a probe would create a real production session as a
+    // side effect.
+    expect(find.text('Verify credentials'), findsNothing);
+    expect(find.text('Forget credentials'), findsNothing);
+    expect(find.byKey(const ValueKey('googlePayMerchantId')), findsNothing);
+    expect(find.byKey(const ValueKey('useForThisSession')), findsOneWidget);
+    // The two that stay: a credential still has to be typed somewhere.
+    expect(find.byKey(const ValueKey('clientId')), findsOneWidget);
+    expect(find.byKey(const ValueKey('clientSecret')), findsOneWidget);
+  });
+
+  testWidgets('a Live credential reaches memory and nothing else', (
+    tester,
+  ) async {
+    final backend = _CountingBackend();
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: SettingsScreen(
+          store: SecretStore(backend: backend),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret',
+    );
+    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
+    await tester.pumpAndSettle();
+
+    expect(state.liveCredentials?.clientId, 'live-id');
+    expect(state.liveCredentials?.clientSecret, 'live-secret');
+    // The whole rule, in two lines: not one byte of a production credential
+    // reached a store, so there is nothing on the device to leak, to back up,
+    // or to forget to forget.
+    expect(backend.writes, 0);
+    expect(backend.entries, isEmpty);
+  });
+
+  testWidgets('a Live session with half a credential is refused', (
+    tester,
+  ) async {
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: SettingsScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
+    await tester.pumpAndSettle();
+
+    expect(state.liveCredentials, isNull);
+    expect(_message(tester), contains('client secret'));
+  });
+
+  testWidgets('switching to Live empties what Test had on screen', (
+    tester,
+  ) async {
+    // A sandbox credential still in the field after the switch is one tap
+    // away from being sent to production.
+    final backend = InMemorySecretBackend()
+      ..entries['paycross_demo_client_id'] = 'test-id'
+      ..entries['paycross_demo_client_secret'] = 'test-secret';
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: backend)),
+    );
+    await tester.pumpAndSettle();
+    expect(_fieldText(tester, 'clientId'), 'test-id');
+
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('switchToLive')));
+    await tester.pumpAndSettle();
+
+    expect(_fieldText(tester, 'clientId'), '');
+    expect(_fieldText(tester, 'clientSecret'), '');
+  });
+
+  testWidgets('coming back to Test empties the fields and reloads the store', (
+    tester,
+  ) async {
+    // And the direction that matters more: a production secret left in a
+    // field in Test is one Save away from the platform secure store.
+    final backend = _CountingBackend()
+      ..entries['paycross_demo_client_id'] = 'test-id'
+      ..entries['paycross_demo_client_secret'] = 'test-secret';
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: SettingsScreen(
+          store: SecretStore(backend: backend),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret',
+    );
+
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+
+    expect(_fieldText(tester, 'clientSecret'), 'test-secret');
+    expect(backend.writes, 0);
+  });
 }

@@ -281,6 +281,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _stored = null;
   }
 
+  /// Holds what is typed for this session, in memory, and says so.
+  ///
+  /// The Live counterpart of Save, and deliberately not called one: nothing
+  /// is saved. There is no Verify beside it because the €1.00 smoke is the
+  /// verification -- a Live probe would create a real production session as
+  /// a side effect of checking a password.
+  void _useForThisSession(DemoEnvironmentState state) {
+    final typed = _typed;
+    final unusable = _whyUnusable(typed);
+    if (unusable != null) {
+      setState(() => _message = unusable);
+      return;
+    }
+    state.useForThisSession(typed);
+    setState(
+      () => _message =
+          'Held for this session. Nothing is saved — closing the app, or '
+          'switching back to Test, forgets it.',
+    );
+  }
+
   Future<void> _verify() async {
     final typed = _typed;
     final unusable = _whyUnusable(typed);
@@ -419,45 +440,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            key: const ValueKey('googlePayMerchantId'),
-            controller: _googlePay,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: const InputDecoration(
-              labelText: 'Google Pay merchant id (Android, optional)',
-              helperText: 'Read at launch — restart the app after changing it.',
-              helperMaxLines: 2,
-              border: OutlineInputBorder(),
+          // Test only: there is no Google Pay tile in Live for a wallet id to
+          // serve, and the id is configuration for one wallet on one
+          // merchant.
+          if (!live) ...[
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('googlePayMerchantId'),
+              controller: _googlePay,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'Google Pay merchant id (Android, optional)',
+                helperText:
+                    'Read at launch — restart the app after changing it.',
+                helperMaxLines: 2,
+                border: OutlineInputBorder(),
+              ),
             ),
-          ),
+          ],
           const SizedBox(height: 20),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              FilledButton(
-                onPressed: _busy || !_loaded ? null : _save,
-                child: const Text('Save'),
-              ),
-              OutlinedButton(
-                onPressed: _busy || !_loaded ? null : _verify,
-                child: const Text('Verify credentials'),
-              ),
-              TextButton(
-                onPressed: _busy || !_loaded ? null : _forget,
-                child: const Text('Forget credentials'),
-              ),
-              // Beside the buttons rather than above the fields, because it is
-              // the buttons being dead that needs explaining: three empty
-              // fields under three grey buttons is what a broken build looks
-              // like, and a cold Keychain read takes a visible moment on a
-              // real phone. Gone the moment the read lands, whatever it found.
-              if (!_loaded) const Text('Reading saved credentials…'),
-            ],
-          ),
+          if (live)
+            // Not gated on `_loaded`, unlike the three below it: there is no
+            // store read to wait for in Live, and a button dead until a
+            // Keychain answers would be a button dead for a reason that does
+            // not apply.
+            FilledButton(
+              key: const ValueKey('useForThisSession'),
+              onPressed: _busy ? null : () => _useForThisSession(state!),
+              child: const Text('Use for this session'),
+            )
+          else
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                FilledButton(
+                  onPressed: _busy || !_loaded ? null : _save,
+                  child: const Text('Save'),
+                ),
+                OutlinedButton(
+                  onPressed: _busy || !_loaded ? null : _verify,
+                  child: const Text('Verify credentials'),
+                ),
+                TextButton(
+                  onPressed: _busy || !_loaded ? null : _forget,
+                  child: const Text('Forget credentials'),
+                ),
+                // Beside the buttons rather than above the fields, because it is
+                // the buttons being dead that needs explaining: three empty
+                // fields under three grey buttons is what a broken build looks
+                // like, and a cold Keychain read takes a visible moment on a
+                // real phone. Gone the moment the read lands, whatever it found.
+                if (!_loaded) const Text('Reading saved credentials…'),
+              ],
+            ),
           if (_message != null) ...[
             const SizedBox(height: 20),
             Semantics(
