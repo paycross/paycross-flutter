@@ -146,3 +146,62 @@ def test_a_tag_that_is_not_a_demo_tag_is_refused(ios_repo):
 
     assert done.returncode == 2
     assert "demo-v" in done.stderr
+
+
+@pytest.fixture
+def android_repo(tmp_path):
+    return fake_repo(tmp_path, "release.sh")
+
+
+def test_the_release_build_carries_the_tag_s_version(android_repo):
+    out = dry_run(android_repo, "release.sh", "--tag", "demo-v0.1.0")
+
+    build = next(line for line in out.splitlines() if "flutter build apk" in line)
+    assert "--release" in build
+    assert "--build-name 0.1.0" in build
+    assert "--build-number 1" in build
+
+
+def test_the_shipped_build_never_carries_the_automation_define(android_repo):
+    out = dry_run(android_repo, "release.sh", "--tag", "demo-v0.1.0")
+
+    assert "PAYCROSS_E2E" not in out
+
+
+def test_the_e2e_build_carries_it_and_is_named_so_it_cannot_be_shipped(
+    android_repo,
+):
+    out = dry_run(android_repo, "release.sh", "--tag", "demo-v0.1.0", "--e2e")
+
+    assert "--dart-define=PAYCROSS_E2E=true" in out
+    # A different filename, so the runner's build and the tester's build
+    # cannot be confused for one another at the point somebody uploads one.
+    assert "app-release-e2e.apk" in out
+    assert "never attach" in out.lower()
+
+
+def test_the_certificate_is_verified_before_anything_is_published(android_repo):
+    out = dry_run(android_repo, "release.sh", "--tag", "demo-v0.1.0")
+
+    lines = out.splitlines()
+    verify = next(i for i, line in enumerate(lines) if "apksigner verify" in line)
+    build = next(i for i, line in enumerate(lines) if "flutter build apk" in line)
+    assert "--print-certs" in lines[verify]
+    assert build < verify
+
+
+def test_a_tag_that_is_not_a_demo_tag_is_refused_on_android_too(android_repo):
+    done = subprocess.run(
+        [
+            "bash",
+            str(android_repo / "tool" / "demo" / "release.sh"),
+            "--dry-run",
+            "--tag",
+            "v0.1.0",
+        ],
+        cwd=android_repo,
+        capture_output=True,
+        text=True,
+    )
+
+    assert done.returncode == 2

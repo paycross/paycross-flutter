@@ -22,3 +22,15 @@ __pycache__/
 # no use to a merchant, and pana would score its fixtures as if they were
 # library code.
 tool/
+
+# Kotlin's build-session scratch directory, written by any Gradle run in
+# example/android. A build artifact, not a source file.
+.kotlin/
+
+# Signing material for the demo app. Repeated from .gitignore because pub reads
+# this file INSTEAD of that one: a .gitignore-only rule protects git and would
+# not protect a publish. *.p12 is the one that matters now the store is PKCS12.
+key.properties
+*.jks
+*.p12
+*.keystore
