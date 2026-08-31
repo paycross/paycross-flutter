@@ -318,6 +318,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _clientId.clear();
     _clientSecret.clear();
     _googlePay.clear();
+    // The reveal goes with them. It is a decision the human took about a
+    // sandbox secret, in a room they judged safe for one; inheriting it puts
+    // the next environment's secret on screen in plaintext without anybody
+    // choosing that.
+    _revealSecret = false;
     _stored = null;
   }
 

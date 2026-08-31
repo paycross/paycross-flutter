@@ -1249,4 +1249,41 @@ void main() {
     await tester.pumpAndSettle();
     expect(parked.state.environment, DemoEnvironment.live);
   });
+
+  testWidgets('a revealed secret does not stay revealed across a crossing', (
+    tester,
+  ) async {
+    // Reveal is a decision taken about a sandbox secret, in a room the human
+    // judged safe for one. Carrying it into Live renders the PRODUCTION
+    // secret in plaintext by inheritance from that decision, in the one mode
+    // where a shoulder over the shoulder costs real money.
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('revealSecret')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('clientSecret')))
+          .obscureText,
+      isFalse,
+    );
+
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('switchToLive')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('clientSecret')))
+          .obscureText,
+      isTrue,
+    );
+  });
 }
