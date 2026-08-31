@@ -166,6 +166,13 @@ class DemoEnvironmentState extends ChangeNotifier {
         googlePayMerchantId: googlePayMerchantId,
       );
     } catch (problem) {
+      // The same second drop the success path makes below, and for the same
+      // reason: the app was in Live across that await, so a button could
+      // have armed a fresh credential in the window. This path stays in
+      // Live, so the getter's gate would not hide one -- and the message
+      // returned here promises they are gone. Before the notify, so a
+      // listener reading during it sees that promise already kept.
+      _liveCredentials = null;
       notifyListeners();
       return 'The credentials are forgotten, but the SDK would not switch '
           'back: ${problem.runtimeType}. Still in Live — restart the app.';

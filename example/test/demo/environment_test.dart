@@ -29,10 +29,13 @@ class _RecordingConfigure {
     required PayCrossEnvironment environment,
     String? googlePayMerchantId,
   }) async {
+    // Before the refusal, not after: this models a button being tapped while
+    // the SDK call is in flight, and that happens whether the call goes on to
+    // succeed or to throw. `calls` still records only the ones that did not.
+    duringTheCall?.call();
     if (refuse) throw StateError('a payment is in flight');
     calls.add(environment);
     merchantIds.add(googlePayMerchantId);
-    duringTheCall?.call();
     if (hold != null) await hold!.future;
   }
 }
@@ -208,6 +211,26 @@ void main() {
       expect(state.liveCredentials, isNull);
     },
   );
+
+  test('an exit that fails still forgets what the window armed', () async {
+    // The failure branch promises "the credentials are forgotten". It has to
+    // be true when it is said: the app stays in Live on this path, so the
+    // getter's gate hides nothing, and the drop at the top of the method
+    // already happened before the window opened.
+    final configure = _RecordingConfigure();
+    final state = DemoEnvironmentState(configure: configure.call);
+    await state.enterLive('LIVE');
+    // Two statements, not a cascade: `..refuse` after an arrow body binds to
+    // the closure's void result rather than to `configure`.
+    configure.duringTheCall = () => state.useForThisSession(_live);
+    configure.refuse = true;
+
+    final said = await state.leaveLive();
+
+    expect(said, contains('Still in Live'));
+    expect(state.isLive, isTrue);
+    expect(state.liveCredentials, isNull);
+  });
 
   test('a second switch while one is in flight is refused', () async {
     // Two switches racing end with the banner and the SDK disagreeing: the
