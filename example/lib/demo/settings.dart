@@ -246,6 +246,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     final refused = await state.leaveLive();
     if (!mounted) return;
+    // Unconditional, unlike the enter path below: a refused exit may have
+    // left a production credential on screen, and forgetting one that was
+    // safe costs a retype, while keeping one that was not costs a real
+    // charge. So the two directions differ on purpose -- entering clears
+    // only on success, leaving clears either way.
     _forgetTypedCredentials();
     setState(() {
       _busy = false;
