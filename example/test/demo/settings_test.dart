@@ -7,6 +7,7 @@ import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
+import 'package:paycross_flutter/paycross_flutter.dart';
 
 import '_environment.dart';
 import '_surface.dart';
@@ -111,6 +112,25 @@ class _CountingBackend implements SecretBackend {
     entries.remove(key);
   }
 }
+
+/// A state whose SDK will not go back to sandbox.
+///
+/// The half-failed exit, which is the one case where the environment and the
+/// credentials part company: `leaveLive` drops them and then cannot re-point
+/// the SDK, so the app is still in Live with nothing to pay with. Only the
+/// way back throws -- an `enterLive` that also threw could never get a test
+/// into Live to begin with.
+DemoEnvironmentState _stuckInLive() => DemoEnvironmentState(
+  configure:
+      ({
+        required PayCrossEnvironment environment,
+        String? googlePayMerchantId,
+      }) async {
+        if (environment == PayCrossEnvironment.sandbox) {
+          throw StateError('no channel');
+        }
+      },
+);
 
 /// Whether the button carrying [label] is live.
 ///
@@ -902,5 +922,43 @@ void main() {
 
     expect(find.byKey(const ValueKey('liveConfirm')), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an exit the SDK refused is reported in full, not summarised', (
+    tester,
+  ) async {
+    // The credentials are gone and the app is still in Live. Nothing on
+    // screen can show that except this line, so the screen renders what the
+    // state returned rather than a sentence of its own: the runtimeType says
+    // which failure it was, and the tail says what to do about it. A refactor
+    // that replaces either half with a tidier message of its own is what this
+    // test exists to stop.
+    final state = _stuckInLive();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: SettingsScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+
+    expect(_message(tester), contains('The credentials are forgotten'));
+    expect(_message(tester), contains('StateError'));
+    // `endsWith`, not `contains`: rendering it as-is means nothing is
+    // appended to it either.
+    expect(_message(tester), endsWith('Still in Live — restart the app.'));
+
+    // And the two halves the message is making a promise about, both true.
+    expect(state.liveCredentials, isNull);
+    expect(state.environment, DemoEnvironment.live);
+    expect(find.byKey(const ValueKey('liveBanner')), findsOneWidget);
   });
 }
