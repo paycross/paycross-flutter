@@ -1,0 +1,55 @@
+# A quarter turn with the sheet up after submitting, and back again.
+#
+# What this exercises is the SDK's own recreation, not the plugin's detach
+# path. `PaymentActivity` declares NO `android:configChanges` at all (sdk
+# AndroidManifest.xml, the `.internal.ui.PaymentActivity` block), so a
+# rotation DESTROYS AND RECREATES it. The example app does the opposite --
+# its manifest lists orientation, screenSize, locale and more -- so
+# MainActivity absorbs the change and `onDetachedFromActivityForConfigChanges`
+# never fires (R11).
+#
+# Rotating AFTER the submit, not on the form: the CVV field is a plain
+# `remember` rather than `rememberSaveable` (CardFormScreen.kt:95, and the
+# comment above it cites PCI DSS), so a rotation on the form clears it and the
+# cell would be measuring its own typing rather than the SDK.
+#
+# TWICE, and that is not decoration. Orientation outlives the cell -- it is a
+# global setting and no on/off pair exists for the runner's teardown replay --
+# so a single turn leaves the device turned and every cell after it hunts for
+# buttons that are off screen. Measured: the first version of this probe left
+# the simulator in landscape and the very next interleaved control failed with
+# `no element named 'payButton' within 60s`. `cell_rules` now refuses an odd
+# number of turns and both drivers' `launch()` refuse a turned device.
+#
+# ANDROID ONLY, and by a measured iOS defect rather than a platform
+# difference. On iOS a rotation with the sheet up leaves the CVV keypad
+# undismissable on the challenge page, so `acs()` cannot answer it and the
+# cell dies in the driver before it can assert anything --
+# paycross/payment-ios-sdk#17, filed with the unrotated control that passes
+# minutes apart on the same build. This cell goes back to both platforms when
+# that is fixed. The iOS SIDE OF THE MEASUREMENT is not lost meanwhile: the
+# dumps show the challenge fully present and `approve` visible after the turn,
+# so what is blocked is the tap, not the SDK.
+id: rotate_after_submit
+platforms: [android]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - rotate
+  - rotate
+  - acs:approve
+  - wait_result 240
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded

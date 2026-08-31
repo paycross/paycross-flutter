@@ -23,25 +23,36 @@ from tool.e2e import cells
 CELLS = Path(__file__).resolve().parents[1] / "cells"
 D3 = CELLS / "d3"
 
-#: The cells that cannot run on the iOS simulator, and why each one cannot.
-#: Both were measured rather than assumed, which is why they are named here
-#: rather than left to `platforms:` alone: a future reader deserves the reason
-#: without going to the git log.
-#:
-#: `dont_keep_activities` is an Android developer option and iOS has no
-#: equivalent -- there is no activity to not keep, and `IosDriver` refuses the
-#: verb outright.
+#: The one cell that cannot run on the iOS simulator, and why -- measured
+#: rather than assumed, which is why the reason is here rather than left to
+#: `platforms:` alone.
 #:
 #: `rotate_after_submit` is excluded by a MEASURED iOS defect, not by a
 #: platform difference: rotating with the sheet up leaves the CVV keypad
-#: undismissable on the 3-D Secure challenge page, so the cell dies in the
-#: driver before it can assert anything at all. payment-ios-sdk#17, with the
-#: unrotated control that passes minutes apart. It goes back to both platforms
-#: when that is fixed.
+#: undismissable on the 3-D Secure challenge page, so `acs()` cannot answer it
+#: and the cell dies in the driver before it can assert anything at all.
+#: payment-ios-sdk#17, filed with the unrotated control that passes minutes
+#: apart on the same build. It goes back to both platforms when that is fixed.
 ANDROID_ONLY = {
-    "dont_keep_activities",
     "rotate_after_submit",
 }
+
+#: There is no `dont_keep_activities` cell, and its absence is deliberate.
+#: The developer option does not work on this rig: `settings put global
+#: always_finish_activities 1` reads back as `1` and the activity manager
+#: ignores it -- measured 2026-08-31, including across a reboot with the
+#: setting already written, with ZERO `Force finishing activity` lines in the
+#: whole log buffer either way. A cell would turn the option "on", measure an
+#: entirely ordinary payment and pass, which is exactly what the first probe
+#: did before `run_cell` learned to fail a cell whose declared marker never
+#: appears.
+#:
+#: What that leaves unmeasured is named in the report rather than papered
+#: over: the plugin's `onDetachedFromActivity` path, which finishes a pending
+#: call with `paycross_result_unknown` (PayCrossPlugin.kt:82-93), and the
+#: `finishPending` that then drops the real result because `pending` is
+#: already null (:217-223). Neither has been exercised on a device.
+NO_CELL_FOR = {"dont_keep_activities"}
 
 EXPECTED_IDS = {
     "control",
@@ -55,7 +66,7 @@ def test_d3_is_exactly_the_cells_the_probes_reproduced():
     assert {p.stem for p in D3.glob("*.yaml")} == EXPECTED_IDS
 
 
-@pytest.mark.parametrize("platform, count", [("android", 6), ("ios", 4)])
+@pytest.mark.parametrize("platform, count", [("android", 5), ("ios", 4)])
 def test_the_d3_cells_satisfy_the_shared_authoring_rules(platform, count):
     loaded = check_cell_dir(D3, platform)
 
@@ -77,36 +88,32 @@ def test_the_control_cell_is_the_same_payment_in_every_dimension():
         assert path.read_bytes() == d0, f"{path} has drifted from d0's control"
 
 
-def test_only_the_developer_option_cell_is_excused_a_crash_line():
-    # The allow-list is closed and validated at load, so nothing here can
-    # declare something dangerous. What this catches is a cell picking up a
-    # declaration it does not need -- an excuse that is not being used is an
-    # excuse waiting to hide something.
+def test_no_d3_cell_is_excused_a_crash_line():
+    # The one cell that would have declared a marker does not exist -- the
+    # developer option that produces it does not work on this rig. Until it
+    # does, nothing in this dimension is excused anything, and an excuse
+    # appearing here without a cell that provokes it is an excuse waiting to
+    # hide something.
     for cell in cells.load_cells(D3, "android"):
-        if cell.id == "dont_keep_activities":
-            assert cell.tolerated_crash_markers == ("Force finishing activity",)
-        else:
-            assert cell.tolerated_crash_markers == (), cell.id
+        assert cell.tolerated_crash_markers == (), cell.id
 
 
-def test_the_cells_that_change_the_device_put_it_back():
-    # `cell_rules` already refuses an unpaired `on` and an odd number of turns.
-    # This says the same thing from the cell list's side, so that a cell which
-    # stops touching the device -- and therefore stops needing the teardown --
-    # is noticed rather than silently keeping a stale action.
+def test_the_cell_that_turns_the_device_puts_it_back():
+    # `cell_rules` already refuses an odd number of turns. This says the same
+    # thing from the cell list's side, so that a cell which stops rotating --
+    # and therefore stops needing the second turn -- is noticed rather than
+    # silently keeping a stale action.
     by_id = {c.id: c for c in cells.load_cells(D3, "android")}
-
-    keeping = [(a.verb, a.arg) for a in by_id["dont_keep_activities"].actions]
-    assert ("dont_keep_activities", "on") in keeping
-    assert keeping[-1] == ("dont_keep_activities", "off")
 
     turns = [a.verb for a in by_id["rotate_after_submit"].actions if a.verb == "rotate"]
     assert len(turns) == 2
 
 
-def test_no_ios_cell_asks_for_the_verb_that_platform_refuses():
-    for cell in cells.load_cells(D3, "ios"):
-        assert "dont_keep_activities" not in {a.verb for a in cell.actions}, cell.id
+def test_no_cell_asks_for_the_verb_this_rig_cannot_deliver():
+    # Both halves: iOS refuses it outright, and on android it is inert.
+    for platform in ("android", "ios"):
+        for cell in cells.load_cells(D3, platform):
+            assert NO_CELL_FOR.isdisjoint({a.verb for a in cell.actions}), cell.id
 
 
 @pytest.mark.parametrize("platform", ["android", "ios"])
