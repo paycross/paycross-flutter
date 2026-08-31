@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import 'editor.dart';
+import 'endpoints.dart';
+import 'environment.dart';
 import 'history_screen.dart';
+import 'live.dart';
 import 'minter.dart';
 import 'presets.dart';
 import 'run.dart';
@@ -18,6 +22,38 @@ Future<MintedSession> mintWithCredentials(
   String body,
 ) {
   final minter = Minter(credentials: credentials);
+  return minter.mint(body).whenComplete(minter.close);
+}
+
+/// The Live mint: one [Minter] pointed at an environment the caller names.
+///
+/// A second function rather than an `endpoints` parameter on
+/// [mintWithCredentials]: that one is threaded through `DemoHome` and handed
+/// 2-argument closures by two existing tests, and widening it would churn the
+/// sandbox path for a Live feature. It is also the more honest shape -- the
+/// sandbox path takes the default and the Live path takes what the
+/// environment state says, and those are two decisions.
+///
+/// [endpoints] has no default and is passed on explicitly, so a Live mint
+/// cannot fall back to the sandbox pair the way [mintWithCredentials]
+/// deliberately does. A production credential sent to the sandbox token
+/// endpoint comes back 401, and a 401 reads as a bad credential rather than
+/// as a mint pointed at the wrong environment.
+///
+/// [client] is the same seam [mintThrowawaySession] carries, for the same
+/// reason: it is how a test proves the paragraph above without opening a
+/// socket. Passing one also makes it the caller's to close.
+Future<MintedSession> liveMintWithCredentials(
+  Credentials credentials,
+  String body,
+  Endpoints endpoints, {
+  http.Client? client,
+}) {
+  final minter = Minter(
+    credentials: credentials,
+    endpoints: endpoints,
+    client: client,
+  );
   return minter.mint(body).whenComplete(minter.close);
 }
 
@@ -155,16 +191,76 @@ class _ActiveProfileStripState extends State<ActiveProfileStrip> {
   );
 }
 
+/// Which credentials a Live run would use -- from memory, and only memory.
+///
+/// A separate widget rather than a branch inside [ActiveProfileStrip]: that
+/// one reads the secure store in `initState`, and the guarantee worth having
+/// here is that nothing on a screen saying LIVE came from a store. Code that
+/// cannot reach it cannot show it.
+class LiveProfileStrip extends StatelessWidget {
+  const LiveProfileStrip({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final credentials = LiveModeScope.maybeOf(context)?.liveCredentials;
+    final id = credentials?.clientId;
+    return Card(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: ListTile(
+        key: const ValueKey('liveProfile'),
+        dense: true,
+        leading: const Icon(Icons.warning_amber_rounded),
+        title: Text(
+          id == null
+              ? 'Live — no credentials this session'
+              : 'Live — client ${id.length <= 6 ? id : '${id.substring(0, 6)}…'}',
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen())),
+      ),
+    );
+  }
+}
+
 /// Where an ordinary build lands: pick a scenario, run it.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     this.store = const SecretStore(),
     this.mintWith = mintWithCredentials,
+    this.liveMintWith = liveMintWithCredentials,
+    this.smokeProblem = _liveSmokeProblem,
   });
 
   final SecretStore store;
+
+  /// The sandbox mint. Unchanged, and not given an environment.
   final Future<MintedSession> Function(Credentials, String body) mintWith;
+
+  /// The Live mint, which is told where to send the session.
+  final Future<MintedSession> Function(Credentials, String body, Endpoints)
+  liveMintWith;
+
+  /// Why the Live smoke cannot run, or null.
+  ///
+  /// A constructor argument only so a widget test can reach the dialog while
+  /// the shipped `liveSmokeIdentity` is still the placeholder it is supposed
+  /// to be. The app always passes the real predicate, and the test that the
+  /// tile refuses uses the default.
+  final String? Function() smokeProblem;
+
+  /// The default, as a static tear-off.
+  ///
+  /// A closure -- `() => liveSmokeIdentityProblem` -- is not a constant
+  /// expression, so it cannot be a default at all without dropping this
+  /// class's `const` constructor, and four existing tests build
+  /// `const MaterialApp(home: HomeScreen())`. A static method reference is
+  /// constant, which is the same trick `RunScreen` already uses for
+  /// `PayCross.presentPayment`. A function rather than a `String?` so the
+  /// predicate is read at tap time, not at build time.
+  static String? _liveSmokeProblem() => liveSmokeIdentityProblem;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -196,93 +292,220 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('PayCross Demo'),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.credit_card),
-          tooltip: 'Test cards',
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const TestCardsScreen()),
-          ),
+  /// Mints and runs the one Live scenario, past four refusals.
+  ///
+  /// Deliberately not routed through [runPreset]. That function exists to
+  /// make "not configured routes to Settings" true of both entrances to a
+  /// sandbox run, and it does it by reading `SecretStore` -- which is the one
+  /// thing a Live run must never do. Threading an environment through it
+  /// would put a production branch inside the function both sandbox
+  /// entrances share.
+  ///
+  /// [runInFlight] is not needed here for the same reason: deep links are
+  /// rejected in Live, so this tile is the only entrance and `_busy` is the
+  /// only guard a single entrance needs.
+  Future<void> _runLiveSmoke(BuildContext context) async {
+    final state = LiveModeScope.maybeOf(context);
+    if (state == null || !state.isLive) return;
+
+    final problem = widget.smokeProblem();
+    if (problem != null) {
+      // Said on screen, naming the constant: a tile that quietly did nothing
+      // is what a broken build looks like, and the person holding the phone
+      // is the one who has to report what is missing.
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text(problem)));
+      return;
+    }
+
+    final credentials = state.liveCredentials;
+    if (credentials == null) {
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+      return;
+    }
+
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        key: const ValueKey('liveConfirmDialog'),
+        title: const Text('Charge a real card?'),
+        content: Text(
+          'This will charge a real card '
+          '€${(liveSmokeMinorUnits / 100).toStringAsFixed(2)}. Continue?',
         ),
-        IconButton(
-          icon: const Icon(Icons.history),
-          tooltip: 'History',
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const HistoryScreen()),
+        actions: [
+          // Cancel is the filled button and holds the focus: the default
+          // action of this dialog is to not spend money. A dismissed barrier
+          // answers null, which reads the same way below.
+          FilledButton(
+            key: const ValueKey('liveCancel'),
+            autofocus: true,
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
           ),
-        ),
-        IconButton(
-          icon: const Icon(Icons.settings),
-          tooltip: 'Settings',
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
-          ),
-        ),
-      ],
-    ),
-    body: ListView(
-      padding: const EdgeInsets.all(12),
-      children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-          child: Text(
-            'Sandbox only. This build talks to the PayCross TEST '
-            'environment and has no way to reach production.',
-          ),
-        ),
-        ActiveProfileStrip(store: widget.store),
-        for (final preset in demoPresets)
-          Card(
-            child: ListTile(
-              title: Text(preset.name),
-              subtitle: Text(
-                [
-                  preset.expected,
-                  if (preset.cardHint != null) 'Card: ${preset.cardHint}',
-                  if (preset.hint != null) preset.hint!,
-                ].join('\n'),
-              ),
-              isThreeLine: true,
-              trailing: IconButton(
-                icon: const Icon(Icons.edit),
-                tooltip: 'Edit the body',
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => EditorScreen(
-                      preset: preset,
-                      onRun: (body) => _run(context, preset, body),
-                    ),
-                  ),
-                ),
-              ),
-              onTap: _busy ? null : () => _run(context, preset, preset.body),
+          TextButton(
+            key: const ValueKey('liveContinue'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              'Continue',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
-        // The way in for a scenario nobody wrote a preset for. It opens the
-        // same editor the pencils do, on the ordinary body.
-        Card(
-          child: ListTile(
-            key: const ValueKey('customPreset'),
-            leading: const Icon(Icons.tune),
-            title: const Text('Custom'),
-            subtitle: const Text('Edit a session body by hand and run it.'),
-            onTap: _busy
-                ? null
-                : () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => EditorScreen(
-                        preset: customPreset,
-                        onRun: (body) => _run(context, customPreset, body),
+        ],
+      ),
+    );
+    if (go != true || !context.mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => RunScreen(
+            preset: liveSmokePreset,
+            body: liveSmokePreset.body,
+            live: true,
+            mintSession: (body) => widget.liveMintWith(
+              credentials,
+              body,
+              // From the state, not from a constant: the endpoints a Live run
+              // reaches are derived from the same field the banner renders,
+              // so they cannot say one thing while it says another.
+              state.endpoints,
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final live = LiveModeScope.maybeOf(context)?.isLive ?? false;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('PayCross Demo'),
+        actions: [
+          // Seven sandbox PANs, under a heading that says "test cards", on the
+          // one screen where a real card is what is required. The sheet itself
+          // is untouched; in Live there is simply no way in.
+          if (!live)
+            IconButton(
+              icon: const Icon(Icons.credit_card),
+              tooltip: 'Test cards',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const TestCardsScreen(),
+                ),
+              ),
+            ),
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'History',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const HistoryScreen()),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+            ),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+            // The shipped line promised there was no way to reach production.
+            // There is one now, so the promise is replaced rather than left
+            // standing while being false.
+            child: Text(
+              key: const ValueKey('homeEnvironment'),
+              live
+                  ? 'Live — the PayCross production environment. The tile below '
+                        'charges a real card €1.00. Refund it in the back '
+                        'office as soon as it settles; this app cannot.'
+                  : 'Test — this build talks to the PayCross TEST sandbox. '
+                        'Switch to Live in Settings to reach production; it '
+                        'starts in Test on every launch.',
+            ),
+          ),
+          live
+              ? const LiveProfileStrip()
+              : ActiveProfileStrip(store: widget.store),
+          if (live)
+            Card(
+              key: const ValueKey('liveSmokeTile'),
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: ListTile(
+                leading: const Icon(Icons.credit_card),
+                title: Text(liveSmokePreset.name),
+                subtitle: Text(liveSmokePreset.expected),
+                isThreeLine: true,
+                onTap: _busy ? null : () => _runLiveSmoke(context),
+              ),
+            ),
+          if (!live)
+            for (final preset in demoPresets)
+              Card(
+                child: ListTile(
+                  title: Text(preset.name),
+                  subtitle: Text(
+                    [
+                      preset.expected,
+                      if (preset.cardHint != null) 'Card: ${preset.cardHint}',
+                      if (preset.hint != null) preset.hint!,
+                    ].join('\n'),
+                  ),
+                  isThreeLine: true,
+                  trailing: IconButton(
+                    icon: const Icon(Icons.edit),
+                    tooltip: 'Edit the body',
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => EditorScreen(
+                          preset: preset,
+                          onRun: (body) => _run(context, preset, body),
+                        ),
                       ),
                     ),
                   ),
-          ),
-        ),
-      ],
-    ),
-  );
+                  onTap: _busy
+                      ? null
+                      : () => _run(context, preset, preset.body),
+                ),
+              ),
+          // The way in for a scenario nobody wrote a preset for. It opens the
+          // same editor the pencils do, on the ordinary body.
+          if (!live)
+            Card(
+              child: ListTile(
+                key: const ValueKey('customPreset'),
+                leading: const Icon(Icons.tune),
+                title: const Text('Custom'),
+                subtitle: const Text('Edit a session body by hand and run it.'),
+                onTap: _busy
+                    ? null
+                    : () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => EditorScreen(
+                            preset: customPreset,
+                            onRun: (body) => _run(context, customPreset, body),
+                          ),
+                        ),
+                      ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }

@@ -37,6 +37,7 @@ class RunScreen extends StatefulWidget {
     this.history = const HistoryStore(),
     this.readVersions = platformVersions,
     this.e2e = kE2e,
+    this.live = false,
   });
 
   final Preset preset;
@@ -51,6 +52,14 @@ class RunScreen extends StatefulWidget {
   final HistoryStore history;
   final Future<DemoVersions> Function() readVersions;
   final bool e2e;
+
+  /// Whether this run charges a real card.
+  ///
+  /// Passed in at push time rather than read from the environment scope, and
+  /// that is deliberate: a run that started in Live stays a Live run in what
+  /// it shows and what it writes to History, even if somebody switches back
+  /// to Test while the sheet is open.
+  final bool live;
 
   @override
   State<RunScreen> createState() => _RunScreenState();
