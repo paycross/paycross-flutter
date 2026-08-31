@@ -31,14 +31,34 @@ class LiveIdentity {
   /// actually leaves behind, and half an identity on a real charge is no
   /// better than none.
   bool get isPlaceholder =>
-      [firstName, lastName, email].any((field) => field.contains(_placeholder));
+      [firstName, lastName, email].any((f) => f.contains(_placeholder)) ||
+      // The placeholder's own reserved TLD. An edit that replaced the local
+      // part and left the domain behind is still an address nothing can
+      // reach, and a receipt nobody receives is the same problem as no
+      // identity at all.
+      email.endsWith(_unroutableDomain);
 }
 
 const String _placeholder = 'REPLACE_ME';
 
+/// The reserved TLD the shipped placeholder email sits on. `.invalid` is set
+/// aside by RFC 2606 precisely so that it can never resolve.
+const String _unroutableDomain = '.invalid';
+
 /// **BLOCKING OWNER INPUT.** Replace all three fields with the internal
-/// identity the owner designates, in one commit, and update
-/// `live_test.dart`'s first case in the same one.
+/// identity the owner designates, in one commit, and update **two** cases in
+/// `live_test.dart` in the same one -- both go red the moment a real identity
+/// lands here, and both are supposed to:
+///
+/// - *the shipped identity is a placeholder, and says so* -- its assertion
+///   inverts, because [liveSmokeIdentityUnset] becomes false;
+/// - *the refusal names the constant somebody has to change* -- it has to
+///   expect a **null** [liveSmokeIdentityProblem] instead of a message.
+///
+/// The second one is the trap. Forcing [liveSmokeIdentityProblem] to stay
+/// non-null is the repair that makes the suite green again, and it
+/// permanently disables the Live tile while leaving a refusal on screen that
+/// is no longer true.
 ///
 /// Until then [liveSmokeIdentityUnset] is true and the Live tile refuses to
 /// run, naming this constant on screen. That refusal is the feature: a

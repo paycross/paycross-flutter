@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/live.dart';
+import 'package:paycross_demo/demo/presets.dart';
 
 void main() {
   test('the shipped identity is a placeholder, and says so', () {
@@ -18,10 +20,23 @@ void main() {
 
     expect(problem, isNotNull);
     expect(problem, contains('liveSmokeIdentity'));
-    expect(problem, contains('live.dart'));
+    // The whole path, and a path that resolves. The refusal's entire job is
+    // to be believed by somebody holding a phone, so a message still naming
+    // a file that has since moved is worse than no message.
+    expect(problem, contains('lib/demo/live.dart'));
+    expect(
+      File('lib/demo/live.dart').existsSync(),
+      isTrue,
+      reason: 'the refusal names this path; it has to be real',
+    );
   });
 
-  test('an identity with no placeholder left in it is ready', () {
+  test('one placeholder field anywhere is enough to refuse', () {
+    // Partially filled is the shape a hurried edit actually leaves behind,
+    // and every field is covered on purpose rather than one of them: the
+    // list inside `isPlaceholder` is hand-maintained, so a field added to
+    // LiveIdentity and forgotten there is a placeholder that reaches a real
+    // charge with nothing left to object.
     const supplied = LiveIdentity(
       firstName: 'Ada',
       lastName: 'Lovelace',
@@ -29,17 +44,48 @@ void main() {
     );
 
     expect(supplied.isPlaceholder, isFalse);
+
+    for (final half in const [
+      LiveIdentity(
+        firstName: 'REPLACE_ME',
+        lastName: 'Lovelace',
+        email: 'ada@example.org',
+      ),
+      LiveIdentity(
+        firstName: 'Ada',
+        lastName: 'REPLACE_ME',
+        email: 'ada@example.org',
+      ),
+      // An ordinary domain, deliberately: on `.invalid` this case would pass
+      // through the reserved-TLD clause and stop saying anything about
+      // whether `email` is in the list at all.
+      LiveIdentity(
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        email: 'REPLACE_ME@example.org',
+      ),
+    ]) {
+      expect(
+        half.isPlaceholder,
+        isTrue,
+        reason: '${half.firstName}/${half.lastName}/${half.email}',
+      );
+    }
   });
 
-  test('one placeholder field anywhere is enough to refuse', () {
-    // Partially filled is the shape a hurried edit actually leaves behind.
-    const half = LiveIdentity(
+  test('a half-edited email that keeps the reserved domain still refuses', () {
+    // The shape of an edit that replaced the local part of
+    // REPLACE_ME@paycross.invalid and left the domain alone. `.invalid` is a
+    // reserved TLD that can never resolve, so this is an address no receipt
+    // will ever reach -- on a charge whose whole point is being refunded by a
+    // human who was told about it.
+    const halfEdited = LiveIdentity(
       firstName: 'Ada',
-      lastName: 'REPLACE_ME',
-      email: 'ada@example.org',
+      lastName: 'Lovelace',
+      email: 'smoke@paycross.invalid',
     );
 
-    expect(half.isPlaceholder, isTrue);
+    expect(halfEdited.isPlaceholder, isTrue);
   });
 
   test('the smoke charges one euro, and says so in its reference', () {
@@ -82,6 +128,26 @@ void main() {
     ]) {
       expect(liveSmokePreset.expected.startsWith(prefix), isFalse);
     }
+  });
+
+  test('a name the JSON template cannot hold raw still parses', () {
+    // The three owner-supplied fields are interpolated into a hand-built JSON
+    // string, so anything with a quote or a backslash in it has to be escaped
+    // rather than pasted. Nobody picks their surname to suit our template.
+    const awkward = r'Smith "Bud" O\Jones';
+
+    final body = liveBody(
+      amount: 100,
+      email: 'ada@example.org',
+      firstName: 'Ada',
+      lastName: awkward,
+      customerReference: 'ref',
+    );
+    final customer =
+        (jsonDecode(body) as Map<String, Object?>)['customer']!
+            as Map<String, Object?>;
+
+    expect(customer['last_name'], awkward);
   });
 
   test('the smoke body is a template until it is minted', () {

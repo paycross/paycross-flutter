@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// The currencies the editor offers.
 ///
 /// The matrix runner renders an expected Pay-button amount with
@@ -52,9 +54,9 @@ String _body({
   "return_url": "https://merchant.example.com/payment/return",
   "success_url": "https://merchant.example.com/payment/success",${extraTopLevel == null ? '' : '\n  $extraTopLevel,'}
   "customer": {
-    "email": "$email",
-    "first_name": "$firstName",
-    "last_name": "$lastName",
+    "email": ${jsonEncode(email)},
+    "first_name": ${jsonEncode(firstName)},
+    "last_name": ${jsonEncode(lastName)},
     "phone": "$phone",
     "merchant_reference": "${customer ?? 'CUST-{{timestamp}}'}"${billing == null ? '' : ',\n    "address": {\n$billing\n    }'}
   }
