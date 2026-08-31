@@ -156,6 +156,14 @@ class _DemoHomeState extends State<DemoHome> {
       _say(context, 'Link ignored — close the open screen first.');
 
   Future<void> _run(BuildContext context, Preset preset) async {
+    // The parser already refuses every link in Live. This is the second
+    // check, and it is here because this function is the only thing between a
+    // link and a mint: a parser change that let one through would otherwise
+    // charge a card.
+    if (LiveModeScope.readOf(context)?.isLive ?? false) {
+      _say(context, 'Live mode — links are disabled');
+      return;
+    }
     if (_busy) {
       _refuse(context);
       return;

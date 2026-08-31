@@ -3,7 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/deeplink.dart';
+import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/presets.dart';
+
+import '_environment.dart';
 
 void main() {
   group('parseDeepLink', () {
@@ -151,6 +154,44 @@ void main() {
         expect(parseDeepLink(uri), isA<DeepLinkRun>(), reason: preset.name);
       }
     });
+
+    test('a run link is refused in Live, with the reason on it', () {
+      final refused = parseDeepLink(
+        Uri.parse('paycross-flutter-demo://run?preset=frictionless-3ds'),
+        environment: DemoEnvironment.live,
+      );
+
+      // Rejected, never ignored: a link that quietly did nothing reads as a
+      // broken build, and the person who fired it is holding the phone.
+      expect(refused, isA<DeepLinkRejected>());
+      expect(
+        (refused as DeepLinkRejected).reason,
+        'Live mode — links are disabled',
+      );
+    });
+
+    test('a link that is not ours is still ignored in Live', () {
+      // Addressed to another app. Rejecting it would put this app's snackbar
+      // on somebody else's link.
+      expect(
+        parseDeepLink(
+          Uri.parse('paycross-demo://run?preset=x'),
+          environment: DemoEnvironment.live,
+        ),
+        isA<DeepLinkIgnored>(),
+      );
+    });
+
+    test('Test is exactly what it was', () {
+      // The default argument is what keeps every case above this one meaning
+      // what it meant.
+      expect(
+        parseDeepLink(
+          Uri.parse('paycross-flutter-demo://run?preset=frictionless-3ds'),
+        ),
+        isA<DeepLinkRun>(),
+      );
+    });
   });
 
   group('DeepLinkListener', () {
@@ -283,6 +324,44 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
 
       expect(links.hasListener, isFalse);
+    });
+
+    testWidgets('a run link in Live starts nothing and says why', (
+      tester,
+    ) async {
+      // The composed half of the three parse cases above: the listener reads
+      // the environment out of the scope the app mounts above the Navigator,
+      // so a link that arrives in Live is refused with the reason on screen
+      // rather than honoured or dropped.
+      final links = StreamController<Uri>();
+      addTearDown(links.close);
+      final started = <String>[];
+
+      await tester.pumpWidget(
+        await liveApp(
+          home: DeepLinkListener(
+            links: links.stream,
+            onRun: (preset) => started.add(preset.name),
+            // A Scaffold for the same reason the rejection case above uses
+            // one: `showSnackBar` needs something to present over, and this
+            // is how the app mounts the listener -- over Home.
+            child: const Scaffold(body: SizedBox.shrink()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      links.add(
+        Uri.parse('paycross-flutter-demo://run?preset=Frictionless%203DS'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(started, isEmpty);
+      expect(find.text('Live mode — links are disabled'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
     });
   });
 }

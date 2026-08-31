@@ -19,6 +19,7 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 // ignore: implementation_imports
 import 'package:paycross_flutter/src/generated/paycross_api.g.dart' as g;
 
+import 'demo/_environment.dart';
 import 'demo/_surface.dart';
 
 /// Records the configuration `main` builds. Nothing here reaches a platform.
@@ -257,6 +258,53 @@ void main() {
     );
 
     await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a link in Live starts nothing and says why', (tester) async {
+    // Two refusals stand between a link and a production charge: the parser
+    // rejects every run link in Live, and `_DemoHomeState._run` checks the
+    // environment again before it can mint. This case is the composed
+    // outcome of both -- with either one alone in place it still passes,
+    // which is what "belt and braces" means and is recorded as such in the
+    // progress file.
+    useTallSurface(tester);
+    final links = StreamController<Uri>();
+    addTearDown(links.close);
+    final backend = InMemorySecretBackend();
+    backend.entries['paycross_demo_client_id'] = 'id-1';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    var mints = 0;
+
+    await tester.pumpWidget(
+      await liveApp(
+        home: app.DemoHome(
+          links: links.stream,
+          store: SecretStore(backend: backend),
+          mintWith: (credentials, body) async {
+            mints++;
+            return const MintedSession(
+              id: 'sess-9',
+              token: 'a-live-token',
+              sentBody: '{}',
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    links.add(
+      Uri.parse('paycross-flutter-demo://run?preset=Frictionless%203DS'),
+    );
+    await tester.pumpAndSettle();
+
+    // A stored sandbox credential is right there, and nothing reached it.
+    expect(mints, 0);
+    expect(find.byType(RunScreen), findsNothing);
+    expect(find.text('Live mode — links are disabled'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
   });
 
