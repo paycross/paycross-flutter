@@ -1090,6 +1090,19 @@ void main() {
     // that was actually confirmed. Saying nothing is honest; saying "Held"
     // about text the human has since changed is not.
     expect(state.liveCredentials?.clientSecret, 'live-secret');
+
+    // And the other field. Held again first, on purpose: with `_message`
+    // already null there is nothing to retract, so an edit here would assert
+    // findsNothing against a row that was never going to be there -- green
+    // whether or not clientId retracts anything.
+    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
+    await tester.pumpAndSettle();
+    expect(_message(tester), contains('Held for this session'));
+
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id-2');
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
   });
 
   testWidgets('the gate can be backed out of', (tester) async {
@@ -1299,5 +1312,28 @@ void main() {
       isEmpty,
     );
     semantics.dispose();
+  });
+
+  testWidgets('typing in Test does not take away the last outcome', (
+    tester,
+  ) async {
+    // The retraction is a Live rule and has to stay one. In Test the message
+    // is a report of what just happened -- "Saved.", "Could not save:
+    // StateError", the refusal below -- and it is exactly what the human is
+    // reading while they fix the thing it names. Taking it away on the first
+    // keystroke of the fix would delete the instructions mid-sentence.
+    await tester.pumpWidget(
+      _settings(store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(_message(tester), contains('client ID'));
+
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'id-1');
+    await tester.pumpAndSettle();
+
+    expect(_message(tester), contains('client ID'));
   });
 }
