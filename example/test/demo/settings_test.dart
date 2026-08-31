@@ -2,14 +2,36 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
+
+import '_environment.dart';
 
 Widget _settings({
   required SecretStore store,
   Future<String> Function(Credentials)? verify,
 }) => MaterialApp(
+  home: SettingsScreen(
+    store: store,
+    verifyCredentials: verify ?? (_) async => 'ok',
+    readVersions: () async =>
+        (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+  ),
+);
+
+/// Settings under a live-mode scope, mounted where the app mounts it.
+///
+/// The existing `_settings` helper pumps a bare MaterialApp, which is
+/// exactly what a Test-mode screen sees, so every test written before this
+/// task keeps meaning what it meant.
+Widget _settingsIn(
+  DemoEnvironmentState state, {
+  required SecretStore store,
+  Future<String> Function(Credentials)? verify,
+}) => appWithEnvironment(
+  state: state,
   home: SettingsScreen(
     store: store,
     verifyCredentials: verify ?? (_) async => 'ok',
@@ -501,5 +523,93 @@ void main() {
 
     expect(find.text('Reading saved credentials…'), findsNothing);
     expect(_enabled(tester, 'Save'), isTrue);
+  });
+
+  testWidgets('choosing Live does not switch on its own', (tester) async {
+    // A tap is not consent to spend money. What a tap does is reveal the
+    // field that asks for it.
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+
+    expect(state.environment, DemoEnvironment.test);
+    expect(find.byKey(const ValueKey('liveConfirm')), findsOneWidget);
+    expect(find.byKey(const ValueKey('liveBanner')), findsNothing);
+  });
+
+  testWidgets('the switch stays dead until the word is exactly right', (
+    tester,
+  ) async {
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+
+    expect(_enabled(tester, 'Switch to Live'), isFalse);
+
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'live');
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, 'Switch to Live'), isFalse);
+
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, 'Switch to Live'), isTrue);
+  });
+
+  testWidgets('typing the word and pressing it switches, banner and all', (
+    tester,
+  ) async {
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('switchToLive')));
+    await tester.pumpAndSettle();
+
+    expect(state.environment, DemoEnvironment.live);
+    expect(find.byKey(const ValueKey('liveBanner')), findsOneWidget);
+    expect(find.byKey(const ValueKey('liveConfirm')), findsNothing);
+  });
+
+  testWidgets('choosing Test comes straight back, and forgets', (tester) async {
+    // Becoming safer needs no ceremony. The gate is on the way in only.
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: SettingsScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    state.useForThisSession(
+      const Credentials(clientId: 'live-id', clientSecret: 'live-secret'),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+
+    expect(state.environment, DemoEnvironment.test);
+    expect(state.liveCredentials, isNull);
+    expect(find.byKey(const ValueKey('liveBanner')), findsNothing);
   });
 }

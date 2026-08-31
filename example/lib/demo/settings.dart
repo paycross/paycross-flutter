@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'endpoints.dart';
+import 'environment.dart';
 import 'minter.dart';
 import 'secrets.dart';
 import 'version_panel.dart';
@@ -34,8 +35,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _clientId = TextEditingController();
   final _clientSecret = TextEditingController();
   final _googlePay = TextEditingController();
+  final _liveConfirm = TextEditingController();
   bool _revealSecret = false;
   bool _busy = false;
+
+  /// True from the moment Live is chosen until it is either confirmed or
+  /// abandoned. It is not the environment -- the environment lives in
+  /// [DemoEnvironmentState] and only the typed word moves it.
+  bool _askingForLive = false;
 
   /// Whether the first read has come back, whatever it found.
   ///
@@ -69,6 +76,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _clientId.dispose();
     _clientSecret.dispose();
     _googlePay.dispose();
+    _liveConfirm.dispose();
     super.dispose();
   }
 
@@ -186,6 +194,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  /// What a tap on the switch does, which is never the switch itself.
+  ///
+  /// Choosing Live opens the gate. Choosing Test walks straight back through
+  /// it, dropping the Live credentials on the way -- the ceremony is on the
+  /// way in, because that is the direction that costs money.
+  Future<void> _chooseEnvironment(
+    DemoEnvironmentState state,
+    DemoEnvironment chosen,
+  ) async {
+    if (chosen == DemoEnvironment.live) {
+      setState(() {
+        _askingForLive = true;
+        _message = null;
+      });
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    final refused = await state.leaveLive();
+    if (!mounted) return;
+    _forgetTypedCredentials();
+    setState(() {
+      _busy = false;
+      _askingForLive = false;
+      _message = refused;
+    });
+    // Only once back in Test is there a store to read: the fields fill again
+    // from the sandbox credentials the human saved, which are the ones the
+    // next Test run will use.
+    if (refused == null) await _load();
+  }
+
+  Future<void> _enterLive(DemoEnvironmentState state) async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    final refused = await state.enterLive(_liveConfirm.text);
+    if (!mounted) return;
+    // Emptied whether or not the switch happened: what is in these fields is
+    // a sandbox credential, and it must not be one keystroke away from being
+    // sent to production.
+    if (refused == null) _forgetTypedCredentials();
+    setState(() {
+      _busy = false;
+      _askingForLive = refused != null;
+      _message = refused;
+      _liveConfirm.clear();
+    });
+  }
+
+  /// Empties the three credential fields without touching any store.
+  ///
+  /// Crossing between environments in either direction: a sandbox credential
+  /// left on screen in Live is one Save away from the wrong place, and a
+  /// production credential left on screen in Test is one Save away from a
+  /// worse one.
+  void _forgetTypedCredentials() {
+    _clientId.clear();
+    _clientSecret.clear();
+    _googlePay.clear();
+    _stored = null;
+  }
+
   Future<void> _verify() async {
     final typed = _typed;
     final unusable = _whyUnusable(typed);
@@ -222,95 +296,158 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Settings')),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          'Sandbox only — $sessionsUrl. There is no production switch, and '
-          'these credentials must be TEST credentials.',
-        ),
-        const SizedBox(height: 20),
-        TextField(
-          key: const ValueKey('clientId'),
-          controller: _clientId,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: const InputDecoration(
-            labelText: 'Client ID',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          key: const ValueKey('clientSecret'),
-          controller: _clientSecret,
-          obscureText: !_revealSecret,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: InputDecoration(
-            labelText: 'Client secret',
-            border: const OutlineInputBorder(),
-            suffixIcon: IconButton(
-              key: const ValueKey('revealSecret'),
-              icon: Icon(
-                _revealSecret ? Icons.visibility_off : Icons.visibility,
+  Widget build(BuildContext context) {
+    final state = LiveModeScope.maybeOf(context);
+    final live = state?.isLive ?? false;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          // Absent in a tree with no scope, which is what the automation
+          // build and every widget test written before Live mode gets: there
+          // is nothing to toggle there, so the screen stays exactly what it
+          // was.
+          if (state != null) ...[
+            SegmentedButton<DemoEnvironment>(
+              key: const ValueKey('environmentToggle'),
+              segments: const [
+                ButtonSegment(
+                  value: DemoEnvironment.test,
+                  label: Text('Test'),
+                  icon: Icon(Icons.science_outlined),
+                ),
+                ButtonSegment(
+                  value: DemoEnvironment.live,
+                  label: Text('Live'),
+                  icon: Icon(Icons.warning_amber_rounded),
+                ),
+              ],
+              selected: {state.environment},
+              onSelectionChanged: _busy
+                  ? null
+                  : (chosen) => _chooseEnvironment(state, chosen.single),
+            ),
+            const SizedBox(height: 16),
+            if (_askingForLive && !live) ...[
+              Text(
+                'Live is the PayCross production environment. A payment there '
+                'charges a real card, and this app has no way to refund one. '
+                'Type $liveConfirmationWord to switch.',
               ),
-              onPressed: () => setState(() => _revealSecret = !_revealSecret),
-              tooltip: _revealSecret ? 'Hide secret' : 'Reveal secret',
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          key: const ValueKey('googlePayMerchantId'),
-          controller: _googlePay,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: const InputDecoration(
-            labelText: 'Google Pay merchant id (Android, optional)',
-            helperText: 'Read at launch — restart the app after changing it.',
-            helperMaxLines: 2,
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 20),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            FilledButton(
-              onPressed: _busy || !_loaded ? null : _save,
-              child: const Text('Save'),
-            ),
-            OutlinedButton(
-              onPressed: _busy || !_loaded ? null : _verify,
-              child: const Text('Verify credentials'),
-            ),
-            TextButton(
-              onPressed: _busy || !_loaded ? null : _forget,
-              child: const Text('Forget credentials'),
-            ),
-            // Beside the buttons rather than above the fields, because it is
-            // the buttons being dead that needs explaining: three empty
-            // fields under three grey buttons is what a broken build looks
-            // like, and a cold Keychain read takes a visible moment on a
-            // real phone. Gone the moment the read lands, whatever it found.
-            if (!_loaded) const Text('Reading saved credentials…'),
+              const SizedBox(height: 12),
+              TextField(
+                key: const ValueKey('liveConfirm'),
+                controller: _liveConfirm,
+                autocorrect: false,
+                enableSuggestions: false,
+                textCapitalization: TextCapitalization.characters,
+                // The button wakes on the keystroke that completes the word,
+                // rather than on a submit nobody would think to press.
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: 'Type $liveConfirmationWord',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                key: const ValueKey('switchToLive'),
+                style: FilledButton.styleFrom(backgroundColor: liveRed),
+                onPressed:
+                    _busy || _liveConfirm.text.trim() != liveConfirmationWord
+                    ? null
+                    : () => _enterLive(state),
+                child: const Text('Switch to Live'),
+              ),
+              const SizedBox(height: 20),
+            ],
           ],
-        ),
-        if (_message != null) ...[
-          const SizedBox(height: 20),
-          Semantics(
-            liveRegion: true,
-            child: Text(_message!, key: const ValueKey('settingsMessage')),
+          Text(
+            'Sandbox only — $sessionsUrl. There is no production switch, and '
+            'these credentials must be TEST credentials.',
           ),
+          const SizedBox(height: 20),
+          TextField(
+            key: const ValueKey('clientId'),
+            controller: _clientId,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: const InputDecoration(
+              labelText: 'Client ID',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('clientSecret'),
+            controller: _clientSecret,
+            obscureText: !_revealSecret,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: InputDecoration(
+              labelText: 'Client secret',
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                key: const ValueKey('revealSecret'),
+                icon: Icon(
+                  _revealSecret ? Icons.visibility_off : Icons.visibility,
+                ),
+                onPressed: () => setState(() => _revealSecret = !_revealSecret),
+                tooltip: _revealSecret ? 'Hide secret' : 'Reveal secret',
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('googlePayMerchantId'),
+            controller: _googlePay,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: const InputDecoration(
+              labelText: 'Google Pay merchant id (Android, optional)',
+              helperText: 'Read at launch — restart the app after changing it.',
+              helperMaxLines: 2,
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              FilledButton(
+                onPressed: _busy || !_loaded ? null : _save,
+                child: const Text('Save'),
+              ),
+              OutlinedButton(
+                onPressed: _busy || !_loaded ? null : _verify,
+                child: const Text('Verify credentials'),
+              ),
+              TextButton(
+                onPressed: _busy || !_loaded ? null : _forget,
+                child: const Text('Forget credentials'),
+              ),
+              // Beside the buttons rather than above the fields, because it is
+              // the buttons being dead that needs explaining: three empty
+              // fields under three grey buttons is what a broken build looks
+              // like, and a cold Keychain read takes a visible moment on a
+              // real phone. Gone the moment the read lands, whatever it found.
+              if (!_loaded) const Text('Reading saved credentials…'),
+            ],
+          ),
+          if (_message != null) ...[
+            const SizedBox(height: 20),
+            Semantics(
+              liveRegion: true,
+              child: Text(_message!, key: const ValueKey('settingsMessage')),
+            ),
+          ],
+          const SizedBox(height: 32),
+          VersionPanel(readVersions: widget.readVersions),
         ],
-        const SizedBox(height: 32),
-        VersionPanel(readVersions: widget.readVersions),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
