@@ -256,7 +256,10 @@ class Minter {
   /// The merchant-side truth for one session, scrubbed before it is
   /// returned. Nothing above this method ever sees a live token.
   Future<Map<String, Object?>> read(String sessionId) async {
-    final raw = await _send('GET', Uri.parse('${_endpoints.sessionsUrl}/$sessionId'));
+    final raw = await _send(
+      'GET',
+      Uri.parse('${_endpoints.sessionsUrl}/$sessionId'),
+    );
     return scrubResource(raw)! as Map<String, Object?>;
   }
 

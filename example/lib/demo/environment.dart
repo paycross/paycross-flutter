@@ -144,3 +144,150 @@ class DemoEnvironmentState extends ChangeNotifier {
     return null;
   }
 }
+
+/// The colour of the banner, and of every Live marking that echoes it.
+///
+/// Material's own error red rather than a theme colour: the banner is
+/// outside every `Scaffold` and has to read the same in the light theme and
+/// the dark one, and "this is the dangerous mode" is not a brand decision.
+const Color liveRed = Color(0xFFB3261E);
+
+/// Publishes [DemoEnvironmentState] to the whole app and paints the LIVE
+/// banner over every route.
+///
+/// Mounted from `MaterialApp.builder`, which wraps the **Navigator**: a
+/// route pushed later is a descendant, so Settings, History and a Run
+/// screen all read one environment and all sit under one banner. A scope
+/// mounted inside `home:` would be a sibling of every pushed route and
+/// invisible to all of them.
+///
+/// Not mounted at all under the automation define -- `main.dart` passes no
+/// builder there -- so the frozen build has no toggle in it rather than a
+/// toggle that is switched off.
+class LiveModeScope extends StatefulWidget {
+  const LiveModeScope({
+    super.key,
+    required this.child,
+    this.state,
+    this.googlePayMerchantId,
+  });
+
+  final Widget child;
+
+  /// Injected by tests. Null means this widget owns one.
+  final DemoEnvironmentState? state;
+
+  /// Passed on to a state this widget builds itself, so returning to Test
+  /// restores what `main` configured at launch.
+  final String? googlePayMerchantId;
+
+  /// The state above [context], or null where there is none.
+  ///
+  /// Subscribes: a widget that calls this rebuilds when the environment or
+  /// the held credentials change.
+  static DemoEnvironmentState? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_EnvironmentScope>()?.state;
+
+  /// The state above [context] without subscribing to it.
+  ///
+  /// For a callback that runs outside `build` -- the deep-link stream is
+  /// the one that matters -- where registering a dependency would be a
+  /// rebuild nobody asked for.
+  static DemoEnvironmentState? readOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<_EnvironmentScope>()?.state;
+
+  /// The environment above [context], or Test where there is no scope.
+  ///
+  /// Absent-means-Test is what keeps every widget test written before Live
+  /// mode existed meaning exactly what it meant, and it is also what the
+  /// automation build gets.
+  static DemoEnvironment environmentOf(BuildContext context) =>
+      maybeOf(context)?.environment ?? DemoEnvironment.test;
+
+  @override
+  State<LiveModeScope> createState() => _LiveModeScopeState();
+}
+
+class _LiveModeScopeState extends State<LiveModeScope> {
+  DemoEnvironmentState? _own;
+
+  DemoEnvironmentState get _state =>
+      widget.state ??
+      (_own ??= DemoEnvironmentState(
+        googlePayMerchantId: widget.googlePayMerchantId,
+      ));
+
+  @override
+  void dispose() {
+    // Only the one this widget made. A state that was passed in belongs to
+    // whoever passed it, and disposing it here would take it out from under
+    // a test that is still asserting on it.
+    _own?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => _EnvironmentScope(
+    state: _state,
+    child: _LiveFrame(child: widget.child),
+  );
+}
+
+class _EnvironmentScope extends InheritedNotifier<DemoEnvironmentState> {
+  const _EnvironmentScope({
+    required DemoEnvironmentState state,
+    required super.child,
+  }) : super(notifier: state);
+
+  DemoEnvironmentState get state => notifier!;
+}
+
+/// The red bar, and nothing at all in Test.
+class _LiveFrame extends StatelessWidget {
+  const _LiveFrame({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!(LiveModeScope.maybeOf(context)?.isLive ?? false)) return child;
+    return Column(
+      children: [
+        const Material(
+          // Its own Material: this is above every Scaffold, so there is no
+          // ancestor to take a colour or a text style from.
+          color: liveRed,
+          child: SafeArea(
+            bottom: false,
+            child: SizedBox(
+              width: double.infinity,
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+                child: Text(
+                  'LIVE — REAL MONEY',
+                  key: ValueKey('liveBanner'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        // The banner has already taken the status-bar inset. Without this
+        // the Scaffold below takes it a second time and leaves a visible
+        // double gap under the bar on a real phone.
+        Expanded(
+          child: MediaQuery.removePadding(
+            context: context,
+            removeTop: true,
+            child: child,
+          ),
+        ),
+      ],
+    );
+  }
+}
