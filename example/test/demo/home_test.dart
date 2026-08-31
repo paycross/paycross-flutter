@@ -564,6 +564,48 @@ void main() {
     expect(find.byType(RunScreen), findsNothing);
   });
 
+  testWidgets('a dismissed dialog is a Cancel, back button included', (
+    tester,
+  ) async {
+    // What `showDialog` answers when nothing was tapped is null, and on this
+    // app's first-class platform the commonest way to produce it is the
+    // system back button. `go != true` is what makes null a Cancel; the other
+    // plausible spelling, `go == false`, turns back into a payment button and
+    // leaves every other case in this file green.
+    //
+    // `handlePopRoute` rather than a tap on the `ModalBarrier`: the LIVE
+    // banner sits above the Navigator, so the top-left of this screen is the
+    // banner and a barrier tap lands on it. Back is also the gesture that
+    // actually matters.
+    final state = await liveHolding(_liveCredentials);
+    var minted = 0;
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: HomeScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          liveMintWith: (_, _, _) async {
+            minted++;
+            return const MintedSession(id: 'x', token: 'y', sentBody: '{}');
+          },
+          smokeProblem: () => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('liveConfirmDialog')), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveConfirmDialog')), findsNothing);
+    expect(minted, 0);
+    expect(find.byType(RunScreen), findsNothing);
+  });
+
   testWidgets('Continue mints against the live endpoints and runs', (
     tester,
   ) async {
