@@ -107,6 +107,27 @@ def test_neither_xcodebuild_call_pins_a_signing_identity(ios_repo):
         assert "CODE_SIGN_IDENTITY" not in call
 
 
+def test_the_archive_passes_no_build_settings_at_all(ios_repo):
+    out = dry_run(ios_repo, "release-ios.sh", "--tag", "demo-v0.1.0")
+
+    archive = next(
+        line
+        for line in out.splitlines()
+        if line.startswith("+ xcodebuild") and "-exportArchive" not in line
+    )
+    # xcodebuild build settings are global: they reach every pod and Swift
+    # package target, which is exactly how the signing settings broke eight of
+    # them on the rig Mac. Anything target-specific belongs in
+    # example/ios/Flutter/Release.xcconfig instead.
+    for setting in (
+        "CODE_SIGN_IDENTITY",
+        "CODE_SIGN_STYLE",
+        "DEVELOPMENT_TEAM",
+        "PROVISIONING_PROFILE_SPECIFIER",
+    ):
+        assert setting not in archive
+
+
 def test_the_dry_run_never_prints_the_key_path_or_any_key_material(ios_repo):
     out = dry_run(ios_repo, "release-ios.sh", "--tag", "demo-v0.1.0")
 
@@ -125,8 +146,13 @@ def test_a_local_export_writes_no_upload_destination(ios_repo):
         ).read_bytes()
     )
     assert options["method"] == "app-store-connect"
-    assert options["signingStyle"] == "automatic"
+    # Manual, matching the archive. With automatic, -exportArchive re-provisions
+    # and lands back on the development profile the archive exists to avoid.
+    assert options["signingStyle"] == "manual"
     assert options["teamID"] == "53P7Y4G6TM"
+    assert options["provisioningProfiles"] == {
+        "com.paycross.flutterdemo": "PayCross Demo App Store"
+    }
     assert "destination" not in options
 
 

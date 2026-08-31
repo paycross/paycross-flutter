@@ -17,6 +17,8 @@ KEY_ID="Q8Y9M5TLY8"
 ISSUER_ID="92422d0e-885b-467d-b9f2-3f604eb503ba"
 KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_Q8Y9M5TLY8.p8}"
 TEAM_ID="53P7Y4G6TM"
+BUNDLE_ID="${BUNDLE_ID:-com.paycross.flutterdemo}"
+PROFILE_NAME="${PROFILE_NAME:-PayCross Demo App Store}"
 UPLOAD=0
 DRY_RUN=0
 
@@ -103,8 +105,15 @@ mkdir -p "$EXPORT_DIR"
   # app-store-connect, not app-store: the latter is a deprecated alias since
   # Xcode 15.4 and still resolves, with a warning.
   printf '\t<key>method</key>\n\t<string>app-store-connect</string>\n'
-  printf '\t<key>signingStyle</key>\n\t<string>automatic</string>\n'
+  # Manual, matching the archive: the Runner target signs Release with the
+  # App Store profile named below (see example/ios/Flutter/Release.xcconfig).
+  # With signingStyle automatic here, -exportArchive would try to re-provision
+  # and land back on the development profile the archive deliberately avoids.
+  printf '\t<key>signingStyle</key>\n\t<string>manual</string>\n'
   printf '\t<key>teamID</key>\n\t<string>%s</string>\n' "$TEAM_ID"
+  printf '\t<key>provisioningProfiles</key>\n\t<dict>\n'
+  printf '\t\t<key>%s</key>\n\t\t<string>%s</string>\n' "$BUNDLE_ID" "$PROFILE_NAME"
+  printf '\t</dict>\n'
   printf '\t<key>uploadSymbols</key>\n\t<true/>\n'
   if [ "$UPLOAD" -eq 1 ]; then
     # This one key is the whole difference between the two halves of this
@@ -133,15 +142,14 @@ run flutter build ios --release --config-only --no-codesign \
     --build-name "$BUILD_NAME" \
     --build-number "$BUILD_NUMBER"
 
-# No CODE_SIGN_IDENTITY here. Automatic signing resolves the identity from the
-# action -- development for a run, distribution for an App Store archive -- and
-# pinning one on the command line does not override that resolution, it
-# CONFLICTS with it: "Runner is automatically signed for development, but a
-# conflicting code signing identity ... has been manually specified", measured
-# on the rig Mac 2026-08-31 for every pod and Swift package target as well as
-# Runner. What steered it to development was the stock template's project-level
-# CODE_SIGN_IDENTITY[sdk=iphoneos*], and that is removed in Runner.xcodeproj
-# rather than fought from out here.
+# No signing arguments on this command line at all -- not the identity, not the
+# team, not the style. xcodebuild build settings are GLOBAL: they hit every pod
+# and Swift package target too, and those fail with either "does not support
+# provisioning profiles" or "automatically signed for development, but a
+# conflicting code signing identity has been manually specified" (both measured
+# on the rig Mac, 2026-08-31). The signing that matters is scoped to the Runner
+# target's Release configuration in example/ios/Flutter/Release.xcconfig, which
+# is the only place it can be expressed per-target.
 run xcodebuild \
     -workspace ios/Runner.xcworkspace \
     -scheme Runner \
@@ -152,9 +160,7 @@ run xcodebuild \
     -allowProvisioningUpdates \
     -authenticationKeyPath "$KEY_PATH" \
     -authenticationKeyID "$KEY_ID" \
-    -authenticationKeyIssuerID "$ISSUER_ID" \
-    DEVELOPMENT_TEAM="$TEAM_ID" \
-    CODE_SIGN_STYLE=Automatic
+    -authenticationKeyIssuerID "$ISSUER_ID"
 
 run xcodebuild -exportArchive \
     -archivePath "$ARCHIVE" \
