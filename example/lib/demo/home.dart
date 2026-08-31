@@ -327,6 +327,17 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    // Sampled here, beside the credential, and not read again. One Live run
+    // is made of three facts -- which credential, which endpoints, and that
+    // it is Live at all -- and a confirmation dialog sits between this line
+    // and the mint. Read lazily inside the mint closure instead, `endpoints`
+    // would answer whatever the app-wide state said when the mint ran, so an
+    // environment moved across that dialog would send this production
+    // credential to the sandbox token host on a run still displayed and
+    // recorded as Live. Task 02 removed exactly this shape from Settings; it
+    // does not belong in the function that spends money.
+    final endpoints = state.endpoints;
+
     final go = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -367,14 +378,12 @@ class _HomeScreenState extends State<HomeScreen> {
             preset: liveSmokePreset,
             body: liveSmokePreset.body,
             live: true,
-            mintSession: (body) => widget.liveMintWith(
-              credentials,
-              body,
-              // From the state, not from a constant: the endpoints a Live run
-              // reaches are derived from the same field the banner renders,
-              // so they cannot say one thing while it says another.
-              state.endpoints,
-            ),
+            // All three from the one instant above: the pair the person was
+            // looking at when they pressed Continue. Derived from the same
+            // field the banner renders, so the endpoints a run reaches cannot
+            // say one thing while the screen that authorised it said another.
+            mintSession: (body) =>
+                widget.liveMintWith(credentials, body, endpoints),
           ),
         ),
       );

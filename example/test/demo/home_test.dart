@@ -671,6 +671,65 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets(
+    'a run authorised in Live keeps the pair it was authorised with',
+    (tester) async {
+      // The three facts one Live run is made of -- the credential, the Live
+      // flag and the endpoints -- must come from one instant. The endpoints
+      // used to be sampled last and lazily, inside the mint closure, so an
+      // environment moved between Continue and the mint sent a PRODUCTION
+      // credential to the SANDBOX token host, on a run displayed as Live and
+      // recorded in History as Live.
+      //
+      // Nothing in the app can move it there today: the dialog is modal and
+      // Settings is under it. This drives the state directly, which is how a
+      // Retry button on RunScreen -- or any second surface that can leave Live
+      // -- would reach it tomorrow.
+      final state = await liveHolding(_liveCredentials);
+      Endpoints? used;
+      Credentials? sentWith;
+      await tester.pumpWidget(
+        await liveApp(
+          state: state,
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            liveMintWith: (credentials, body, endpoints) async {
+              used = endpoints;
+              sentWith = credentials;
+              return const MintedSession(
+                id: 'sess-live',
+                token: 'tok',
+                sentBody: '{}',
+              );
+            },
+            smokeProblem: () => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+      await tester.pumpAndSettle();
+
+      // Something that is not this screen leaves Live while the dialog is open.
+      await state.leaveLive();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('liveContinue')));
+      await tester.pumpAndSettle();
+
+      expect(state.isLive, isFalse);
+      // Production, because that is what the person authorised. The failure
+      // this rules out is the opposite one: the sandbox host, reached with a
+      // production client id and secret.
+      expect(used, same(liveEndpoints));
+      expect(sentWith?.clientId, 'live-id');
+
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+    },
+  );
+
   testWidgets('the profile strip in Live never shows what a store holds', (
     tester,
   ) async {
