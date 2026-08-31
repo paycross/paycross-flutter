@@ -983,13 +983,12 @@ void main() {
   testWidgets('a store read still in flight cannot refill a Live screen', (
     tester,
   ) async {
-    // The door the `initState` snapshot left open. `SecretStore.read` is
+    // The door an `initState` snapshot leaves open. `SecretStore.read` is
     // three sequential platform-channel round-trips, so on a real phone it
-    // outlives a human deciding to switch. If the guard is a snapshot of the
-    // environment at load START rather than a mirror of the environment now,
-    // the read lands after the switch and fills a Live screen from the
-    // Keychain -- and one tap on Use for this session sends the sandbox pair
-    // to the production merchant.
+    // outlives a human deciding to switch. If the guard were the environment
+    // at load START rather than the environment where the read LANDS, this
+    // read would fill a Live screen from the Keychain -- and one tap on Use
+    // for this session sends the sandbox pair to the production merchant.
     final backend = _SlowBackend()
       ..entries['paycross_demo_client_id'] = 'test-id'
       ..entries['paycross_demo_client_secret'] = 'test-secret';
@@ -1050,6 +1049,43 @@ void main() {
     expect(_fieldText(tester, 'clientId'), '');
     expect(_fieldText(tester, 'clientSecret'), '');
   });
+
+  testWidgets(
+    'an environment moved by another surface still empties the fields',
+    (tester) async {
+      // The third door, and the one no mirror can close. `_load` used to guard
+      // on a `bool` this screen maintained from its OWN switch paths, so an
+      // environment moved by anything else left the mirror saying Test while
+      // the app was in Live -- and a read landing then refilled a Live screen
+      // from the Keychain.
+      //
+      // The environment is moved from outside the widget rather than through a
+      // second SettingsScreen, because there is no second surface in the app
+      // that moves it: `DemoEnvironmentState` is app-wide and this is what any
+      // future one would do to it. The guarantee has to hold before something
+      // does, which is the whole reason the mirror is gone.
+      final backend = _SlowBackend()
+        ..entries['paycross_demo_client_id'] = 'test-id'
+        ..entries['paycross_demo_client_secret'] = 'test-secret';
+      final state = fakeEnvironment();
+      await tester.pumpWidget(
+        _settingsIn(state, store: SecretStore(backend: backend)),
+      );
+      await tester.pump();
+
+      // Not a tap on this screen's own switch: nothing here is touched.
+      await state.enterLive(liveConfirmationWord);
+      await tester.pumpAndSettle();
+
+      // Only now does the Keychain answer, with the app already in Live.
+      backend.gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(state.isLive, isTrue);
+      expect(_fieldText(tester, 'clientId'), '');
+      expect(_fieldText(tester, 'clientSecret'), '');
+    },
+  );
 
   testWidgets('editing a credential retracts the claim that one is held', (
     tester,

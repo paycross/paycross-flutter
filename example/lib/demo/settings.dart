@@ -44,19 +44,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// [DemoEnvironmentState] and only the typed word moves it.
   bool _askingForLive = false;
 
-  /// Whether the app is in Live, as far as this screen has moved it.
-  ///
-  /// A mirror of the environment, not a snapshot of it at load time, and the
-  /// distinction is the whole point: `SecretStore.read` is three sequential
-  /// platform-channel round-trips, so a load started in Test can easily land
-  /// after the human has crossed into Live. Guarding on where the load began
-  /// would refill a Live screen from the Keychain, and one tap on Use for
-  /// this session would then send the sandbox pair to the production
-  /// merchant. Every path that moves the environment maintains this:
-  /// [initState] seeds it, [_enterLive] sets it, [_chooseEnvironment] clears
-  /// it. Guards the prefill and nothing else. See [_load].
-  bool _inLive = false;
-
   /// Whether the first read has come back, whatever it found.
   ///
   /// Every button is dead until it has. Before that the fields are empty
@@ -81,11 +68,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    // `readOf`, not `maybeOf`: `initState` is outside build, where
-    // registering an inherited dependency is an error. The environment
-    // cannot change between here and the load anyway -- this screen is what
-    // changes it.
-    _inLive = LiveModeScope.readOf(context)?.isLive ?? false;
     _load();
   }
 
@@ -101,6 +83,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final stored = await widget.store.read();
     if (!mounted) return;
+    // Read here, where the store has just answered, and never held as a
+    // field. `SecretStore.read` is three sequential platform-channel
+    // round-trips, so a load started in Test can easily land after the human
+    // has crossed into Live -- and the environment that decides whether this
+    // read may be shown is the one in force when it lands, not the one it
+    // began under. A `bool` maintained by this screen's own switch paths
+    // could only ever know about crossings this screen made; the scope is
+    // the one source of truth, and it knows about all of them.
+    //
+    // `readOf`, not `maybeOf`: this runs after an await rather than from
+    // build, where registering an inherited dependency would be a rebuild
+    // nobody asked for.
+    final live = LiveModeScope.readOf(context)?.isLive ?? false;
     setState(() {
       _stored = stored;
       // Read, but not shown. A screen pushed from Live -- by the tile with
@@ -108,7 +103,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // with the sandbox client id and secret already in its fields, one tap
       // from being sent to the production merchant. `_stored` is still set,
       // so the screen still knows what the next Test launch will use.
-      if (stored != null && !_inLive) {
+      if (stored != null && !live) {
         // Only what is still empty: a slow Keychain that answers after the
         // human started typing must not pull the text out from under them.
         if (_clientId.text.isEmpty) _clientId.text = stored.clientId;
@@ -262,10 +257,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // it reappears.
       _liveConfirm.clear();
       _message = refused;
-      // Cleared before the reload below, or the prefill guard would keep
-      // this screen's fields empty for the rest of its life. Only on
-      // success: a refused exit is still in Live.
-      if (refused == null) _inLive = false;
     });
     // Only once back in Test is there a store to read: the fields fill again
     // from the sandbox credentials the human saved, which are the ones the
@@ -285,13 +276,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // fields is a sandbox credential, and in Live it must not be one
     // keystroke away from being sent to production. A refused switch left
     // the app in Test, where that credential still belongs.
-    if (refused == null) {
-      // Before the clear, and this is the half that makes the sentence above
-      // stay true past the next await: a store read started in Test can land
-      // after this line, and it fills any empty field it finds.
-      _inLive = true;
-      _forgetTypedCredentials();
-    }
+    // A read started in Test can still be in flight here and will fill any
+    // empty field it finds when it lands. It cannot undo this clear: a
+    // `refused` of null means `enterLive` has already flipped the
+    // environment, and [_load] reads that at the moment it lands.
+    if (refused == null) _forgetTypedCredentials();
     setState(() {
       _busy = false;
       _askingForLive = refused != null;
