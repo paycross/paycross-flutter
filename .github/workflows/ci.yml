@@ -165,6 +165,15 @@ jobs:
           ruff check --config tool/e2e/ruff.toml tool/e2e
           ruff format --check --config tool/e2e/ruff.toml tool/e2e
 
+      # Its own config, and not tool/e2e's: tool/demo targets Python 3.9
+      # because the Mac that runs its live commands has nothing newer, and
+      # linting it under the runner's py310 target would let an autofix
+      # rewrite the one alias that keeps it importable there.
+      - name: Lint the release tool
+        run: |
+          ruff check --config tool/demo/ruff.toml tool/demo
+          ruff format --check --config tool/demo/ruff.toml tool/demo
+
       - name: Test the runner
         run: python -m pytest tool/e2e/tests tool/demo/tests -q
 

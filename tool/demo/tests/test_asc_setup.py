@@ -1,4 +1,5 @@
 import json
+import urllib.error
 
 import pytest
 
@@ -143,3 +144,150 @@ def test_a_non_json_body_is_reported_as_such_not_as_a_parse_error():
 
     with pytest.raises(asc_setup.AscError, match="not JSON"):
         client(transport).get("/v1/bundleIds")
+
+
+def test_a_transport_level_failure_becomes_an_asc_error_not_a_traceback():
+    # DNS, TLS and timeouts arrive as URLError, which is not an HTTPError and
+    # carries no status. Left alone it escapes main's `except AscError` and
+    # prints a traceback whose last line says nothing about App Store Connect.
+    def exploding(method, url, headers, body):
+        raise urllib.error.URLError("nodename nor servname provided")
+
+    with pytest.raises(asc_setup.AscError, match="nodename nor servname"):
+        client(exploding).get("/v1/bundleIds")
+
+
+def test_creating_the_group_finds_the_app_by_its_bundle_id_first():
+    transport = FakeTransport(
+        ok(
+            {
+                "data": [
+                    {
+                        "id": "APP1",
+                        "attributes": {"bundleId": "com.paycross.flutterdemo"},
+                    }
+                ]
+            }
+        ),
+        ok({"data": []}),
+        created(
+            {"data": {"id": "BG1", "attributes": {"name": "PayCross Demo — Internal"}}}
+        ),
+    )
+
+    result = asc_setup.create_beta_group(
+        client(transport),
+        bundle_id="com.paycross.flutterdemo",
+        group_name="PayCross Demo — Internal",
+    )
+
+    assert result == "BG1"
+    assert "/v1/apps" in transport.calls[0][1]
+    _, url, _, body = transport.calls[2]
+    assert url.endswith("/v1/betaGroups")
+    payload = json.loads(body)
+    assert payload["data"]["type"] == "betaGroups"
+    assert payload["data"]["attributes"]["name"] == "PayCross Demo — Internal"
+    assert payload["data"]["attributes"]["isInternalGroup"] is True
+    assert payload["data"]["relationships"]["app"]["data"] == {
+        "type": "apps",
+        "id": "APP1",
+    }
+
+
+def test_an_existing_group_is_reported_not_recreated():
+    transport = FakeTransport(
+        ok(
+            {
+                "data": [
+                    {
+                        "id": "APP1",
+                        "attributes": {"bundleId": "com.paycross.flutterdemo"},
+                    }
+                ]
+            }
+        ),
+        ok(
+            {
+                "data": [
+                    {"id": "BG1", "attributes": {"name": "PayCross Demo — Internal"}}
+                ]
+            }
+        ),
+    )
+
+    result = asc_setup.create_beta_group(
+        client(transport),
+        bundle_id="com.paycross.flutterdemo",
+        group_name="PayCross Demo — Internal",
+    )
+
+    assert result == "BG1"
+    assert len(transport.calls) == 2
+
+
+def test_a_missing_app_record_says_which_manual_step_is_outstanding():
+    transport = FakeTransport(ok({"data": []}))
+
+    with pytest.raises(asc_setup.AscError, match="App Store Connect website"):
+        asc_setup.create_beta_group(
+            client(transport),
+            bundle_id="com.paycross.flutterdemo",
+            group_name="PayCross Demo — Internal",
+        )
+
+
+def test_a_refused_create_points_at_the_web_ui_fallback():
+    transport = FakeTransport(
+        ok(
+            {
+                "data": [
+                    {
+                        "id": "APP1",
+                        "attributes": {"bundleId": "com.paycross.flutterdemo"},
+                    }
+                ]
+            }
+        ),
+        ok({"data": []}),
+        (409, json.dumps({"errors": [{"detail": "attribute not permitted"}]}).encode()),
+    )
+
+    with pytest.raises(asc_setup.AscError, match="attribute not permitted"):
+        asc_setup.create_beta_group(
+            client(transport),
+            bundle_id="com.paycross.flutterdemo",
+            group_name="PayCross Demo — Internal",
+        )
+
+
+def test_builds_are_listed_newest_first_for_the_release_smoke():
+    transport = FakeTransport(
+        ok(
+            {
+                "data": [
+                    {
+                        "id": "APP1",
+                        "attributes": {"bundleId": "com.paycross.flutterdemo"},
+                    }
+                ]
+            }
+        ),
+        ok(
+            {
+                "data": [
+                    {
+                        "id": "B2",
+                        "attributes": {"version": "2", "processingState": "VALID"},
+                    }
+                ]
+            }
+        ),
+    )
+
+    builds = asc_setup.list_builds(
+        client(transport), bundle_id="com.paycross.flutterdemo"
+    )
+
+    assert builds == [("2", "VALID")]
+    assert "sort=-version" in transport.calls[1][1]

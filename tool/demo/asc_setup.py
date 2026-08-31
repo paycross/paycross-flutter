@@ -113,7 +113,9 @@ class AppStoreConnect:
         transport: Transport | None = None,
     ):
         self._key_id = key_id
-        self._issuer_id = issuer_id
+        # No `self._issuer_id`: the issuer only ever reaches Apple through the
+        # `token` callable, which closes over it. A second copy on the client
+        # is one more thing a future repr or log line could reach for.
         self._token = token
         self._transport = transport or _urllib_transport
 
@@ -135,7 +137,15 @@ class AppStoreConnect:
             "Authorization": f"Bearer {self._token()}",
             "Content-Type": "application/json",
         }
-        status, payload = self._transport(method, url, headers, body)
+        try:
+            status, payload = self._transport(method, url, headers, body)
+        except urllib.error.URLError as error:
+            # DNS failures, TLS failures and timeouts arrive as URLError, which
+            # carries no status and is not what `main` catches. Unconverted it
+            # prints a traceback whose last line never names Apple or the call.
+            raise AscError(
+                f"{method} {url} did not complete: {error.reason}"
+            ) from error
         if not 200 <= status < 300:
             # The URL and Apple's detail, never the headers: the bearer is in
             # there and an exception message reaches stdout and progress files.
@@ -180,6 +190,75 @@ def register_bundle_id(client: AppStoreConnect, *, identifier: str, name: str) -
     return str(created["data"]["id"])
 
 
+def _app_id(client: AppStoreConnect, bundle_id: str) -> str:
+    found = client.get("/v1/apps", **{"filter[bundleId]": bundle_id})
+    for record in found.get("data", []):
+        if record.get("attributes", {}).get("bundleId") == bundle_id:
+            return str(record["id"])
+    raise AscError(
+        f"no app record for {bundle_id}. The API cannot create one -- Apple's "
+        "own documentation says to create new apps on the App Store Connect "
+        "website -- so this is the owner's one manual step."
+    )
+
+
+def create_beta_group(
+    client: AppStoreConnect, *, bundle_id: str, group_name: str
+) -> str:
+    """Creates the internal TestFlight group, or finds the one already there.
+
+    Whether the API will accept `isInternalGroup` on a create is the one
+    thing here nobody has been able to confirm against the live service. If
+    it refuses, the error carries Apple's own wording: make the group in the
+    web UI (TestFlight -> Internal Testing -> +) and re-run this command,
+    which will then find it and confirm.
+    """
+    app_id = _app_id(client, bundle_id)
+
+    existing = client.get("/v1/betaGroups", **{"filter[app]": app_id})
+    for record in existing.get("data", []):
+        if record.get("attributes", {}).get("name") == group_name:
+            return str(record["id"])
+
+    created = client.post(
+        "/v1/betaGroups",
+        {
+            "data": {
+                "type": "betaGroups",
+                "attributes": {
+                    "name": group_name,
+                    "isInternalGroup": True,
+                    # Internal testers should get every build without anyone
+                    # assigning them one by one; that is the whole point of
+                    # an automated pipeline.
+                    "hasAccessToAllBuilds": True,
+                },
+                "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
+            }
+        },
+    )
+    return str(created["data"]["id"])
+
+
+def list_builds(client: AppStoreConnect, *, bundle_id: str) -> list[tuple[str, str]]:
+    """`(build number, processing state)` for the app, newest first.
+
+    This is what "the build is visible in App Store Connect" means as a
+    check something can run, rather than as something a person looks at.
+    """
+    app_id = _app_id(client, bundle_id)
+    found = client.get(
+        "/v1/builds", **{"filter[app]": app_id, "sort": "-version", "limit": "10"}
+    )
+    return [
+        (
+            str(record.get("attributes", {}).get("version")),
+            str(record.get("attributes", {}).get("processingState")),
+        )
+        for record in found.get("data", [])
+    ]
+
+
 def _client_from_args(args: argparse.Namespace) -> AppStoreConnect:
     key_path = Path(args.key_path)
     if not key_path.is_file():
@@ -206,6 +285,13 @@ def main(argv: list[str] | None = None) -> int:
     register.add_argument("--identifier", default="com.paycross.flutterdemo")
     register.add_argument("--name", default="PayCross Demo")
 
+    group = commands.add_parser("create-beta-group")
+    group.add_argument("--bundle-id", default="com.paycross.flutterdemo")
+    group.add_argument("--name", default="PayCross Demo — Internal")
+
+    builds = commands.add_parser("list-builds")
+    builds.add_argument("--bundle-id", default="com.paycross.flutterdemo")
+
     args = parser.parse_args(argv)
     args.key_path = str(Path(args.key_path).expanduser())
 
@@ -216,6 +302,14 @@ def main(argv: list[str] | None = None) -> int:
                 client, identifier=args.identifier, name=args.name
             )
             print(f"bundle id {args.identifier} is {bundle_id}")
+        elif args.command == "create-beta-group":
+            group_id = create_beta_group(
+                client, bundle_id=args.bundle_id, group_name=args.name
+            )
+            print(f"beta group {args.name!r} is {group_id}")
+        elif args.command == "list-builds":
+            for version, state in list_builds(client, bundle_id=args.bundle_id):
+                print(f"build {version}: {state}")
     except AscError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

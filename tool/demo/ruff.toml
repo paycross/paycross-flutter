@@ -1,0 +1,14 @@
+line-length = 88
+# Not py310, unlike tool/e2e. This code is the one thing in the repo that runs
+# on the Mac, and the Mac has only Python 3.9.6 -- no Homebrew interpreter. The
+# `Transport` alias is evaluated at import time, so it spells its optional as
+# `Optional[bytes]`; under a py310 target, a `ruff check --fix` would apply
+# UP007, rewrite it to `bytes | None`, and the module would stop importing on
+# the only machine that can run its live commands.
+target-version = "py39"
+
+[lint]
+# The same conservative set tool/e2e uses: E/F/W/I are the uncontroversial
+# core, B catches the mutable-default and loop-variable-capture classes, and
+# BLE makes a new broad `except` impossible without someone writing down why.
+select = ["E", "F", "W", "I", "B", "BLE"]
