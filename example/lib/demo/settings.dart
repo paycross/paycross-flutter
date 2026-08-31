@@ -256,9 +256,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     final refused = await state.enterLive(_liveConfirm.text);
     if (!mounted) return;
-    // Emptied whether or not the switch happened: what is in these fields is
-    // a sandbox credential, and it must not be one keystroke away from being
-    // sent to production.
+    // Emptied only when the switch actually happened: what was in these
+    // fields is a sandbox credential, and in Live it must not be one
+    // keystroke away from being sent to production. A refused switch left
+    // the app in Test, where that credential still belongs.
     if (refused == null) _forgetTypedCredentials();
     setState(() {
       _busy = false;
