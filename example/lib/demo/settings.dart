@@ -276,6 +276,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // fields is a sandbox credential, and in Live it must not be one
     // keystroke away from being sent to production. A refused switch left
     // the app in Test, where that credential still belongs.
+    //
     // A read started in Test can still be in flight here and will fill any
     // empty field it finds when it lands. It cannot undo this clear: a
     // `refused` of null means `enterLive` has already flipped the
