@@ -1037,4 +1037,50 @@ void main() {
     expect(_fieldText(tester, 'clientId'), '');
     expect(_fieldText(tester, 'clientSecret'), '');
   });
+
+  testWidgets('editing a credential retracts the claim that one is held', (
+    tester,
+  ) async {
+    // A typo'd production secret is held, the human spots it and corrects the
+    // field, and the screen goes on saying "Held for this session" about the
+    // pair it no longer shows. They walk to Home and run the EUR 1.00 smoke
+    // with the old secret, and the 401 reads as a bad production credential.
+    // The Test side already solved this drift -- `_matchesStored` and the
+    // "press Save to keep them" line exist for it -- and Live had no
+    // equivalent.
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: SettingsScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret',
+    );
+    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
+    await tester.pumpAndSettle();
+    expect(_message(tester), contains('Held for this session'));
+
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret-corrected',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
+    // Retracted, not silently re-held: the pair in memory is still the one
+    // that was actually confirmed. Saying nothing is honest; saying "Held"
+    // about text the human has since changed is not.
+    expect(state.liveCredentials?.clientSecret, 'live-secret');
+  });
 }

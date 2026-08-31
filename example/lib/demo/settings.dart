@@ -441,6 +441,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             controller: _clientId,
             autocorrect: false,
             enableSuggestions: false,
+            // In Live only, and only while there is something to retract:
+            // "Held for this session" describes a pair that has just stopped
+            // being what is on screen. Silence is the honest state -- the
+            // human presses the button again when they are ready, and the
+            // pair actually held is never changed behind their back.
+            onChanged: live && _message != null
+                ? (_) => setState(() => _message = null)
+                : null,
             decoration: const InputDecoration(
               labelText: 'Client ID',
               border: OutlineInputBorder(),
@@ -453,6 +461,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             obscureText: !_revealSecret,
             autocorrect: false,
             enableSuggestions: false,
+            // In Live only, and only while there is something to retract:
+            // "Held for this session" describes a pair that has just stopped
+            // being what is on screen. Silence is the honest state -- the
+            // human presses the button again when they are ready, and the
+            // pair actually held is never changed behind their back.
+            onChanged: live && _message != null
+                ? (_) => setState(() => _message = null)
+                : null,
             decoration: InputDecoration(
               labelText: 'Client secret',
               border: const OutlineInputBorder(),
