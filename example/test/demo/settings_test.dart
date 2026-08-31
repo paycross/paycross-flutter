@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/endpoints.dart';
 import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/secrets.dart';
@@ -523,13 +524,41 @@ void main() {
     semantics.dispose();
   });
 
-  testWidgets('says the app is sandbox-only', (tester) async {
+  testWidgets('Test names the sandbox endpoint it will use', (tester) async {
     await tester.pumpWidget(
       _settings(store: SecretStore(backend: InMemorySecretBackend())),
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Sandbox only'), findsOneWidget);
+    final copy = tester
+        .widget<Text>(find.byKey(const ValueKey('settingsEnvironment')))
+        .data!;
+    expect(copy, contains(testEndpoints.sessionsUrl));
+    expect(copy, contains('Test'));
+    // The shipped promise this plan retires, gone rather than quietly false.
+    expect(copy, isNot(contains('no production switch')));
+  });
+
+  testWidgets('Live names the production endpoint and what it costs', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      await liveApp(
+        home: SettingsScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          verifyCredentials: (_) async => 'ok',
+          readVersions: () async =>
+              (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final copy = tester
+        .widget<Text>(find.byKey(const ValueKey('settingsEnvironment')))
+        .data!;
+    expect(copy, contains(liveEndpoints.sessionsUrl));
+    expect(copy, contains('real card'));
   });
 
   testWidgets('a slow store says why the buttons are dead', (tester) async {

@@ -405,9 +405,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 20),
             ],
           ],
+          // Names the environment it is configuring and the host it will
+          // reach, in both directions. The shipped line promised there was no
+          // production switch; there is one now, immediately above this, and
+          // a promise left standing after it stopped being true is worse than
+          // no promise at all.
           Text(
-            'Sandbox only — $sessionsUrl. There is no production switch, and '
-            'these credentials must be TEST credentials.',
+            live
+                ? 'Live — ${liveEndpoints.sessionsUrl}. These must be '
+                      'PRODUCTION credentials. They are held in memory for '
+                      'this session only, nothing is saved, and a payment '
+                      'here charges a real card that this app cannot refund.'
+                : 'Test — ${testEndpoints.sessionsUrl}. Sandbox credentials, '
+                      'saved in the platform secure store. The switch above '
+                      'is how this build reaches production; it starts in '
+                      'Test on every launch.',
+            key: const ValueKey('settingsEnvironment'),
           ),
           const SizedBox(height: 20),
           TextField(
