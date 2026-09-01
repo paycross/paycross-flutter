@@ -1,10 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:paycross_demo/demo/editor.dart';
+import 'package:paycross_demo/demo/endpoints.dart';
+import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/history_screen.dart';
 import 'package:paycross_demo/demo/home.dart';
+import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/run.dart';
@@ -12,6 +19,7 @@ import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_demo/demo/test_cards_screen.dart';
 
+import '_environment.dart';
 import '_surface.dart';
 
 /// A store whose reads fail, which is what an iOS Runner missing the
@@ -60,17 +68,56 @@ class _SlowBackend implements SecretBackend {
   Future<void> delete(String key) async => entries.remove(key);
 }
 
+/// A Live state that is already holding a session credential.
+///
+/// The order is the whole reason this is a helper. `useForThisSession` is a
+/// no-op outside Live -- deliberately, so a Test credential can never be held
+/// as a production one -- so a pair armed before the switch is silently
+/// dropped and every tile tap lands on the no-credentials refusal instead of
+/// the one the test is about.
+Future<DemoEnvironmentState> liveHolding(Credentials credentials) async {
+  final state = fakeEnvironment();
+  await state.enterLive(liveConfirmationWord);
+  state.useForThisSession(credentials);
+  return state;
+}
+
+const Credentials _liveCredentials = Credentials(
+  clientId: 'live-id',
+  clientSecret: 'live-secret',
+);
+
 void main() {
   // `runInFlight` is top-level, so a test that ends while a read is still in
   // flight leaves it set and the next test silently cannot start a run at
   // all. Reset rather than tearDown: it also covers a test that dies.
   setUp(() => runInFlight = false);
 
-  testWidgets('says the app is sandbox-only', (tester) async {
+  testWidgets('Test says where it is pointed, and Live says what it costs', (
+    tester,
+  ) async {
     await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Sandbox only'), findsOneWidget);
+    final test = tester
+        .widget<Text>(find.byKey(const ValueKey('homeEnvironment')))
+        .data!;
+    expect(test, contains('Test'));
+    // The shipped promise this plan retires, gone rather than left false.
+    expect(test, isNot(contains('no way to reach production')));
+
+    await tester.pumpWidget(
+      await liveApp(
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final live = tester
+        .widget<Text>(find.byKey(const ValueKey('homeEnvironment')))
+        .data!;
+    expect(live, contains('real card'));
+    expect(live, contains('Refund'));
   });
 
   testWidgets('the gear opens Settings', (tester) async {
@@ -329,4 +376,458 @@ void main() {
     expect(find.byKey(const ValueKey('customPreset')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets('Live replaces the whole grid with one tile', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      await liveApp(
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveSmokeTile')), findsOneWidget);
+    // No editor, no custom preset, no stored-card pair, no decline
+    // scenarios, no Google Pay tile. Live is deliberately tiny.
+    expect(find.byKey(const ValueKey('customPreset')), findsNothing);
+    expect(find.byType(IconButton), findsWidgets); // the app bar still exists
+    for (final preset in demoPresets) {
+      expect(find.text(preset.name), findsNothing, reason: preset.name);
+    }
+  });
+
+  testWidgets('Live hides the sandbox card cheat sheet', (tester) async {
+    // Seven sandbox PANs that do nothing on a production merchant, under a
+    // heading that says "test cards", on the one screen where a real card is
+    // required. The screen itself is untouched; only the way in is.
+    await tester.pumpWidget(
+      await liveApp(
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Test cards'), findsNothing);
+    expect(find.byTooltip('History'), findsOneWidget);
+    expect(find.byTooltip('Settings'), findsOneWidget);
+  });
+
+  testWidgets('the tile refuses while the identity is a placeholder', (
+    tester,
+  ) async {
+    // The blocking owner input, enforced where it costs nothing to be wrong.
+    // This case passes today because the constant ships as a placeholder, and
+    // it is expected to be rewritten in the commit that supplies the real
+    // identity.
+    //
+    // No credentials are armed, and that is what pins the ORDER rather than
+    // just the refusal: with a pair in memory the second refusal cannot fire
+    // either way and the case survives the two being swapped. Without one,
+    // a swap pushes Settings and never names the constant.
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('liveSmokeIdentity'), findsOneWidget);
+    // Loudly, and without minting: no dialog, no run, and not the
+    // no-credentials branch either.
+    expect(find.byType(SettingsScreen), findsNothing);
+    expect(find.byKey(const ValueKey('liveConfirmDialog')), findsNothing);
+    expect(find.byType(RunScreen), findsNothing);
+
+    // Let the snack bar time itself out; a pending timer fails the test.
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('with no Live credentials the tile opens Settings', (
+    tester,
+  ) async {
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: HomeScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          // Past refusal 1. The shipped identity is a placeholder, and
+          // `_runLiveSmoke` returns after that snackbar -- so without this
+          // the credentials branch is never reached and no Settings screen
+          // is ever pushed.
+          smokeProblem: () => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+    await tester.pumpAndSettle();
+
+    // The same rule `runPreset` applies in Test: route somewhere the human
+    // can act, rather than mint and fail with a 401 that reads as a backend
+    // problem. Ordered after the identity check because a placeholder is
+    // wrong for everybody, and missing credentials are wrong for one session.
+    expect(find.byType(SettingsScreen), findsOneWidget);
+  });
+
+  testWidgets('Settings pushed from the Live tile shows no stored credential', (
+    tester,
+  ) async {
+    // The composed version of task 02's guard: this is the push that exists
+    // only because of this task, and the credential fields it lands on are
+    // one tap from "Use for this session".
+    //
+    // The credential goes behind the plugin's own test platform rather than
+    // into a `SecretStore(backend: ...)`, because the screen this test is
+    // about is the `const SettingsScreen()` the tile pushes -- exactly as
+    // the app pushes it, with the default store. An injected backend never
+    // reaches it, and a version of this test that used one passed with the
+    // prefill guard deleted.
+    FlutterSecureStorage.setMockInitialValues({
+      'paycross_demo_client_id': 'test-id',
+      'paycross_demo_client_secret': 'test-secret',
+    });
+    // Emptied rather than uninstalled: the plugin offers no way back to the
+    // real platform, and an empty store is what every other case in this
+    // file already sees from one that is not there.
+    addTearDown(
+      () => FlutterSecureStorage.setMockInitialValues(<String, String>{}),
+    );
+
+    await tester.pumpWidget(
+      await liveApp(
+        home: HomeScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          // Past refusal 1, so the tap reaches the no-credentials branch and
+          // actually pushes the screen this test is about.
+          smokeProblem: () => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('clientId')))
+          .controller!
+          .text,
+      '',
+    );
+  });
+
+  testWidgets('the dialog defaults to not spending money', (tester) async {
+    final state = await liveHolding(_liveCredentials);
+    var minted = 0;
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: HomeScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          liveMintWith: (_, _, _) async {
+            minted++;
+            return const MintedSession(id: 'x', token: 'y', sentBody: '{}');
+          },
+          // Injected so this case is reachable while the shipped identity is
+          // still a placeholder; the tile's own refusal is pinned above.
+          // A function, not a bare null: the field is `String? Function()`.
+          smokeProblem: () => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The other half of the strip, where a credential IS held: truncated to
+    // six characters, the same rule the sandbox strip follows, and read from
+    // memory rather than from any store.
+    expect(find.text('Live — client live-i…'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveConfirmDialog')), findsOneWidget);
+    expect(find.textContaining('charge a real card'), findsWidgets);
+
+    await tester.tap(find.byKey(const ValueKey('liveCancel')));
+    await tester.pumpAndSettle();
+
+    expect(minted, 0);
+    expect(find.byType(RunScreen), findsNothing);
+  });
+
+  testWidgets('a dismissed dialog is a Cancel, back button included', (
+    tester,
+  ) async {
+    // What `showDialog` answers when nothing was tapped is null, and on this
+    // app's first-class platform the commonest way to produce it is the
+    // system back button. `go != true` is what makes null a Cancel; the other
+    // plausible spelling, `go == false`, turns back into a payment button and
+    // leaves every other case in this file green.
+    //
+    // `handlePopRoute` rather than a tap on the `ModalBarrier`: the LIVE
+    // banner sits above the Navigator, so the top-left of this screen is the
+    // banner and a barrier tap lands on it. Back is also the gesture that
+    // actually matters.
+    final state = await liveHolding(_liveCredentials);
+    var minted = 0;
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: HomeScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          liveMintWith: (_, _, _) async {
+            minted++;
+            return const MintedSession(id: 'x', token: 'y', sentBody: '{}');
+          },
+          smokeProblem: () => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('liveConfirmDialog')), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveConfirmDialog')), findsNothing);
+    expect(minted, 0);
+    expect(find.byType(RunScreen), findsNothing);
+  });
+
+  testWidgets('Continue mints against the live endpoints and runs', (
+    tester,
+  ) async {
+    final state = await liveHolding(_liveCredentials);
+    Endpoints? used;
+    Credentials? sentWith;
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: HomeScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          liveMintWith: (credentials, body, endpoints) async {
+            used = endpoints;
+            sentWith = credentials;
+            return const MintedSession(
+              id: 'sess-live',
+              token: 'tok',
+              sentBody: '{}',
+            );
+          },
+          smokeProblem: () => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('liveContinue')));
+    await tester.pumpAndSettle();
+
+    // Production endpoints, and the credential that is in memory -- never
+    // the one in the secure store, which this screen did not read.
+    expect(used, same(liveEndpoints));
+    expect(sentWith?.clientId, 'live-id');
+    expect(find.byType(RunScreen), findsOneWidget);
+    // Marked at push time, which is the only moment Home can say it: what
+    // the run shows and what it writes to History both hang off this, and a
+    // Live run recorded as a Test one is a charge nobody goes looking for.
+    expect(tester.widget<RunScreen>(find.byType(RunScreen)).live, isTrue);
+    // The fourth refusal, which is the only place it can be seen: Home is
+    // still mounted under the pushed route, and its one tile is dead for as
+    // long as the run it started is on screen. `skipOffstage: false` because
+    // that is exactly where Home now is.
+    expect(
+      tester
+          .widget<ListTile>(
+            find.descendant(
+              of: find.byKey(
+                const ValueKey('liveSmokeTile'),
+                skipOffstage: false,
+              ),
+              matching: find.byType(ListTile, skipOffstage: false),
+            ),
+          )
+          .onTap,
+      isNull,
+    );
+
+    // Drain the two bookkeeping timeouts the pushed Run screen started
+    // against platform stores that never answer under `flutter test`.
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+    'a run authorised in Live keeps the pair it was authorised with',
+    (tester) async {
+      // The three facts one Live run is made of -- the credential, the Live
+      // flag and the endpoints -- must come from one instant. The endpoints
+      // used to be sampled last and lazily, inside the mint closure, so an
+      // environment moved between Continue and the mint sent a PRODUCTION
+      // credential to the SANDBOX token host, on a run displayed as Live and
+      // recorded in History as Live.
+      //
+      // Nothing in the app can move it there today: the dialog is modal and
+      // Settings is under it. This drives the state directly, which is how a
+      // Retry button on RunScreen -- or any second surface that can leave Live
+      // -- would reach it tomorrow.
+      final state = await liveHolding(_liveCredentials);
+      Endpoints? used;
+      Credentials? sentWith;
+      await tester.pumpWidget(
+        await liveApp(
+          state: state,
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            liveMintWith: (credentials, body, endpoints) async {
+              used = endpoints;
+              sentWith = credentials;
+              return const MintedSession(
+                id: 'sess-live',
+                token: 'tok',
+                sentBody: '{}',
+              );
+            },
+            smokeProblem: () => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+      await tester.pumpAndSettle();
+
+      // Something that is not this screen leaves Live while the dialog is open.
+      await state.leaveLive();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('liveContinue')));
+      await tester.pumpAndSettle();
+
+      expect(state.isLive, isFalse);
+      // Production, because that is what the person authorised. The failure
+      // this rules out is the opposite one: the sandbox host, reached with a
+      // production client id and secret.
+      expect(used, same(liveEndpoints));
+      expect(sentWith?.clientId, 'live-id');
+
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets('the profile strip in Live never shows what a store holds', (
+    tester,
+  ) async {
+    // A stored sandbox client id on a screen that says LIVE would be the
+    // single most misleading thing this app could show. Both stores within
+    // reach hold one: the screen's own, and the default one the plugin's
+    // test platform stands in for.
+    //
+    // `find.textContaining('Live —')` is deliberately NOT the assertion: the
+    // Live copy paragraph above the strip starts with those same two words,
+    // so it matches with the sandbox strip still in place.
+    final backend = InMemorySecretBackend()
+      ..entries['paycross_demo_client_id'] = 'abcdef0123456789'
+      ..entries['paycross_demo_client_secret'] = 'test-secret';
+    FlutterSecureStorage.setMockInitialValues({
+      'paycross_demo_client_id': 'abcdef0123456789',
+      'paycross_demo_client_secret': 'test-secret',
+    });
+    addTearDown(
+      () => FlutterSecureStorage.setMockInitialValues(<String, String>{}),
+    );
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: HomeScreen(store: SecretStore(backend: backend)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveProfile')), findsOneWidget);
+    expect(find.byKey(const ValueKey('activeProfile')), findsNothing);
+    expect(find.text('Live — no credentials this session'), findsOneWidget);
+    expect(find.textContaining('abcdef'), findsNothing);
+    expect(find.textContaining('Sandbox'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Live lays out and scrolls at ordinary phone width', (
+    tester,
+  ) async {
+    usePhoneSurface(tester);
+    await tester.pumpWidget(
+      await liveApp(
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The banner is above the Scaffold, so this is where a double status-bar
+    // inset or an overflowing tile shows up.
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('liveSmokeTile')), findsOneWidget);
+  });
+
+  test(
+    'the Live mint reaches the pair it was handed, not the Test default',
+    () async {
+      // M5, carried forward from task 01's quality review. `mintWithCredentials`
+      // builds its `Minter` with no `endpoints:` at all and so takes the Test
+      // default deliberately; this one must not. A missing argument here would
+      // send a production credential to the sandbox token endpoint, and the 401
+      // that came back would read as a bad credential rather than as a mint
+      // pointed at the wrong environment.
+      //
+      // Driven through the `client` seam rather than through the widget, because
+      // the widget test above pins what the SCREEN passes into the seam and this
+      // one pins what the default seam does with it. Between them there is no
+      // step where the Test default could come back.
+      final urls = <String>[];
+      final client = MockClient((request) async {
+        urls.add(request.url.toString());
+        if (request.url.path.endsWith('/token')) {
+          return http.Response(
+            jsonEncode({'access_token': 'not-a-jwt', 'expires_in': 3600}),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({'id': 'sess-live', 'session_token': 'tok'}),
+          200,
+        );
+      });
+
+      final minted = await liveMintWithCredentials(
+        const Credentials(clientId: 'live-id', clientSecret: 'live-secret'),
+        liveSmokeBody,
+        liveEndpoints,
+        client: client,
+      );
+
+      expect(minted.id, 'sess-live');
+      expect(urls, [liveEndpoints.tokenUrl, liveEndpoints.sessionsUrl]);
+      // Named rather than left to the pair above: `testEndpoints` is what a
+      // dropped argument falls back to, and this is the assertion that fails
+      // when it does.
+      expect(urls, isNot(contains(testEndpoints.tokenUrl)));
+      expect(urls, isNot(contains(testEndpoints.sessionsUrl)));
+    },
+  );
 }

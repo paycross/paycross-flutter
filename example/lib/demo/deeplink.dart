@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 
+import 'environment.dart';
 import 'presets.dart';
 
 /// This app's own URL scheme.
@@ -62,9 +63,24 @@ String presetSlug(String name) => name
 /// credential, a token or a body: the run it starts reads the same secure
 /// store a tile tap reads, so a link that leaked out of a shell history says
 /// only which scenario somebody ran.
-DeepLink parseDeepLink(Uri uri) {
+///
+/// In Live every run link is [DeepLinkRejected] rather than honoured: the one
+/// Live scenario is a real charge behind a confirmation dialog, and a link is
+/// exactly the shape that arrives without one -- from a shell history, a chat
+/// message, a script somebody wrote for the sandbox. It is rejected rather
+/// than ignored for the reason every other bad link here is: silence reads as
+/// a broken build.
+DeepLink parseDeepLink(
+  Uri uri, {
+  DemoEnvironment environment = DemoEnvironment.test,
+}) {
   if (uri.scheme != demoScheme || uri.host != 'run') {
+    // Before the environment check: a link addressed to another app is not
+    // ours to refuse in either environment.
     return const DeepLinkIgnored();
+  }
+  if (environment == DemoEnvironment.live) {
+    return const DeepLinkRejected('Live mode — links are disabled');
   }
 
   final surface = uri.queryParameters['surface'] ?? sheetSurface;
@@ -139,7 +155,13 @@ class _DeepLinkListenerState extends State<DeepLinkListener> {
   }
 
   void _handle(Uri uri) {
-    switch (parseDeepLink(uri)) {
+    // `readOf`, not `maybeOf`: this runs from a stream callback rather than
+    // from build, and registering a dependency there would be a rebuild
+    // nobody asked for. What it reads is the environment at the moment the
+    // link landed, which is the one that matters.
+    final environment =
+        LiveModeScope.readOf(context)?.environment ?? DemoEnvironment.test;
+    switch (parseDeepLink(uri, environment: environment)) {
       case DeepLinkRun(:final preset):
         widget.onRun(preset);
       case DeepLinkIgnored():

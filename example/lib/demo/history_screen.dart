@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'environment.dart';
 import 'history.dart';
 
 /// Past runs, newest first; a tap puts one on the clipboard as a bug report.
@@ -84,7 +85,28 @@ class _HistoryScreenState extends State<HistoryScreen> {
         for (final entry in entries)
           Card(
             child: ListTile(
-              title: Text(entry.presetName),
+              leading: entry.live
+                  // The same red the banner uses. A list of forty sandbox
+                  // runs is exactly where the one that took money has to be
+                  // findable at a glance -- it is the row somebody is
+                  // scrolling for when they are trying to remember whether
+                  // they refunded it.
+                  ? const Icon(Icons.warning_amber_rounded, color: liveRed)
+                  : null,
+              title: Row(
+                children: [
+                  Expanded(child: Text(entry.presetName)),
+                  if (entry.live)
+                    const Text(
+                      'LIVE',
+                      key: ValueKey('historyLive'),
+                      style: TextStyle(
+                        color: liveRed,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                ],
+              ),
               subtitle: Text(
                 [
                   entry.outcome,
