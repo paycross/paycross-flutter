@@ -1415,40 +1415,6 @@ def test_the_google_pay_description_is_the_one_the_evidence_shows():
     assert android.GOOGLE_PAY_DESC == "Pay with GPay"
 
 
-# -- the vocabulary that later dimensions fill in ------------------------------
-
-
-#: Everything `cells.py` accepts today whose driver method belongs to a later
-#: dimension, with the arguments `runner._perform` calls it with. Declared on
-#: `Driver` and raising, rather than simply absent: `run_cell` reads
-#: NotImplementedError as a cell-authoring fault and spends no control check on
-#: it, where an AttributeError reads as a device problem -- and two of those in
-#: a row abort a forty-minute matrix as a rig fault.
-#: The four lifecycle verbs are no longer here: D3 implements all of them on
-#: this driver, and each has its own tests under "D3: lifecycle" below.
-NOT_LANDED_YET = [
-    ("type_cvv", ("123",)),
-    ("tap_google_pay", ()),
-    ("select_saved_card", ()),
-    ("save_card", ()),
-    ("wait_google_pay", (30,)),
-    ("wait_no_google_pay", (20,)),
-    ("wait_saved_card", (30,)),
-    ("background", (5,)),
-    ("rotate", ()),
-    ("kill_activity", ()),
-    ("dont_keep_activities", (True,)),
-]
-
-
-@pytest.mark.parametrize("name, args", NOT_LANDED_YET)
-def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
-    d = driver(FakeShell())
-
-    with pytest.raises(NotImplementedError):
-        getattr(d, name)(*args)
-
-
 # -- D3: lifecycle ------------------------------------------------------------
 
 

@@ -1169,6 +1169,7 @@ class IosDriver(Driver):
             "no equivalent: there is no activity to not keep. A cell using it "
             "must be platforms: [android]."
         )
+
     # D4's whole vocabulary, refused here rather than left to `Driver`'s
     # declaration for the same reason `airplane` is: the refusal names this
     # platform's own reason. There is no wallet in the iOS SDK at all, and

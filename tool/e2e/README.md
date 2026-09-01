@@ -945,11 +945,11 @@ trailing it means a rule ran in the wrong order.
 pytest tool/e2e/tests -q
 ```
 
-COUNT_PLACEHOLDER tests, no device needed: every driver call is faked, so this covers the
+854 tests, no device needed: every driver call is faked, so this covers the
 parsing, the redaction, the label matching and the merchant verification — the
 places where a silent mistake would be read as an SDK finding. The shipped cell
 files are validated here too. CI runs this on Linux on every PR, in its own job,
-alongside the plugin's 18 Dart tests and the example's 173 — the label contract
+alongside the plugin's 18 Dart tests and the example's 274 — the label contract
 among them, since the demo app landed.
 
 ## Troubleshooting

@@ -2288,43 +2288,6 @@ def test_the_google_pay_vocabulary_refuses_and_says_it_is_android_only(name, arg
     assert "Android-only" in str(excinfo.value)
 
 
-# -- the vocabulary that later dimensions fill in ------------------------------
-
-
-#: Everything `cells.py` accepts today whose driver method belongs to a later
-#: dimension, with the arguments `runner._perform` calls it with. Declared on
-#: `Driver` and raising, rather than simply absent: `run_cell` reads
-#: NotImplementedError as a cell-authoring fault and spends no control check on
-#: it, where an AttributeError reads as a device problem -- and two of those in
-#: a row abort a forty-minute matrix as a rig fault.
-#: `background`, `rotate` and `kill_activity` have left this list: D3
-#: implements all three here, each with its own tests below.
-#: `dont_keep_activities` has left it too, but for the opposite reason -- it
-#: is not waiting for a dimension, it can never exist on iOS -- so it sits
-#: with `airplane` in the permanent-refusal test instead.
-NOT_LANDED_YET = [
-    ("type_cvv", ("123",)),
-    ("tap_google_pay", ()),
-    ("select_saved_card", ()),
-    ("save_card", ()),
-    ("wait_google_pay", (30,)),
-    ("wait_no_google_pay", (20,)),
-    ("wait_saved_card", (30,)),
-    ("background", (5,)),
-    ("rotate", ()),
-    ("kill_activity", ()),
-    ("dont_keep_activities", (True,)),
-]
-
-
-@pytest.mark.parametrize("name, args", NOT_LANDED_YET + [("airplane", (True,))])
-def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
-    d = driver(FakeSsh())
-
-    with pytest.raises(NotImplementedError):
-        getattr(d, name)(*args)
-
-
 # -- D3: lifecycle ------------------------------------------------------------
 
 
