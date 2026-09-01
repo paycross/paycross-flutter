@@ -5,7 +5,8 @@
    `verify_label_transaction` then turns that id into problems
 2. the merchant API agrees -- `verify_merchant`
 3. nothing crashed -- `crash_lines`, which returns the offending log lines
-   verbatim rather than a description of them
+   verbatim rather than a description of them, sorted into the app's faults,
+   what a cell was excused, and what the test driver did to itself
 
 The two verifiers return a list of human-readable problems; empty means pass.
 A list rather than a bool so a failed cell's report names every mismatch at
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, NamedTuple
 
 #: `<txn>` only ever appears last in a label, so `.*` cannot swallow a later
 #: field. Owned by `cells` because `load_cell` is what refuses a template
@@ -42,7 +43,7 @@ from .cells import (
 _SCOPED_FAULTS = ("ANR in", "Force finishing activity")
 
 #: The Android crash header. Its own line carries no package -- the `Process:`
-#: line below it does -- so `_fatal_is_ours` scopes it instead. A bare
+#: line below it does -- so `_attribute_fatal` scopes it instead. A bare
 #: AndroidRuntime line is not a fault at all: the uiautomator and monkey
 #: harnesses log dozens of those on a perfectly healthy run.
 _FATAL = "FATAL EXCEPTION"
@@ -51,6 +52,53 @@ _PROCESS = "Process:"
 #: How far below the header that line is looked for. It is the very next one;
 #: two leaves room for a logcat that interleaves another buffer's line.
 _PROCESS_LOOKAHEAD = 2
+
+#: The logcat tag every line of an Android crash carries, and what separates it
+#: from the line's own text. Both shapes are real: a device writes
+#: `E/AndroidRuntime(19931): `, and a capture taken with another format writes
+#: `E AndroidRuntime: `.
+_CRASH_TAG = "AndroidRuntime"
+_TAG_RE = re.compile(rf"\b{_CRASH_TAG}(?:\(\s*\d+\))?\s*:\s*")
+
+#: How far below the header the crash's own stack is read. Every real block
+#: ends well inside this -- `_crash_block` stops at the first line that is not
+#: part of it -- and the bound is what keeps a capture truncated mid-crash from
+#: reading the rest of the log as one stack.
+_STACK_LOOKAHEAD = 80
+
+#: Frames that put the app under test in the stack. `com.paycross` covers the
+#: SDK and the demo app and `io.flutter` the engine; the configured package is
+#: matched alongside these at attribution time, because it is configurable.
+_APP_FRAMES = ("com.paycross", "io.flutter")
+
+#: The driver's own machinery: `uiautomator dump` reads the tree through the
+#: accessibility service, over binder, and this is the traffic it does it on.
+_DRIVER_FRAMES = ("android.view.accessibility.", "android.accessibilityservice.")
+
+#: The namespace a driver-attributed stack may not leave. The dump's crash is
+#: framework frames from top to bottom; a stack reaching anything else has
+#: something in it that is not the driver, and is not reclassified.
+_FRAMEWORK_PREFIX = "android."
+
+#: The thread `uiautomator dump` runs -- and crashes -- on.
+_DRIVER_THREAD = "UiAutomation"
+
+#: Whose crash a `FATAL EXCEPTION` header is.
+_APP = "app"
+_DRIVER = "driver"
+_FOREIGN = "foreign"
+
+#: Why a crash was attributed to the driver instead of failing the cell. Named
+#: here rather than phrased at the call site, because this sentence is the
+#: whole basis on which a reader of report.json has to judge the
+#: reclassification -- and a warning whose reason is not written down is a
+#: warning the next person learns to skip.
+DRIVER_CRASH_REASON = (
+    "attributed to the test driver, not the app: no Process: line, thread "
+    f"{_DRIVER_THREAD}, and every frame is framework accessibility or binder "
+    "machinery with none from the app. This is `uiautomator dump` losing its "
+    "binder mid-cell, not a crash of the app under test"
+)
 
 _IOS_FAULTS = ("Fatal error:", "*** Terminating app due to uncaught exception")
 
@@ -296,30 +344,120 @@ def verify_label_transaction(resource: dict[str, Any], txn_id: str | None) -> li
     return [f"label_transaction: {txn_id!r} is not among the session's {sorted(known)}"]
 
 
-def _fatal_is_ours(lines: list[str], index: int, package: str) -> bool:
-    """Whether the crash header at `index` belongs to the app under test.
+class CrashScan(NamedTuple):
+    """What criterion 3 found, in three buckets rather than two.
+
+    `faults` fail the cell. `excused` is what the cell declared its own
+    behaviour produces. `driver` is a crash of the rig rather than of the app:
+    reported as a warning under `DRIVER_CRASH_REASON` and never dropped,
+    because a driver that dies mid-cell is worth seeing even when what it
+    interrupted was a payment that fully worked.
+    """
+
+    faults: list[str]
+    excused: list[str]
+    driver: list[str]
+
+
+def _tag_body(line: str) -> str:
+    """A crash line's own text, with the logcat tag in front of it removed."""
+    return _TAG_RE.split(line, maxsplit=1)[-1].strip()
+
+
+def _fatal_thread(line: str) -> str:
+    """The thread named on a `FATAL EXCEPTION: <thread>` header."""
+    _, _, thread = _tag_body(line).partition(_FATAL)
+    return thread.lstrip(":").strip()
+
+
+def _crash_block(lines: list[str], index: int) -> list[str]:
+    """The lines of the crash the header at `index` opened, tags stripped.
+
+    A block is `PID:`/`Process:`, one throwable line, and its frames. It ends
+    at the first crash-tagged line that is none of those, which on a real
+    capture is `Error reporting crash` -- the runtime's follow-on block when it
+    cannot reach the activity manager to report the first one. Reading past
+    that would pull the second block's frames into the first block's stack, and
+    they are not the same crash: the follow-on runs through
+    `com.android.internal.os.RuntimeInit`, which would make every crash look
+    like it left the framework.
+
+    Lines from other buffers interleave freely and are skipped rather than
+    treated as the end: logcat has no obligation to keep a block contiguous.
+    """
+    block: list[str] = []
+    throwable_seen = False
+    for line in lines[index + 1 : index + 1 + _STACK_LOOKAHEAD]:
+        if _CRASH_TAG not in line:
+            continue
+        body = _tag_body(line)
+        if _FATAL in body:
+            break
+        if body.startswith(("PID:", _PROCESS, "at ", "Caused by:", "... ")):
+            block.append(body)
+            continue
+        if throwable_seen:
+            break
+        throwable_seen = True
+        block.append(body)
+    return block
+
+
+def _attribute_fatal(lines: list[str], index: int, package: str) -> str:
+    """Whose crash the header at `index` is.
 
     `E AndroidRuntime: FATAL EXCEPTION: main` is followed by `E AndroidRuntime:
-    Process: <package>, PID: <pid>`, which is the only place the crash names
-    itself. When that line is there it decides; when it is not -- a window that
-    starts mid-crash, an unfamiliar format -- the fault is kept, because a
-    missed crash is the expensive direction to be wrong in.
+    Process: <package>, PID: <pid>`, which is the only place a crash names
+    itself, and it decides whenever it is there.
+
+    When it is not -- and it is not on the driver's own dump crash, which is
+    what this was written for -- two things can still settle it. A frame from
+    the app under test makes the crash the app's, whatever thread it surfaced
+    on. Failing
+    that, the driver's own signature makes it the driver's: `uiautomator dump`
+    reads the tree over binder from a thread called `UiAutomation`, and when
+    that binder goes it dies with a stack that is framework accessibility
+    machinery from top to bottom. Measured 2026-09-01: a cell whose payment
+    fully succeeded, transaction and all, was failed by the dump the runner
+    took after it.
+
+    Every other shape keeps the old conservative answer and stays the app's,
+    because a missed crash is still the expensive direction to be wrong in.
+    The keyhole is deliberately narrow -- thread AND an accessibility frame AND
+    nothing outside `android.` AND nothing of ours -- because this is a safety
+    net, and every widening of it is somewhere a real crash can hide.
     """
     for line in lines[index + 1 : index + 1 + _PROCESS_LOOKAHEAD]:
         if _PROCESS in line:
-            return package in line
-    return True
+            return _APP if package in line else _FOREIGN
+
+    frames = [
+        body.removeprefix("at ")
+        for body in _crash_block(lines, index)
+        if body.startswith("at ")
+    ]
+    if any(frame.startswith((*_APP_FRAMES, package)) for frame in frames):
+        return _APP
+    if (
+        _fatal_thread(lines[index]) == _DRIVER_THREAD
+        and frames
+        and any(frame.startswith(_DRIVER_FRAMES) for frame in frames)
+        and all(frame.startswith(_FRAMEWORK_PREFIX) for frame in frames)
+    ):
+        return _DRIVER
+    return _APP
 
 
-def crash_lines(
-    log: str, package: str, tolerated: Iterable[str] = ()
-) -> tuple[list[str], list[str]]:
-    """Pass criterion 3, and what a cell asked to be excused from it.
+def crash_lines(log: str, package: str, tolerated: Iterable[str] = ()) -> CrashScan:
+    """Pass criterion 3, its excuses, and what the driver did to itself.
 
-    Two lists rather than one: what a cell tolerated is not a fault, but it
+    Three lists rather than one. What a cell tolerated is not a fault, but it
     is not nothing either -- it is the observation the cell was written to
     make, and it belongs in the evidence beside the verdict rather than
-    being dropped on the floor.
+    being dropped on the floor. Nor is a crash of the test driver: it is not
+    the app's fault, so it must not fail a cell, but a rig that crashed
+    mid-cell is exactly what the next reader wants to know about, so it is
+    carried out under a named reason rather than swallowed.
 
     Only the closed allow-list is honoured, whatever this is handed. A cell
     file cannot carry anything else -- `load_cell` refuses it -- but this is
@@ -333,16 +471,22 @@ def crash_lines(
     Excusing is reachable only from the scoped-fault branch, which is where
     `Force finishing activity` lives. A `FATAL EXCEPTION`, an ANR or a Dart
     or Swift fault is a fault on a structural level, not on the strength of
-    the allow-list alone.
+    the allow-list alone. Driver attribution is not excusing and is not
+    reachable from a cell file at all: `_attribute_fatal` reads the crash's
+    own stack, and nothing a caller passes can reach it.
     """
     allowed = set(tolerated) & TOLERABLE_CRASH_MARKERS
     lines = log.splitlines()
     faults: list[str] = []
     excused: list[str] = []
+    driver: list[str] = []
     for index, line in enumerate(lines):
         if _FATAL in line:
-            if _fatal_is_ours(lines, index, package):
+            whose = _attribute_fatal(lines, index, package)
+            if whose == _APP:
                 faults.append(line)
+            elif whose == _DRIVER:
+                driver.append(line)
         elif any(marker in line for marker in _SCOPED_FAULTS):
             # The package filter decides first: a line naming another app was
             # never this cell's fault, so it is not this cell's excuse either.
@@ -353,4 +497,4 @@ def crash_lines(
                     faults.append(line)
         elif any(marker in line for marker in _FAULTS):
             faults.append(line)
-    return faults, excused
+    return CrashScan(faults, excused, driver)

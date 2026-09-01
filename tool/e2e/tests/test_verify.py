@@ -1,6 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 from tool.e2e import cells, evidence, verify
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def session(status="completed", txns=None):
@@ -226,11 +230,12 @@ def test_crash_lines_finds_only_real_faults():
         "com.paycross.flutterdemo\n"
     )
 
-    found, excused = verify.crash_lines(logcat, "com.paycross.flutterdemo")
+    found, excused, driver = verify.crash_lines(logcat, "com.paycross.flutterdemo")
 
     assert len(found) == 2
     assert excused == []
-    assert verify.crash_lines("all quiet\n", "com.paycross.x") == ([], [])
+    assert driver == []
+    assert verify.crash_lines("all quiet\n", "com.paycross.x") == ([], [], [])
 
 
 @pytest.mark.parametrize(
@@ -249,6 +254,7 @@ def test_every_unscoped_fault_marker_fires(line):
     assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == (
         [line],
         [],
+        [],
     )
 
 
@@ -264,6 +270,7 @@ def test_every_scoped_fault_marker_fires_for_this_app(line):
     assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == (
         [line],
         [],
+        [],
     )
 
 
@@ -272,7 +279,7 @@ def test_an_anr_in_another_package_is_not_this_apps_crash():
     # its own housekeeping often enough that the difference matters.
     log = "08-28 12:00:03.000 E ActivityManager: ANR in com.other.app\n"
 
-    assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [])
+    assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [], [])
 
 
 def test_a_force_finish_of_another_app_is_not_this_apps_crash():
@@ -284,7 +291,7 @@ def test_a_force_finish_of_another_app_is_not_this_apps_crash():
         "com.android.settings/.Settings\n"
     )
 
-    assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [])
+    assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [], [])
 
 
 def test_a_fatal_exception_in_another_process_is_not_ours():
@@ -295,7 +302,7 @@ def test_a_fatal_exception_in_another_process_is_not_ours():
         "08-28 12:00:02.000 E AndroidRuntime: java.lang.NullPointerException\n"
     )
 
-    assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [])
+    assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [], [])
 
 
 def test_a_fatal_exception_in_our_process_is_ours():
@@ -304,11 +311,12 @@ def test_a_fatal_exception_in_our_process_is_ours():
         "08-28 12:00:02.000 E AndroidRuntime: Process: com.paycross.x, PID: 9\n"
     )
 
-    found, excused = verify.crash_lines(log, "com.paycross.x")
+    found, excused, driver = verify.crash_lines(log, "com.paycross.x")
 
     assert len(found) == 1
     assert "FATAL EXCEPTION" in found[0]
     assert excused == []
+    assert driver == []
 
 
 def test_a_fatal_exception_with_no_process_line_is_kept():
@@ -316,7 +324,136 @@ def test_a_fatal_exception_with_no_process_line_is_kept():
     # A missed crash is the expensive direction to be wrong in.
     log = "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
 
-    assert verify.crash_lines(log, "com.paycross.x") == ([log.strip()], [])
+    assert verify.crash_lines(log, "com.paycross.x") == ([log.strip()], [], [])
+
+
+# --- the driver's own crash is not the app's -----------------------------
+
+#: The `uiautomator dump` the Android driver runs after every action. It races
+#: the sheet's own accessibility traffic and dies on a closed binder now and
+#: then, and the crash it writes carries no `Process:` line -- so the
+#: conservative fall-through above attributed the driver's crash to the app.
+UIAUTOMATION_CRASH = (FIXTURES / "android-uiautomation-crash.log").read_text()
+
+#: A FATAL on the driver's own thread whose stack nonetheless reaches the app.
+#: The thread name alone must never be enough to excuse one.
+UIAUTOMATION_HEADER = "09-01 13:22:50.706 E/AndroidRuntime(11111): "
+
+
+def test_the_drivers_own_uiautomator_crash_is_not_the_apps():
+    # The finding this was written for: cell saved_card_3_challenge_save, in
+    # the 2026-09-01 Android run, made a payment that fully succeeded and was
+    # failed by this crash. It is the driver's dump dying on a closed binder.
+    scan = verify.crash_lines(UIAUTOMATION_CRASH, "com.paycross.flutterdemo")
+
+    assert scan.faults == []
+    assert scan.excused == []
+    assert len(scan.driver) == 1
+    assert "FATAL EXCEPTION: UiAutomation" in scan.driver[0]
+
+
+def test_the_drivers_crash_is_still_reported_as_a_warning():
+    # Reclassified, never muted: it stays in the evidence under a named
+    # reason, so the next reader can see the rig misbehaved.
+    scan = verify.crash_lines(UIAUTOMATION_CRASH, "com.paycross.flutterdemo")
+
+    assert scan.driver
+    assert verify.DRIVER_CRASH_REASON
+
+
+def test_a_uiautomation_crash_that_reaches_our_code_is_still_ours():
+    # The hole this rule must not become. Same thread name, same missing
+    # `Process:` line -- but one frame is the plugin's, so the crash is the
+    # app's whatever thread it surfaced on.
+    log = (
+        f"{UIAUTOMATION_HEADER}FATAL EXCEPTION: UiAutomation\n"
+        f"{UIAUTOMATION_HEADER}PID: 11111\n"
+        f"{UIAUTOMATION_HEADER}java.lang.RuntimeException: Bad file descriptor\n"
+        f"{UIAUTOMATION_HEADER}\tat android.os.BinderProxy.transactNative"
+        "(Native Method)\n"
+        f"{UIAUTOMATION_HEADER}\tat com.paycross.sdk.internal.ui."
+        "PaymentActivity.onResume(PaymentActivity.kt:88)\n"
+    )
+
+    scan = verify.crash_lines(log, "com.paycross.flutterdemo")
+
+    assert len(scan.faults) == 1
+    assert scan.driver == []
+
+
+def test_a_uiautomation_crash_carrying_our_process_line_is_still_ours():
+    # `Process:` decides whenever it is there. A driver-shaped stack under a
+    # header that names the app under test is the app's crash.
+    log = (
+        f"{UIAUTOMATION_HEADER}FATAL EXCEPTION: UiAutomation\n"
+        f"{UIAUTOMATION_HEADER}Process: com.paycross.flutterdemo, PID: 11111\n"
+        f"{UIAUTOMATION_HEADER}java.lang.RuntimeException: Bad file descriptor\n"
+        f"{UIAUTOMATION_HEADER}\tat android.os.BinderProxy.transactNative"
+        "(Native Method)\n"
+        f"{UIAUTOMATION_HEADER}\tat android.view.accessibility."
+        "AccessibilityCache.onAccessibilityEvent(AccessibilityCache.java:296)\n"
+    )
+
+    scan = verify.crash_lines(log, "com.paycross.flutterdemo")
+
+    assert len(scan.faults) == 1
+    assert scan.driver == []
+
+
+def test_an_ordinary_app_fatal_still_fails_the_cell():
+    # The control. Nothing about this change may make a real crash quieter.
+    log = (
+        "09-01 13:22:50.706 E/AndroidRuntime(11111): FATAL EXCEPTION: main\n"
+        "09-01 13:22:50.706 E/AndroidRuntime(11111): Process: "
+        "com.paycross.flutterdemo, PID: 11111\n"
+        "09-01 13:22:50.706 E/AndroidRuntime(11111): "
+        "java.lang.NullPointerException\n"
+        "09-01 13:22:50.706 E/AndroidRuntime(11111): \tat com.paycross.sdk."
+        "internal.Foo.bar(Foo.kt:10)\n"
+    )
+
+    scan = verify.crash_lines(log, "com.paycross.flutterdemo")
+
+    assert len(scan.faults) == 1
+    assert "FATAL EXCEPTION: main" in scan.faults[0]
+    assert scan.driver == []
+
+
+def test_a_framework_only_crash_on_another_thread_is_not_the_drivers():
+    # Every frame is the framework's, but the thread is `main`. Only the
+    # driver's own thread is attributed to the driver: a framework-only crash
+    # on the app's thread is the app's problem, and stays a fault.
+    log = (
+        "09-01 13:22:50.706 E/AndroidRuntime(11111): FATAL EXCEPTION: main\n"
+        "09-01 13:22:50.706 E/AndroidRuntime(11111): PID: 11111\n"
+        "09-01 13:22:50.706 E/AndroidRuntime(11111): "
+        "java.lang.RuntimeException: Bad file descriptor\n"
+        "09-01 13:22:50.706 E/AndroidRuntime(11111): \tat android.view."
+        "accessibility.AccessibilityCache.onAccessibilityEvent"
+        "(AccessibilityCache.java:296)\n"
+    )
+
+    scan = verify.crash_lines(log, "com.paycross.flutterdemo")
+
+    assert len(scan.faults) == 1
+    assert scan.driver == []
+
+
+def test_a_uiautomation_crash_with_no_accessibility_frame_is_kept():
+    # The thread name is not the tell on its own -- the accessibility stack
+    # is. A UiAutomation crash somewhere else entirely stays a fault, because
+    # a missed crash is still the expensive direction to be wrong in.
+    log = (
+        f"{UIAUTOMATION_HEADER}FATAL EXCEPTION: UiAutomation\n"
+        f"{UIAUTOMATION_HEADER}PID: 11111\n"
+        f"{UIAUTOMATION_HEADER}java.lang.IllegalStateException: boom\n"
+        f"{UIAUTOMATION_HEADER}\tat android.os.Looper.loop(Looper.java:317)\n"
+    )
+
+    scan = verify.crash_lines(log, "com.paycross.flutterdemo")
+
+    assert len(scan.faults) == 1
+    assert scan.driver == []
 
 
 # --- Plan B: no_succeeded_txn: false is an assertion ----------------------
@@ -545,17 +682,19 @@ FORCE_FINISH = (
 def test_a_force_finish_is_a_fault_by_default():
     # It is what a crash-looping activity looks like, and no cell that has not
     # asked for it should ever see one.
-    faults, excused = verify.crash_lines(f"quiet\n{FORCE_FINISH}\n", "com.paycross.x")
+    faults, excused, driver = verify.crash_lines(
+        f"quiet\n{FORCE_FINISH}\n", "com.paycross.x"
+    )
 
     assert faults == [FORCE_FINISH]
-    assert excused == []
+    assert (excused, driver) == ([], [])
 
 
 def test_a_cell_may_be_excused_the_force_finish_it_asked_for():
     # `always_finish_activities 1` makes the activity manager log exactly this
     # for the app under test, by design -- it is literally what the setting
     # does, and it is the behaviour the cell exists to observe.
-    faults, excused = verify.crash_lines(
+    faults, excused, driver = verify.crash_lines(
         f"quiet\n{FORCE_FINISH}\n",
         "com.paycross.x",
         tolerated=("Force finishing activity",),
@@ -563,6 +702,7 @@ def test_a_cell_may_be_excused_the_force_finish_it_asked_for():
 
     assert faults == []
     assert excused == [FORCE_FINISH]
+    assert driver == []
 
 
 def test_an_excuse_does_not_reach_another_apps_line():
@@ -573,11 +713,11 @@ def test_an_excuse_does_not_reach_another_apps_line():
         "com.android.settings/.Settings"
     )
 
-    faults, excused = verify.crash_lines(
+    faults, excused, driver = verify.crash_lines(
         f"{other}\n", "com.paycross.x", tolerated=("Force finishing activity",)
     )
 
-    assert (faults, excused) == ([], [])
+    assert (faults, excused, driver) == ([], [], [])
 
 
 @pytest.mark.parametrize(
@@ -596,12 +736,12 @@ def test_no_caller_can_excuse_a_real_crash(line):
     # be talked into muting a FATAL EXCEPTION would defeat the one thing
     # criterion 3 exists to stop -- and this one is called from a runner, not
     # only from a validated cell file.
-    faults, excused = verify.crash_lines(
+    faults, excused, driver = verify.crash_lines(
         f"quiet\n{line}\n", "com.paycross.x", tolerated=(line, "ANR in")
     )
 
     assert faults == [line]
-    assert excused == []
+    assert (excused, driver) == ([], [])
 
 
 def test_the_tolerable_markers_are_exactly_one():

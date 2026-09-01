@@ -260,6 +260,12 @@ class CellResult:
     cell_id: str
     passed: bool
     problems: list[str] = field(default_factory=list)
+    #: What this cell noticed and was not failed for -- today, a crash of the
+    #: test driver itself. Deliberately not `problems`: it did not happen to
+    #: the app, so it must not fail the cell, and equally it must not vanish,
+    #: because a rig that crashed mid-cell is what the next reader wants to
+    #: know about. Never touches `passed`.
+    warnings: list[str] = field(default_factory=list)
     session_id: str | None = None
     label: str | None = None
     transaction_id: str | None = None
@@ -711,6 +717,7 @@ def run_cell(
     started_monotonic = time.monotonic()
 
     problems: list[str] = []
+    warnings: list[str] = []
     run_problems: list[str] = []
     label: str | None = None
     rearmed: bool | None = None
@@ -987,10 +994,20 @@ def run_cell(
             # dropped: `tolerated_crash_lines` goes into result.json below, so
             # the observation the cell was written to make is in the evidence
             # beside the verdict. Nothing is muted, only reclassified.
-            faults, tolerated_crash_lines = verify.crash_lines(
+            faults, tolerated_crash_lines, driver_crashes = verify.crash_lines(
                 log, driver.package, cell.tolerated_crash_markers
             )
             problems += [f"crash: {line.strip()}" for line in faults]
+            # A warning rather than a problem, and never a silence. The
+            # driver's `uiautomator dump` dies on a closed binder now and
+            # then, and its FATAL carries no `Process:` line -- so before this
+            # it failed the cell it had just watched succeed. Reclassified,
+            # with the reason attached to every line, because "not the app's
+            # crash" is a claim the reader has to be able to check.
+            warnings += [
+                f"driver_crash: {line.strip()} -- {verify.DRIVER_CRASH_REASON}"
+                for line in driver_crashes
+            ]
             # A cell that declares a marker is a cell whose whole purpose is to
             # provoke it, so its ABSENCE is a finding rather than a quiet
             # success. Measured on the rig 2026-08-31 and this is why the check
@@ -1028,10 +1045,14 @@ def run_cell(
         )
 
     problems = [_redacted(problem, *secrets) for problem in problems]
+    warnings = [_redacted(warning, *secrets) for warning in warnings]
     result = CellResult(
         cell_id=cell.id,
+        # Warnings are not in it, on purpose: a warning that turns a green
+        # matrix red is a warning the next person learns to silence.
         passed=not problems,
         problems=problems,
+        warnings=warnings,
         session_id=session.get("id"),
         label=label,
         transaction_id=transaction_id,
@@ -1055,6 +1076,7 @@ def run_cell(
                 "rearmed": rearmed,
                 "expected_label": expected.label,
                 "problems": problems,
+                "warnings": warnings,
                 "screenshots_skipped": screenshots_skipped,
                 "teardown_replayed": teardown_replayed,
                 "label_transaction_notes": label_transaction_notes,
@@ -1083,6 +1105,7 @@ def run_cell(
             "session_id": result.session_id,
             "label": result.label,
             "problems": problems,
+            "warnings": warnings,
             "control_check": is_control_check,
             "evidence": artifact_id,
         },
@@ -1193,6 +1216,7 @@ def run_cells(
                         "label": r.label,
                         "transaction_id": r.transaction_id,
                         "problems": r.problems,
+                        "warnings": r.warnings,
                         "evidence": r.artifact_id,
                     }
                     for r in report.results
@@ -1423,6 +1447,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         for problem in result.problems:
             print(f"     - {problem}")
+        for warning in result.warnings:
+            print(f"     ! {warning}")
     for problem in report.problems:
         print(f"RUN-PROBLEM {problem}")
     for warning in report.warnings:
