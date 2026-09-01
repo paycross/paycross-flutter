@@ -142,8 +142,11 @@ SDKs know:
 
 So for an unknown recovery, a merchant sees `RecoveryDoNotRetry` on Android and
 `RecoveryUnrecognized(value)` on iOS — **the same retry decision, a different
-Dart type**. Both platforms agree in the other direction: an absent or empty
-recovery becomes `retry`, not `do_not_retry`.
+Dart type**, and on Android the server's original string is unrecoverable.
+Filed as
+[payment-android-sdk#31](https://github.com/paycross/payment-android-sdk/issues/31).
+Both platforms agree in the other direction: an absent or empty recovery becomes
+`retry`, not `do_not_retry`.
 
 ## Timeout and network
 
@@ -351,6 +354,60 @@ Stated precisely, because it matters: **the fix was not exercised.** No
 `DRIVER_CRASH_REASON` warning was raised — the crash simply did not recur. So
 this run proves the cell is sound; #38's own unit fixtures, not this run, are
 what prove the attribution logic.
+
+## Findings and follow-ups
+
+Nothing new was filed off this run. What it produced is one reproduction, one
+open question it could not close, and one divergence that no cell can reach.
+
+### 1. `payment-android-sdk#25` — reproduced, third independent session
+
+`airplane_during_polling` reports `failure/retry` over a payment that succeeded
+and shifted liability. Detail in "Timeout and network" above. Already filed; no
+new issue.
+
+### 2. The label names a transaction the session does not have — cause unmeasured
+
+`session_expired_server_submit`. **Reproduced four times: on both platforms in
+two independent runs** (android and iOS on 2026-08-30, android and iOS again in
+this matrix), every one of them `session_status: expired` with
+`transactions: []` and a non-empty `<txn>` in the label. The first pair was
+found by reading `merchant.json` by hand; this pair is machine-recorded in
+`label_transaction_notes`.
+
+**The cause is still unmeasured, and this rerun could not measure it.** D2 read
+the chain in source — `POST /api/submit-card` apparently accepting a card on an
+expired session and returning a transaction id that is never recorded against
+the session — and deliberately filed nothing, because the HTTP bodies were
+never captured. The runner does not capture them, so a rerun can only add
+observations of the symptom.
+
+**Carried forward as a runner follow-up, not an issue.** The verification step
+is small and exact: **capture the `/api/submit-card` response and the first
+`/status/{id}` response for this cell.** If the submit really does answer
+`success: true` on an expired session, that is a backend issue on
+`paycross-core`, in the same family as
+[io.paycross#871](https://github.com/paycross/io.paycross/issues/871) — two
+read paths disagreeing about one transaction.
+
+Until then the cell keeps its `<any>` sentinel, for the reason given above.
+
+### 3. `Recovery` unknown values — a cross-platform type divergence, from source
+
+Android collapses an unrecognised recovery to `do_not_retry` and discards the
+server's string; iOS keeps `unrecognized(<raw>)`. Same retry decision, different
+Dart type for a merchant. **No cell can reach it** — the sandbox emits only
+recoveries both SDKs know — so this is read from source, not measured. Filed low-priority as
+[payment-android-sdk#31](https://github.com/paycross/payment-android-sdk/issues/31);
+detail in "Declines" above.
+
+### Not a finding: the token-entry truncation
+
+Android D2's first attempt lost 4–7 characters of the 1011-character token on
+three consecutive cells **including the interleaved control**, inside the
+driver, before the SDK was asked anything. A cold emulator restart cleared it
+(the instance had been up 15 h 55 m). A rig fault, caught by
+`_enter_token_text`'s read-back guard doing exactly its job. Not filed.
 
 ## What this run does not prove
 
