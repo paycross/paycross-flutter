@@ -163,9 +163,10 @@ host's network and every route to cutting it needs sudo or the GUI.
 ### The one a merchant cannot ignore
 
 `airplane_during_polling` reports **`failure/retry` over a payment that
-succeeded and shifted liability**. This run is the **third independent
+succeeded and shifted liability**. This run is the **fourth independent
 reproduction** (594.6 s, session `01a05d…`, txn `5fa5525c-…`), on `main`, on the
-current sandbox. It is `payment-android-sdk#25`.
+current sandbox — `payment-android-sdk#25`'s own comment of 2026-08-30 already
+records three (592 s / 609 s / 595 s) before it.
 
 The cell **passes**, and the pass is the finding: `<any>` for the label plus
 hard merchant assertions is precisely the shape that catches a wrong label over
@@ -269,7 +270,7 @@ the chain in source — `POST /api/submit-card` apparently accepting a card on a
 expired session and handing back a transaction id that is never recorded
 against the session — and deliberately filed nothing, because the submit and
 status HTTP bodies were never captured. The runner does not capture them, so
-this rerun adds a second and third observation of the *symptom* and no new
+this rerun adds a third and fourth observation of the *symptom* and no new
 evidence about the *cause*. The verification step D2 named still stands and
 still belongs to whoever next has the rig: **capture the `/api/submit-card`
 response and the first `/status/{id}` response for this cell.**
@@ -360,7 +361,7 @@ what prove the attribution logic.
 Nothing new was filed off this run. What it produced is one reproduction, one
 open question it could not close, and one divergence that no cell can reach.
 
-### 1. `payment-android-sdk#25` — reproduced, third independent session
+### 1. `payment-android-sdk#25` — reproduced, fourth independent session
 
 `airplane_during_polling` reports `failure/retry` over a payment that succeeded
 and shifted liability. Detail in "Timeout and network" above. Already filed; no
