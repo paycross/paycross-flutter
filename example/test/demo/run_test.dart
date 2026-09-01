@@ -48,6 +48,7 @@ Widget _run({
   required Future<PayCrossResult> Function(String) present,
   HistoryStore? history,
   bool e2e = false,
+  bool live = false,
   Future<MintedSession> Function(String)? mint,
   Future<DemoVersions> Function()? readVersions,
 }) => MaterialApp(
@@ -55,6 +56,7 @@ Widget _run({
     preset: _preset,
     body: _preset.body,
     e2e: e2e,
+    live: live,
     mintSession:
         mint ??
         (_) async => const MintedSession(
@@ -521,5 +523,188 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(sent, '{"amount":2500,"currency":"USD"}');
+  });
+  testWidgets('a Live run says to refund it, and gives the transaction id', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _run(live: true, present: (_) async => _success('txn-live')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsOneWidget);
+    expect(find.textContaining('Refund this in the back office'), findsWidgets);
+    expect(find.textContaining('txn-live'), findsWidgets);
+    expect(find.byKey(const ValueKey('copyRefundId')), findsOneWidget);
+  });
+
+  testWidgets('a Live run with no transaction id falls back to the session', (
+    tester,
+  ) async {
+    // Cancelled sheet, thrown error, timeout mid-poll: one of the two ids
+    // always exists, because the session is minted before the sheet opens.
+    // The money is findable either way, and that is the whole point of this
+    // block.
+    await tester.pumpWidget(
+      _run(live: true, present: (_) async => const PayCrossCancelled()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsOneWidget);
+    expect(find.textContaining('No transaction id'), findsOneWidget);
+    expect(find.textContaining('sess-9'), findsWidgets);
+  });
+
+  testWidgets('a Live mint that failed offers nothing to refund', (
+    tester,
+  ) async {
+    // No id at all -- and also no charge, so there is nothing to refund. The
+    // ordinary scrubbed error is the whole story.
+    await tester.pumpWidget(
+      _run(
+        live: true,
+        mint: (_) async => throw const MinterError('POST -> HTTP 401'),
+        present: (_) async => _success('never'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsNothing);
+    // Not vacuous: the outcome card itself IS on screen, so the block above
+    // was skipped by its own guard rather than by there being no card to put
+    // it in.
+    expect(find.byKey(const ValueKey('runOutcome')), findsOneWidget);
+    expect(find.textContaining('HTTP 401'), findsOneWidget);
+  });
+
+  testWidgets('a refused Live run is not told to refund itself', (
+    tester,
+  ) async {
+    // A decline carries a transaction id, so it satisfies the block's guard
+    // -- and "Refund this in the back office now." then sends somebody to
+    // look for a charge that is not there. A declined smoke is an ordinary
+    // first result on a real card, so this would fire early and often, and
+    // this is the one red block in the app whose whole value is that it is
+    // never noise.
+    //
+    // Not suppressed, though: the SDK saying "refused" is not proof that no
+    // money moved -- an auth that took and a capture that failed look like
+    // this too -- so the id and the copy button stay exactly where they are
+    // and only the claim changes.
+    await tester.pumpWidget(
+      _run(
+        live: true,
+        present: (_) async => const PayCrossFailure(
+          transactionId: 'txn_declined',
+          recovery: RecoveryDoNotRetry(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsOneWidget);
+    expect(find.textContaining('Refund this in the back office'), findsNothing);
+    expect(
+      find.textContaining('nothing should have been captured'),
+      findsOneWidget,
+    );
+    // The id a lookup needs, and the button that copies it, are the half of
+    // this block that is right on a decline.
+    expect(find.textContaining('txn_declined'), findsWidgets);
+    expect(find.byKey(const ValueKey('copyRefundId')), findsOneWidget);
+  });
+
+  testWidgets('a Test run says nothing about refunds', (tester) async {
+    await tester.pumpWidget(_run(present: (_) async => _success('txn-9')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('refundInstruction')), findsNothing);
+    // Same guard against a vacuous findsNothing: everything the Live version
+    // of this run would have rendered the block beside is here.
+    expect(find.byKey(const ValueKey('runOutcome')), findsOneWidget);
+    expect(find.textContaining('txn-9'), findsWidgets);
+  });
+
+  testWidgets('a Live run is written to history as a Live run', (tester) async {
+    final backend = InMemoryHistoryBackend();
+    await tester.pumpWidget(
+      _run(
+        live: true,
+        history: HistoryStore(backend: backend),
+        present: (_) async => _success('txn-live'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final row = jsonDecode(backend.entries.single) as Map<String, Object?>;
+    expect(row['live'], isTrue);
+  });
+
+  testWidgets('the copy button puts the id on the clipboard', (tester) async {
+    // The id is what a refund needs, and retyping a transaction id off a
+    // phone screen is how a refund lands on the wrong charge.
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _run(live: true, present: (_) async => _success('txn-live')),
+    );
+    await tester.pumpAndSettle();
+
+    // Inside the block, not anywhere on screen: the outcome card prints its
+    // own `Session sess-9` and `Transaction txn-live` lines above this, and
+    // a finder that matched those would pass with the block showing either.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('refundInstruction')),
+        matching: find.textContaining('Transaction txn-live'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('copyRefundId')));
+    await tester.pumpAndSettle();
+
+    expect(copied, ['txn-live']);
+
+    // And the other branch, in the same case on purpose: the display and the
+    // clipboard are two separate expressions of one rule, and a screen that
+    // shows one id while copying the other is exactly how a refund lands on
+    // the wrong charge.
+    //
+    // Torn down first. Pumping a second `_run` straight over the first is a
+    // widget UPDATE at the same position, not a new screen -- `initState`
+    // never runs again and the first run's transaction id stays on screen.
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      _run(live: true, present: (_) async => const PayCrossCancelled()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('refundInstruction')),
+        matching: find.textContaining('Session sess-9'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('copyRefundId')));
+    await tester.pumpAndSettle();
+
+    expect(copied, ['txn-live', 'sess-9']);
   });
 }

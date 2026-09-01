@@ -8,17 +8,21 @@ import 'package:paycross_demo/demo/history_screen.dart';
 
 import '_surface.dart';
 
-HistoryEntry _entry({required String session, required String preset}) =>
-    HistoryEntry(
-      at: DateTime.utc(2026, 8, 29, 15, 4, 5),
-      presetName: preset,
-      sessionId: session,
-      transactionId: 'txn-$session',
-      outcome: 'Approved — 1000 EUR, transaction txn-$session',
-      demoVersion: '0.1.0+7',
-      pluginVersion: '0.1.0',
-      nativeSdkVersion: 'unknown',
-    );
+HistoryEntry _entry({
+  required String session,
+  required String preset,
+  bool live = false,
+}) => HistoryEntry(
+  at: DateTime.utc(2026, 8, 29, 15, 4, 5),
+  presetName: preset,
+  sessionId: session,
+  transactionId: 'txn-$session',
+  outcome: 'Approved — 1000 EUR, transaction txn-$session',
+  demoVersion: '0.1.0+7',
+  pluginVersion: '0.1.0',
+  nativeSdkVersion: 'unknown',
+  live: live,
+);
 
 /// A backend already holding [entries], as a phone that has run before does.
 InMemoryHistoryBackend _seeded(List<HistoryEntry> entries) =>
@@ -80,5 +84,28 @@ void main() {
     // hold one -- this is the screen-level end of that guarantee.
     expect(copied.single.toLowerCase(), isNot(contains('token')));
     expect(find.text('Copied.'), findsOneWidget);
+  });
+  testWidgets('a Live run is marked, and a Test run is not', (tester) async {
+    useTallSurface(tester);
+    final store = HistoryStore(
+      backend: _seeded([
+        _entry(
+          session: 'sess-live',
+          preset: 'Live smoke — €1.00 charge',
+          live: true,
+        ),
+        _entry(session: 'sess-9', preset: '3DS challenge → approve'),
+      ]),
+    );
+
+    await tester.pumpWidget(MaterialApp(home: HistoryScreen(store: store)));
+    await tester.pumpAndSettle();
+
+    // Both rows are on screen, so the Test row being unmarked is a fact about
+    // the row rather than about a row that never rendered.
+    expect(find.text('Live smoke — €1.00 charge'), findsOneWidget);
+    expect(find.text('3DS challenge → approve'), findsOneWidget);
+    // One marking for one live row, whatever the rest of the list holds.
+    expect(find.byKey(const ValueKey('historyLive')), findsOneWidget);
   });
 }

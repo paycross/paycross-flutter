@@ -1,6 +1,6 @@
 import pytest
 
-from tool.e2e import cells, verify
+from tool.e2e import cells, evidence, verify
 
 
 def session(status="completed", txns=None):
@@ -423,6 +423,52 @@ def test_saved_card_used_is_separate_from_saved_card_saved():
         )
         == []
     )
+
+
+def test_a_real_scrub_leaves_the_saved_card_assertions_something_to_read():
+    """The seam D5 rests on, tested end to end instead of at both ends.
+
+    The two tests above hand `verify_merchant` a hand-written
+    `"[REDACTED-SESSION-TOKEN]"`, and `test_evidence` separately checks that a
+    token is scrubbed. Neither one covers the coupling: `saved_token` and
+    `used_token` are in `evidence.TOKEN_KEYS`, so the value these assertions
+    read has already been through the scrubber, and they work only because a
+    scrubbed token is **replaced rather than removed**.
+
+    Removing the key instead is the change that reads like the safer one, and
+    it would turn every `saved_card_saved: true` into a failure while every
+    test above stayed green. So the real scrubber runs here.
+    """
+    live = session(
+        txns=[
+            txn(
+                stored_credentials={
+                    "saved_token": "eyJhbGciOiJSUzI1NiJ9.eyJjYXJkIjoiMSJ9.c2ln",
+                    "used_token": None,
+                    "save_operation": "created",
+                }
+            )
+        ]
+    )
+
+    scrubbed, found = evidence.scrub_resource(live)
+    stored = scrubbed["transactions"][0]["stored_credentials"]
+
+    # The credential came back to be used as a literal secret elsewhere, and
+    # is gone from what will be filed.
+    assert found == ["eyJhbGciOiJSUzI1NiJ9.eyJjYXJkIjoiMSJ9.c2ln"]
+    assert stored["saved_token"] == evidence.REDACTED.decode()
+    # The key survives, which is the whole point; and the null one is untouched,
+    # so "stored" and "not stored" stay distinguishable after scrubbing.
+    assert "saved_token" in stored
+    assert stored["used_token"] is None
+    # `save_operation` is not an assertable merchant key, so it is not scrubbed
+    # and stays readable in the evidence -- which is where `already_existing`
+    # is confirmed when the D5 pair runs a second time.
+    assert stored["save_operation"] == "created"
+
+    assert verify.verify_merchant(scrubbed, {"saved_card_saved": True}) == []
+    assert verify.verify_merchant(scrubbed, {"saved_card_used": False}) == []
 
 
 # --- Plan B: match_label and the two sentinels ----------------------------

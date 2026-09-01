@@ -151,11 +151,24 @@ def scrub_resource(value: Any) -> tuple[Any, list[str]]:
     parameter -- never by shape. The value here is a live credential whatever
     it looks like, and the shape rule has already been shown to miss one.
 
-    The runner hands the scrubbed copy on to `verify` as well as to disk,
-    which is safe because `verify` reads none of the keys touched here -- it
-    wants `status`, `transactions` and the failure block. The caller's own
-    object is left alone regardless: this builds a new one rather than
-    deleting in place.
+    The runner hands the scrubbed copy on to `verify` as well as to disk, and
+    that is safe for a reason worth stating exactly, because it is narrower
+    than it used to be. `verify` mostly wants `status`, `transactions` and the
+    failure block, none of which are touched here. But D5's `saved_card_saved`
+    and `saved_card_used` read `stored_credentials.saved_token` and
+    `used_token`, which ARE in `TOKEN_KEYS` -- and they work only because a
+    scrubbed token is **replaced rather than removed**: the key survives
+    carrying `REDACTED`, so a stored card is truthy and an absent one is still
+    the original `null`. That is why those two assertions are documented as
+    testing presence and never a value, and why removing the key instead --
+    which reads like the safer choice -- would silently turn every
+    `saved_card_saved: true` into a failure.
+
+    Only a non-empty string is replaced, so a `"saved_token": null` on an
+    ordinary payment passes through untouched as null.
+
+    The caller's own object is left alone regardless: this builds a new one
+    rather than deleting in place.
     """
     found: list[str] = []
 

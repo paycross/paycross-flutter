@@ -40,6 +40,7 @@ class HistoryEntry {
     required this.demoVersion,
     required this.pluginVersion,
     required this.nativeSdkVersion,
+    this.live = false,
   });
 
   factory HistoryEntry.fromJson(Map<String, Object?> json) => HistoryEntry(
@@ -51,6 +52,11 @@ class HistoryEntry {
     demoVersion: json['demoVersion']! as String,
     pluginVersion: json['pluginVersion']! as String,
     nativeSdkVersion: json['nativeSdkVersion']! as String,
+    // Optional and defaulted on purpose. This factory is strict and
+    // `HistoryStore.read` drops any row whose parse throws, so a required
+    // field here would make every row written by demo-v0.1.0 unreadable and
+    // wipe each tester's history on upgrade.
+    live: json['live'] as bool? ?? false,
   );
 
   final DateTime at;
@@ -62,6 +68,14 @@ class HistoryEntry {
   final String pluginVersion;
   final String nativeSdkVersion;
 
+  /// Whether this run charged a real card.
+  ///
+  /// Recorded so a history full of sandbox runs cannot hide the one that
+  /// needs refunding. It is a flag, not a credential: Live credentials are
+  /// in no store to leak, and this row holds the same ids and outcome every
+  /// other row holds.
+  final bool live;
+
   Map<String, Object?> toJson() => {
     'at': at.toIso8601String(),
     'presetName': presetName,
@@ -71,6 +85,7 @@ class HistoryEntry {
     'demoVersion': demoVersion,
     'pluginVersion': pluginVersion,
     'nativeSdkVersion': nativeSdkVersion,
+    'live': live,
   };
 }
 
@@ -79,7 +94,7 @@ String bugReport(HistoryEntry entry) =>
     '''
 PayCross Demo run
   when:        ${entry.at.toIso8601String()}
-  scenario:    ${entry.presetName}
+  scenario:    ${entry.presetName}${entry.live ? '\n  mode:        LIVE — real money, refund it in the back office' : ''}
   session:     ${entry.sessionId}
   transaction: ${entry.transactionId ?? '(none)'}
   outcome:     ${entry.outcome}

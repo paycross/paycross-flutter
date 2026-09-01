@@ -43,6 +43,65 @@ def test_parses_a_wda_dump_into_uniform_nodes():
     assert banner.visible is False
 
 
+def test_a_checkable_node_reports_its_state_and_an_ordinary_one_says_nothing():
+    """`checked` is how a two-state control is read, normalised across two dumps.
+
+    D5 needs it and nothing else does. The SDK's "Save card for future use" is
+    a Compose `Checkbox` in a `Row` with no clickable modifier on the Row, so
+    the only node that toggles is the Checkbox itself -- and in a real dump it
+    carries no text and no content description at all
+    (`android-save-card-form.uix`, taken 2026-08-31). Its state is the sole
+    evidence that a tap landed, and `save_card` has to be able to raise rather
+    than report a save that never happened.
+
+    `None` rather than `False` for a node that is not checkable, because
+    uiautomator writes `checked="false"` on every node in the tree -- the
+    frame layouts, the labels, all of them. Reading that as "an unticked
+    control" would make every dump full of them.
+    """
+    nodes = android("android-save-card-form.uix")
+
+    box = [n for n in nodes if n.type.endswith("CheckBox")]
+    assert len(box) == 1, "the save checkbox is the only checkable node here"
+    assert box[0].checked is False
+    assert box[0].bounds == (43, 1062, 169, 1188)
+    # No handle but its class and its state: this is why `save_card` cannot
+    # match on a description and cannot verify by reading a label.
+    assert box[0].text == ""
+    assert box[0].content_desc == ""
+
+    label = tree.find_text_exact(nodes, "Save card for future use")[0]
+    assert label.checked is None, "a plain TextView is not a two-state control"
+
+
+def test_a_wda_switch_reports_its_state_the_same_way():
+    # The iOS half of the same idea: `Toggle("Save this card")` is an
+    # XCUIElementTypeSwitch whose `value` is "0" or "1". Normalised here so a
+    # driver asks `node.checked` on either platform rather than one of them
+    # asking about a string.
+    xml = (
+        '<XCUIElementTypeApplication type="XCUIElementTypeApplication">'
+        '<XCUIElementTypeSwitch type="XCUIElementTypeSwitch" name="Save this card"'
+        ' label="Save this card" value="1" visible="true" x="20" y="600"'
+        ' width="362" height="31"/>'
+        '<XCUIElementTypeSwitch type="XCUIElementTypeSwitch" name="off one"'
+        ' label="off one" value="0" visible="true" x="20" y="640"'
+        ' width="362" height="31"/>'
+        '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="Total"'
+        ' label="Total" value="10.00 EUR" visible="true" x="20" y="100"'
+        ' width="100" height="20"/>'
+        "</XCUIElementTypeApplication>"
+    )
+    nodes = tree.parse_wda(xml.encode())
+    by_name = {n.identifier: n for n in nodes}
+
+    assert by_name["Save this card"].checked is True
+    assert by_name["off one"].checked is False
+    # A value that is not a switch state says nothing, rather than being
+    # coerced -- "10.00 EUR" is not an unticked control.
+    assert by_name["Total"].checked is None
+
+
 def test_find_text_exact_does_not_match_the_neighbouring_nodes():
     nodes = android("android-rearmed.uix")
 

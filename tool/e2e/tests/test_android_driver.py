@@ -391,6 +391,217 @@ def test_verify_pan_reports_what_the_field_actually_reads():
     assert "formatter" not in message
 
 
+# -- select_saved_card --------------------------------------------------------
+
+#: The dropdown once opened, dumped 2026-08-31. It arrives as its OWN window:
+#: the whole dump is 3.4 KB and the form behind it is simply not in it, which
+#: is why the row search runs against a tree that holds nothing else.
+#:
+#: Its shape is the third instance of this dimension's recurring trap -- the
+#: text sits on a NON-clickable `TextView` inside a clickable `android.view.View`
+#: parent. Unlike the save checkbox, though, here the tap works: the label is a
+#: CHILD of the clickable row rather than a sibling, so the touch bubbles up.
+#: Measured, not assumed.
+SAVED_MENU = (FIXTURES / "android-saved-card-menu.uix").read_text()
+
+#: And the form after the row was tapped: the fresh-card fields are gone and
+#: the saved-card branch has rendered its prompt.
+SAVED_CHOSEN = (FIXTURES / "android-saved-card-chosen.uix").read_text()
+
+
+def test_select_saved_card_opens_the_selector_then_picks_the_stored_row():
+    shell = FakeShell(trees=[SAVED_SHEET, SAVED_MENU, SAVED_CHOSEN])
+
+    driver(shell).select_saved_card()
+
+    taps = [a for a in shell.argv_text() if a.startswith("shell input tap")]
+    # First the selector at the centre of its bounds [42,431][1038,578],
+    # then the stored row's label at the centre of [74,741][375,794].
+    assert taps == ["shell input tap 540 504", "shell input tap 224 767"]
+
+
+def test_select_saved_card_verifies_the_form_really_switched():
+    """The failure mode the card says is worth spending code on.
+
+    A selection that silently did nothing leaves the sheet on the FRESH form.
+    The cell would then type its CVV into a blank card, submit it, and report a
+    saved-card payment -- and `saved_card_used` is the only assertion that would
+    ever notice, an hour into a matrix run. So this raises.
+    """
+    # The menu opens and the tap lands, but the form never switches.
+    shell = FakeShell(trees=[SAVED_SHEET, SAVED_MENU, SAVED_SHEET])
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).select_saved_card(timeout=0)
+
+    assert "still showing the new-card form" in str(excinfo.value)
+
+
+def test_select_saved_card_matches_the_masked_pan_by_shape_not_by_value():
+    # The driver cannot know the stored PAN, so the row is found by the shape
+    # the backend renders -- six digits, asterisks, last four. The neighbouring
+    # `Use a new card` row and the `JOHN DOE - 12/2028` detail line are both in
+    # the same popup and neither matches.
+    assert android._MASKED_PAN.fullmatch("411111******0000")
+    assert not android._MASKED_PAN.fullmatch("Use a new card")
+    assert not android._MASKED_PAN.fullmatch("JOHN DOE - 12/2028")
+    # And not the COLLAPSED selector's own text, which carries the expiry --
+    # so a search run after the selection cannot re-match what it just chose.
+    assert not android._MASKED_PAN.fullmatch("411111******0000 (12/2028)")
+
+
+def test_select_saved_card_says_so_when_no_stored_row_is_offered():
+    # `saved_cards` missing from the session, or the customer has no card.
+    shell = FakeShell(tree=SAVED_SHEET)  # the selector opens onto nothing
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).select_saved_card(timeout=0)
+
+    assert "no stored-card row" in str(excinfo.value)
+
+
+# -- wait_saved_card ----------------------------------------------------------
+
+#: The saved-card sheet, dumped from the emulator on 2026-08-31 against a
+#: session carrying `saved_cards: {show: all}` for a customer with one stored
+#: card. The first such dump taken in this campaign.
+SAVED_SHEET = (FIXTURES / "android-saved-card-sheet.uix").read_text()
+
+
+def test_wait_saved_card_finds_the_selector_the_sdk_only_composes_when_there_is_one():
+    # `CardFormScreen.kt:161` composes SavedCardSelector only under
+    # `if (savedCards.isNotEmpty())`, so the selector being on screen IS the
+    # predicate -- there is no separate "a card is offered" signal to read.
+    assert android.SAVED_CARD_SELECTOR == "Saved card selector"
+
+    assert driver(FakeShell(tree=SAVED_SHEET)).wait_saved_card() is True
+
+
+def test_wait_saved_card_answers_false_rather_than_raising_when_none_is_offered():
+    # "No stored card was offered" is a cell VERDICT, not a device fault. A
+    # DriverError here would be read as a broken rig and spend an interleaved
+    # control check; False gets the cell the message that names the
+    # expectation and the deadline it really used.
+    ordinary = (FIXTURES / "android-rearmed.uix").read_text()
+
+    assert driver(FakeShell(tree=ordinary)).wait_saved_card(timeout=0) is False
+
+
+def test_wait_saved_card_still_raises_when_the_device_will_not_dump():
+    # The other half of the same distinction: a device that cannot be read at
+    # all is not "no card was offered".
+    with pytest.raises(DriverError):
+        driver(FakeShell(tree="")).wait_saved_card(timeout=0)
+
+
+# -- save_card ----------------------------------------------------------------
+
+#: The real form, dumped from the emulator on 2026-08-31 against a session
+#: carrying `save_card_config`. The save checkbox is the only checkable node on
+#: it, it carries no text and no content-desc, and the label beside it is a
+#: separate non-clickable TextView -- which is why `save_card` matches on the
+#: state rather than on anything readable.
+SAVE_FORM = (FIXTURES / "android-save-card-form.uix").read_text()
+SAVE_FORM_TICKED = SAVE_FORM.replace(
+    'class="android.widget.CheckBox" package="com.paycross.flutterdemo" '
+    'content-desc="" checkable="true" checked="false"',
+    'class="android.widget.CheckBox" package="com.paycross.flutterdemo" '
+    'content-desc="" checkable="true" checked="true"',
+)
+assert SAVE_FORM_TICKED != SAVE_FORM, "the fixture's checkbox changed shape"
+
+
+def test_save_card_taps_the_checkbox_itself_and_not_its_label():
+    # The label is a plain TextView in a Row with no clickable modifier on it,
+    # so a tap there does nothing at all -- and looks exactly like one that
+    # worked. Measured centres: the box is at (106, 1125), the words at
+    # (405, 1124), and they are 300px apart on the same line.
+    shell = FakeShell(trees=[SAVE_FORM, SAVE_FORM_TICKED])
+
+    driver(shell).save_card()
+
+    taps = [a for a in shell.argv_text() if a.startswith("shell input tap")]
+    assert taps == ["shell input tap 106 1125"]
+
+
+def test_save_card_verifies_the_tick_took():
+    # A tap that misses leaves the box unticked, the cell then pays without
+    # storing, and `saved_card_saved` fails twenty minutes later against a
+    # merchant record that is telling the truth. Failing here names the cause.
+    shell = FakeShell(tree=SAVE_FORM)  # never flips
+
+    with pytest.raises(DriverError) as excinfo:
+        # `_poll`'s deadline is real time while the injected sleep is not, so a
+        # test that means to reach it says zero rather than spending fifteen
+        # seconds of the suite getting there.
+        driver(shell).save_card(timeout=0)
+
+    assert "did not tick" in str(excinfo.value)
+
+
+def test_save_card_leaves_an_already_ticked_box_alone():
+    # Tapping a ticked box UNticks it. `TestCardPrefill.saveCard` pre-ticks it
+    # when a prefill is configured, so "tap it once" is not the same as "make
+    # sure it is ticked" -- and only the second one is what a cell means.
+    shell = FakeShell(tree=SAVE_FORM_TICKED)
+
+    driver(shell).save_card()
+
+    assert not [a for a in shell.argv_text() if a.startswith("shell input tap")]
+
+
+def test_save_card_says_so_when_the_session_never_rendered_a_box():
+    # `save_card_config` absent from the session means `canSaveCard` is false
+    # and the checkbox is not composed at all. That is a cell-authoring
+    # mistake, and this message is what points at it.
+    shell = FakeShell(tree=(FIXTURES / "android-rearmed.uix").read_text())
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).save_card(timeout=0)
+
+    assert "save-card checkbox" in str(excinfo.value)
+
+
+# -- type_cvv -----------------------------------------------------------------
+
+
+def test_type_cvv_fills_the_cvv_field_and_touches_nothing_else():
+    # The saved-card form is a prompt and one field. `type_card`'s clearing
+    # pass would find no card-number field to clear and raise, and its other
+    # three fields do not exist on this screen at all -- which is why this is
+    # its own action rather than a flag on that one.
+    form = (FIXTURES / "android-rearmed.uix").read_text()
+    shell = FakeShell(tree=form)
+    naps = []
+
+    driver(shell, naps).type_cvv("123")
+
+    text = " | ".join(shell.argv_text())
+    assert "shell input text 123" in text
+    # The same content-desc the fresh form uses: CardFormScreen renders the
+    # same CvvField on both branches, so there is one matcher, not two.
+    assert android.CVV == "CVV input"
+    # Nothing else typed and nothing else cleared. A stray DEL here would
+    # eat digits the shopper is about to be asked for again.
+    assert text.count("input text") == 1
+    assert "input keyevent 67" not in text
+
+
+def test_type_cvv_drops_the_ime_so_the_pay_button_is_reachable():
+    # The numeric pad covers the bottom of the sheet, and `tap_pay` matches the
+    # Pay button by its text and taps the centre of its bounds. Behind the pad
+    # that tap types a digit instead. `type_card` ends the same way and for the
+    # same reason.
+    form = (FIXTURES / "android-rearmed.uix").read_text()
+    shell = FakeShell(tree=form)
+
+    driver(shell).type_cvv("123")
+
+    argv = shell.argv_text()
+    typed = argv.index("shell input text 123")
+    assert f"shell input keyevent {android._KEYCODE_BACK}" in argv[typed:]
+
+
 # -- paste_token --------------------------------------------------------------
 
 
@@ -1092,6 +1303,118 @@ def test_wait_acs_says_which_page_never_came():
     assert "sandbox ACS page" in str(excinfo.value)
 
 
+# -- D4: the wallet button, which Play services owns --------------------------
+
+
+#: The real node, lifted from this campaign's own evidence
+#: (`evidence/demo-rename-android/20260830-161244-android/control/01-paste_token.uix`):
+#: a wrapper carrying the description, with `clickable="false"` on it. Its
+#: centre is (540, 242), which is what every tap assertion below expects.
+GOOGLE_PAY_BOUNDS = "[42,179][1038,305]"
+
+
+def offered_sheet() -> str:
+    return sheet(
+        ("Pay \u20ac10.00", "", "[0,60][100,100]"),
+        ("", android.GOOGLE_PAY_DESC, GOOGLE_PAY_BOUNDS),
+    )
+
+
+def sheet_without_wallet() -> str:
+    return sheet(("Pay \u20ac10.00", "", "[0,60][100,100]"))
+
+
+def test_wait_google_pay_finds_the_button_play_services_draws():
+    shell = FakeShell(tree=offered_sheet())
+
+    assert driver(shell).wait_google_pay(timeout=5) is True
+
+
+def test_wait_google_pay_polls_rather_than_looking_once():
+    # Readiness is a LaunchedEffect that runs after the session loads and
+    # after an asynchronous isReadyToPay (PaymentActivity.kt), so the button
+    # is genuinely late rather than instant. A single look would fail the
+    # cell on a sheet that was about to offer the wallet.
+    shell = FakeShell(
+        trees=[sheet_without_wallet(), sheet_without_wallet(), offered_sheet()]
+    )
+    naps = []
+
+    assert driver(shell, naps).wait_google_pay(timeout=30) is True
+    assert naps == [2, 2]
+
+
+def test_wait_google_pay_answers_false_rather_than_raising():
+    # A falsy answer is what `_observe` turns into "expect: never observed
+    # 'google_pay'", which names the cell's own expectation. Raising here
+    # would report the device instead, and spend an interleaved control check
+    # on a screen that was read perfectly well.
+    shell = FakeShell(tree=sheet_without_wallet())
+
+    assert driver(shell).wait_google_pay(timeout=0) is False
+
+
+def test_wait_no_google_pay_is_disproved_by_a_button_that_is_merely_late():
+    # The one thing this expectation must never do is pass on every session.
+    # Absence has to be waited OUT rather than waited for: readiness is
+    # asynchronous, so a single look is satisfied by a button that has not
+    # rendered yet -- and the cell would then go green on a sheet that plainly
+    # offers the wallet, which is the failure it exists to catch.
+    shell = FakeShell(
+        trees=[sheet_without_wallet(), sheet_without_wallet(), offered_sheet()]
+    )
+    naps = []
+
+    assert driver(shell, naps).wait_no_google_pay(timeout=20) is False
+    assert naps == [2, 2]
+
+
+def test_wait_no_google_pay_answers_true_when_the_window_passes_empty():
+    shell = FakeShell(tree=sheet_without_wallet())
+
+    assert driver(shell).wait_no_google_pay(timeout=0) is True
+
+
+def test_wait_no_google_pay_rides_out_a_device_that_will_not_dump():
+    # A refused dump inside the window is not an absent button. Tolerated
+    # while the deadline is live, exactly as every other wait treats it --
+    # otherwise `uiautomator` refusing once would be recorded as the SDK
+    # suppressing the wallet.
+    refused = ["", ""] * 3  # one whole dump_tree's worth of attempts
+    shell = FakeShell(*refused, "", offered_sheet())
+
+    assert driver(shell).wait_no_google_pay(timeout=20) is False
+
+
+def test_tap_google_pay_taps_the_wrapper_because_the_node_is_not_clickable():
+    # The click handler lives on the AndroidView, not on a Compose node, so
+    # the node carrying the description reports clickable="false". Tapping its
+    # bounds centre is the only route in.
+    shell = FakeShell(tree=offered_sheet())
+
+    driver(shell).tap_google_pay()
+
+    assert taps(shell) == ["shell input tap 540 242"]
+
+
+def test_tap_google_pay_says_which_button_never_appeared():
+    shell = FakeShell(tree=sheet_without_wallet())
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).tap_google_pay(timeout=0)
+
+    assert "the Google Pay button" in str(excinfo.value)
+
+
+def test_the_google_pay_description_is_the_one_the_evidence_shows():
+    # It is Play services' string, not the SDK's: the SDK's own
+    # Modifier.testTag("google_pay_button") is invisible to uiautomator
+    # because testTagsAsResourceId is set nowhere in either repo (filed
+    # upstream). So this constant moves with the GMS version and the device
+    # locale, and pinning it here is what makes that visible when it moves.
+    assert android.GOOGLE_PAY_DESC == "Pay with GPay"
+
+
 # -- the vocabulary that later dimensions fill in ------------------------------
 
 
@@ -1111,6 +1434,10 @@ NOT_LANDED_YET = [
     ("wait_google_pay", (30,)),
     ("wait_no_google_pay", (20,)),
     ("wait_saved_card", (30,)),
+    ("background", (5,)),
+    ("rotate", ()),
+    ("kill_activity", ()),
+    ("dont_keep_activities", (True,)),
 ]
 
 

@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/home.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/presets.dart';
@@ -17,6 +19,7 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 // ignore: implementation_imports
 import 'package:paycross_flutter/src/generated/paycross_api.g.dart' as g;
 
+import 'demo/_environment.dart';
 import 'demo/_surface.dart';
 
 /// Records the configuration `main` builds. Nothing here reaches a platform.
@@ -258,6 +261,53 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('a link in Live starts nothing and says why', (tester) async {
+    // Two refusals stand between a link and a production charge: the parser
+    // rejects every run link in Live, and `_DemoHomeState._run` checks the
+    // environment again before it can mint. This case is the composed
+    // outcome of both -- with either one alone in place it still passes,
+    // which is what "belt and braces" means and is recorded as such in the
+    // progress file.
+    useTallSurface(tester);
+    final links = StreamController<Uri>();
+    addTearDown(links.close);
+    final backend = InMemorySecretBackend();
+    backend.entries['paycross_demo_client_id'] = 'id-1';
+    backend.entries['paycross_demo_client_secret'] = 'secret-1';
+    var mints = 0;
+
+    await tester.pumpWidget(
+      await liveApp(
+        home: app.DemoHome(
+          links: links.stream,
+          store: SecretStore(backend: backend),
+          mintWith: (credentials, body) async {
+            mints++;
+            return const MintedSession(
+              id: 'sess-9',
+              token: 'a-live-token',
+              sentBody: '{}',
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    links.add(
+      Uri.parse('paycross-flutter-demo://run?preset=Frictionless%203DS'),
+    );
+    await tester.pumpAndSettle();
+
+    // A stored sandbox credential is right there, and nothing reached it.
+    expect(mints, 0);
+    expect(find.byType(RunScreen), findsNothing);
+    expect(find.text('Live mode — links are disabled'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('a run that throws is reported rather than left unhandled', (
     tester,
   ) async {
@@ -322,5 +372,45 @@ void main() {
 
     expect(find.byType(SettingsScreen), findsNothing);
     expect(find.byType(HomeScreen), findsOneWidget);
+  });
+  testWidgets('the demo build mounts the environment scope over Home', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+
+    await tester.pumpWidget(const app.ExampleApp());
+    await tester.pumpAndSettle();
+
+    // The builder is the whole mechanism: it wraps the Navigator, so a route
+    // pushed later reads the same environment and sits under the same banner.
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp)).builder,
+      isNotNull,
+    );
+
+    final home = tester.element(find.byType(HomeScreen));
+    expect(LiveModeScope.maybeOf(home), isNotNull);
+    expect(LiveModeScope.environmentOf(home), DemoEnvironment.test);
+  });
+
+  test('the automation build installs no environment scope', () {
+    // kE2e is a compile-time constant, so a test process cannot be both
+    // builds at once. What is checkable here is that the builder is behind
+    // the same conditional every other E2E branch in this file is behind --
+    // the frozen build has no toggle in it, rather than one switched off.
+    //
+    // Whitespace is collapsed first because `dart format` breaks the
+    // conditional across three lines, and a source match that a reformat can
+    // redden is a test about formatting. Collapsing it also allows the whole
+    // fragment to be matched at once, which is the point: `? null` on its own
+    // matches the merchant-id ternary higher up the same file, so it would
+    // stay green with this conditional deleted -- which is the one edit worth
+    // catching.
+    final source = File('lib/main.dart').readAsStringSync();
+
+    expect(
+      source.replaceAll(RegExp(r'\s+'), ' '),
+      contains('builder: kE2e ? null :'),
+    );
   });
 }

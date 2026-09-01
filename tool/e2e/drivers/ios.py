@@ -94,6 +94,25 @@ PAY_BUTTON = "payButton"
 #: Tagged by CardFormView.swift:179 and never interactive -- the neutral target
 #: for the keyboard-dismissal fallback.
 AMOUNT = "amount"
+#: `Toggle("Save this card")` (CardFormView.swift:53). Rendered only under
+#: `allowsSaving && state.source.isNewCard`, and measured 2026-08-31 to sit at
+#: y=840 on an 874-tall screen with `visible="false"` even before any keyboard
+#: is up -- so it has to be scrolled to, where Android's checkbox does not.
+SAVE_CARD_TOGGLE = "Save this card"
+
+#: The saved-card rows carry NO accessibility identifier at all
+#: (`SavedCardPicker`, CardFormView.swift:230-276), so the only handle is the
+#: visible label -- `"\(brand.displayName) •••• \(last4)"` at :239, with four
+#: U+2022 BULLETs. This substring is what separates a stored-card row from the
+#: "Use a new card" row beside it, and it is the reason D5 files an
+#: accessibility issue against the iOS SDK.
+SAVED_CARD_BULLETS = "\u2022\u2022\u2022\u2022"
+
+#: The row that goes back to a fresh card (CardFormView.swift:246). Composed
+#: only inside the picker, which is composed only when the session snapshot
+#: holds a stored card -- so its presence is the `saved_card` predicate.
+NEW_CARD_ROW = "Use a new card"
+
 THREE_DS_CANCEL = "threeDSCancel"
 SHEET_CANCEL = "Cancel"
 CANCEL_CONFIRM = "Yes, Cancel"
@@ -809,6 +828,55 @@ class IosDriver(Driver):
             self._sleep(settle)
         raise DriverError(f"{name!r} never came on screen after {max_swipes} swipes")
 
+    def scroll_back_to_top(
+        self,
+        *,
+        max_swipes: int = _MAX_SWIPES,
+        settle: float = SCROLL_SETTLE_SECONDS,
+    ) -> None:
+        """Undoes `scroll_to`, so an action that scrolled leaves no trace.
+
+        `scroll_to` is the only thing in this driver that moves the sheet, and
+        until D5 nothing called it on the *form* -- only on the ACS page, which
+        the cell then leaves. `save_card` broke that: it scrolls the form to
+        reach the toggle, and a form left scrolled poisons every action after
+        it.
+
+        Measured, and it cost a live cell. With the sheet left scrolled,
+        `amount` sat at y=37 -- under the navigation bar -- and
+        `dismiss_keyboard`'s fallback tap on `amount` hit dead space. The CVV
+        pad then survived onto the ACS page, where `acs()` requires it gone, and
+        `saved_card_3_challenge_save` failed while its interleaved control
+        passed.
+
+        The anchor is `amount`: the SDK tags it, it is the first thing in the
+        form, and it never moves within it. Best effort and bounded -- a sheet
+        that will not scroll back is not worth failing a cell that has
+        otherwise done what it was asked.
+        """
+        width, height = self._window_size()
+        for _ in range(max_swipes):
+            nodes = self._nodes(tolerate=True)
+            anchor = self._pick(nodes, AMOUNT, False, False)
+            floor = max(
+                (n.bounds[3] for n in nodes if n.type == "NavigationBar"),
+                default=0,
+            )
+            if anchor is not None and anchor.bounds[1] >= floor:
+                return
+            self._wda(
+                "POST",
+                self._session("/wda/dragfromtoforduration"),
+                {
+                    "fromX": width / 2,
+                    "fromY": height * _DRAG_TO,
+                    "toX": width / 2,
+                    "toY": height * _DRAG_FROM,
+                    "duration": _DRAG_DURATION,
+                },
+            )
+            self._sleep(settle)
+
     def _keyboard(self) -> tree.Node | None:
         """The keyboard node, so a caller can ask where it is, not just whether.
 
@@ -1101,6 +1169,22 @@ class IosDriver(Driver):
             "no equivalent: there is no activity to not keep. A cell using it "
             "must be platforms: [android]."
         )
+    # D4's whole vocabulary, refused here rather than left to `Driver`'s
+    # declaration for the same reason `airplane` is: the refusal names this
+    # platform's own reason. There is no wallet in the iOS SDK at all, and
+    # Apple Pay is an explicit campaign non-goal -- so every D4 cell is
+    # `platforms: [android]`, and a cell that forgets is an authoring fault
+    # the runner spends no control check on.
+    _NO_WALLET = "Google Pay is Android-only; the iOS SDK has no wallet yet"
+
+    def tap_google_pay(self) -> None:
+        raise NotImplementedError(self._NO_WALLET)
+
+    def wait_google_pay(self, timeout: float) -> bool:
+        raise NotImplementedError(self._NO_WALLET)
+
+    def wait_no_google_pay(self, timeout: float) -> bool:
+        raise NotImplementedError(self._NO_WALLET)
 
     def type_card(self, card: Card) -> None:
         for name, value in (
@@ -1122,6 +1206,31 @@ class IosDriver(Driver):
         self.dismiss_keyboard(required=False)
         self._sleep(SETTLE_SECONDS)
 
+    def type_cvv(self, cvv: str) -> None:
+        """Fills the CVV field and nothing else.
+
+        `cvvField` is declared once in `CardFormView` and rendered by both
+        branches of the form, identifier included, so this reuses `type_card`'s
+        matcher rather than adding a saved-card variant of it. What differs is
+        behind the field: on the saved-card path `cvvBrand` is forced to
+        `.unknown`, which is three digits whatever the stored card's brand is.
+
+        Nothing is read back. It is a `SecureField`, so WDA reports its value
+        masked or empty however many digits went in -- a read-back would either
+        always fail or pass on the bullets, which is worse. The Pay button's
+        own enablement is what says the field validated, and `tap_pay` is where
+        that is found out.
+        """
+        self.tap_identifier(CVV)
+        self._sleep(SETTLE_SECONDS)
+        self._keys(cvv)
+        self._sleep(SETTLE_SECONDS)
+        # The same bargain `type_card` strikes: tried, because the pad covers
+        # the bottom of the sheet, and not required, because on this build
+        # nothing dismisses it and on the form it covers nothing that matters.
+        self.dismiss_keyboard(required=False)
+        self._sleep(SETTLE_SECONDS)
+
     def tap_pay(self, amount_text: str) -> None:
         # The amount is in the label, but payButton is a real identifier, so
         # unlike Android there is nothing to compute here.
@@ -1140,6 +1249,200 @@ class IosDriver(Driver):
         if label is None:
             raise self.no_label_error(timeout)
         return label
+
+    def _switch(self, name: str) -> tree.Node | None:
+        """The named two-state control, wherever it is in the tree.
+
+        Not `_find`: that prefers an on-screen node and this is asked before
+        anything has been scrolled, when the answer is legitimately off-screen.
+        `checked is not None` is what makes it the switch rather than the
+        StaticText beside it, which carries the same label.
+        """
+        for node in self._nodes(tolerate=True):
+            named = name in (node.identifier, node.content_desc)
+            if node.checked is not None and named:
+                return node
+        return None
+
+    def _toggle_control(self, row: tree.Node) -> tree.Node:
+        """The part of a `Toggle` that actually toggles.
+
+        SwiftUI exposes one `Toggle` as TWO switch nodes: the labelled row, and
+        the control sitting inside it with no name and no label at all.
+        Measured on the simulator 2026-08-31, and it failed first -- tapping
+        the row's centre did nothing and the probe came back with "the tap at
+        (201, 715) did not turn on 'Save this card'". Only the control responds.
+
+        Which makes this the exact iOS twin of the Android hazard: on both
+        platforms the node you can name is not the node you can tap, for two
+        entirely different framework reasons.
+
+        Falls back to the row rather than raising when no inner control is
+        found. A tap there is what this did before and is no worse than
+        nothing, and the verification below catches it either way -- naming the
+        coordinates, so the next reader can see which of the two was hit.
+
+        "Inside" is the control's **centre** within the row, not its box within
+        the row's box. Measured, the control is (321, 440, 384, 468) against a
+        row of (20, 440, 382, 468) -- it overhangs the right edge by two
+        points, so strict containment finds nothing and silently falls back to
+        the very tap that does not work.
+        """
+        left, top, right, bottom = row.bounds
+        inside = [
+            n
+            for n in self._nodes(tolerate=True)
+            if n.checked is not None
+            and n.bounds != row.bounds
+            and left <= n.centre[0] <= right
+            and top <= n.centre[1] <= bottom
+        ]
+        return inside[0] if inside else row
+
+    def save_card(self, *, timeout: float = 30) -> None:
+        """Makes sure the save-card toggle is on, and proves that it is.
+
+        Three differences from Android, all measured rather than assumed.
+
+        It has to be **scrolled to**: the toggle sits at y=840 on an 874-tall
+        screen, below the pinned Pay bar, and WDA reports it not visible even
+        with no keyboard up. Android's checkbox is at y=1125 of 2400 and needs
+        nothing.
+
+        It is **found** by its label and **tapped** somewhere else. SwiftUI
+        exposes the row as an `XCUIElementTypeSwitch` carrying the label as its
+        name, and its state as `value` "0"/"1" -- which `tree.parse_wda`
+        normalises into `checked` -- but tapping that row does nothing at all.
+        Only the unnamed control inside it responds, so `_toggle_control` is
+        not a nicety. Android has the same split for a different reason: there
+        the checkbox carries no label and the label is not clickable.
+
+        And "makes sure" rather than "taps", for the reason Android has too:
+        tapping an already-on toggle turns it off, and the cell would assert a
+        save its own action had just undone.
+
+        The keyboard is dismissed first, best effort. `scroll_to` drags from
+        `height * 0.75`, which is inside where a numeric pad sits, so a pad
+        left up swallows every swipe -- but nothing on this build reliably
+        dismisses that pad, which is why the cell runs `save_card` BEFORE
+        `type_card` and there is no pad to fight.
+        """
+        self.dismiss_keyboard(required=False)
+        if self._switch(SAVE_CARD_TOGGLE) is None:
+            raise DriverError(
+                f"no {SAVE_CARD_TOGGLE!r} toggle anywhere in the tree: the "
+                "session's options are missing save_card_config, or the form "
+                "has not rendered"
+            )
+        node = self.scroll_to(SAVE_CARD_TOGGLE)
+        if node.checked:
+            self.scroll_back_to_top()
+            return
+
+        target = self._toggle_control(node)
+        self._tap_node(target)
+        self._sleep(SETTLE_SECONDS)
+
+        after = self._poll(
+            lambda nodes: next(
+                (
+                    n
+                    for n in nodes
+                    if n.checked and SAVE_CARD_TOGGLE in (n.identifier, n.content_desc)
+                ),
+                None,
+            ),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        if after is None:
+            raise DriverError(
+                f"the tap at {target.centre} did not turn on "
+                f"{SAVE_CARD_TOGGLE!r}; "
+                "the submit would carry card.save false and the payment would "
+                "store nothing"
+            )
+        # Only once the tick is confirmed: a failure above has a verdict to
+        # report and putting the sheet back would not change it, while a
+        # successful tick must leave the form exactly as the next action
+        # expects to find it.
+        self.scroll_back_to_top()
+
+    def select_saved_card(self, *, timeout: float = 30) -> None:
+        """Chooses the first stored card, and proves the form switched.
+
+        Matched on the four U+2022 bullets in the row's label, because that is
+        the only handle there is: `SavedCardPicker` (CardFormView.swift:230-276)
+        sets no accessibility identifier on anything, so the rows are plain
+        `Button`s and SwiftUI's concatenation of their children --
+        `"Visa •••• 0000, 12/28"` -- is what reaches the tree. The "Use a new
+        card" row sits directly below at the same size and has no bullets,
+        which is what separates the two.
+
+        The verification is the point. `cardNumber` is in the tree before the
+        selection and gone after it, because the two branches of the form are
+        mutually exclusive (`state.source.isNewCard`). Without that check a
+        selection that silently failed would leave the cell typing its CVV into
+        the FRESH form, submitting a blank card, and reporting a saved-card
+        payment -- with `saved_card_used` the only assertion that would ever
+        notice, an hour into a matrix run. So this raises rather than returns.
+        """
+        row = self._poll(
+            lambda nodes: next(
+                (
+                    n
+                    for n in nodes
+                    if SAVED_CARD_BULLETS in n.identifier and self._on_screen(n)
+                ),
+                None,
+            ),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        if row is None:
+            raise DriverError(
+                f"no stored-card row on the sheet within {timeout}s: the "
+                "session's options are missing saved_cards, or this customer "
+                "has no stored card"
+            )
+        self._tap_node(row)
+        self._sleep(SETTLE_SECONDS)
+
+        switched = self._poll(
+            lambda nodes: (
+                True if not self._matches_in(nodes, CARD_NUMBER, True) else None
+            ),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        if switched is None:
+            raise DriverError(
+                f"after tapping the stored card at {row.centre} the sheet is "
+                f"still showing the new-card form ({CARD_NUMBER!r} is present); "
+                "the CVV would be typed into a fresh card and the payment would "
+                "not use the stored one"
+            )
+
+    def wait_saved_card(self, timeout: float = 30) -> bool:
+        """Whether the sheet is offering a stored card.
+
+        Matched on the "Use a new card" row rather than on a stored card's own
+        label, and that is not a shortcut. `SavedCardPicker` is composed only
+        under `if !savedCards.isEmpty` (CardFormView.swift:30) and always
+        renders that row last (:245-250), so its presence is exactly equivalent
+        to "at least one stored card is offered" -- while a stored card's label
+        is `"<Brand> •••• <last4>"`, which the driver cannot predict without
+        knowing the PAN.
+
+        False rather than a raise, for the reason Android's says: "no stored
+        card was offered" is a cell verdict, not a broken device.
+        """
+        found = self._poll(
+            lambda nodes: self._pick(nodes, NEW_CARD_ROW, False, False),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        return found is not None
 
     def wait_acs(self, timeout: float = 120) -> bool:
         """Waits for the sandbox ACS page without answering it.

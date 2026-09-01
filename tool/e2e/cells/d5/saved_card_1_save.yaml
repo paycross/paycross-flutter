@@ -1,0 +1,60 @@
+# Pay with a fresh card and store it.
+#
+# Two request fields are both required and neither is optional:
+# `save_card_config` renders the checkbox, and `customer.merchant_reference`
+# is what makes this session and the next one resolve to ONE customer --
+# omit it and PaymentSessionsController.php:89-109 mints a random UUID, so
+# the card is stored against a customer nothing will ever look up again.
+#
+# `save_card_config` alone stores nothing: the save is driven by `card.save`
+# on the submit, which in the SDK is the shopper ticking the box. Hence the
+# save_card action -- without it this cell is an ordinary payment that
+# asserts a save which never happened.
+#
+# The reference is a literal rather than a per-run value on purpose. Storing
+# the same PAN again answers `save_operation: already_existing`, so this
+# customer accumulates exactly ONE card however many times the pair runs --
+# which is what keeps the next cell's selector unambiguous.
+#
+# Filename order is execution order and this pair depends on it: the saved-card
+# list is snapshotted into a session at creation and never rebuilt
+# (SessionDataService.php:37-38), so the session `saved_card_2_pay` mints must
+# be minted after this cell's save has settled. `_1_` / `_2_` is that ordering.
+id: saved_card_1_save
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+  options:
+    save_card_config:
+      usage: card_on_file
+    customer:
+      merchant_reference: "CUST-E2E-D5-INSTANT"
+# `save_card` runs BEFORE `type_card`, which is not the obvious order and is
+# not negotiable. Typing ends with the CVV, which raises a numeric pad over the
+# bottom ~35% of the iOS sheet, and nothing on this build dismisses that pad
+# (measured in D0, restated in IosDriver.dismiss_keyboard). `scroll_to` drags
+# from y = height * 0.75, which is INSIDE the pad, so the swipe is swallowed
+# and the toggle -- which sits below the fold at y=840 of 874 -- can never be
+# reached. Ticking first means there is no pad to fight.
+#
+# Safe on both platforms because the control is composed from the SESSION
+# (`allowsSaving` / `canSaveCard`), not from card-entry state, so it is on
+# screen before a single digit is typed.
+actions:
+  - paste_token
+  - save_card
+  - type_card
+  - tap_pay
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    saved_card_saved: true
