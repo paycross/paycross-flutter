@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'endpoints.dart';
 import 'environment.dart';
+import 'live.dart';
 import 'minter.dart';
 import 'secrets.dart';
 import 'version_panel.dart';
@@ -13,6 +14,16 @@ import 'version_panel.dart';
 /// that does not resolve surfaces here, on the first person's phone, as a
 /// message they can read and report.
 typedef VerifyCredentials = Future<String> Function(Credentials credentials);
+
+/// Why "Use for this session" is dead while a field is still empty.
+///
+/// A filled-but-wrong field carries its own `errorText`; an empty one
+/// carries nothing, because an untouched field is not a mistake yet and
+/// a screen that opens with two red errors reads as a broken screen. So
+/// the reason for an empty field lives on the button instead.
+const String _liveInputsHint =
+    'Fill in the client ID, the client secret, a first and last name, '
+    'and an email address to enable this.';
 
 /// Where the credentials are entered, checked and forgotten.
 class SettingsScreen extends StatefulWidget {
@@ -36,6 +47,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _clientSecret = TextEditingController();
   final _googlePay = TextEditingController();
   final _liveConfirm = TextEditingController();
+  final _liveName = TextEditingController();
+  final _liveEmail = TextEditingController();
   bool _revealSecret = false;
   bool _busy = false;
 
@@ -77,6 +90,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _clientSecret.dispose();
     _googlePay.dispose();
     _liveConfirm.dispose();
+    _liveName.dispose();
+    _liveEmail.dispose();
     super.dispose();
   }
 
@@ -152,6 +167,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ? null
         : _googlePay.text.trim(),
   );
+
+  /// The identity typed on this screen, or null if what is typed is not
+  /// one.
+  LiveIdentity? get _typedIdentity =>
+      LiveIdentity.parse(name: _liveName.text, email: _liveEmail.text);
+
+  /// Whether "Use for this session" has everything it needs.
+  ///
+  /// Named once and read twice, by the button's `onPressed` and by the
+  /// hint that explains why it is dead, so the reason given and the
+  /// reason applied cannot drift -- the same shape `armed` already has.
+  bool get _liveInputsComplete =>
+      _whyUnusable(_typed) == null && _typedIdentity != null;
 
   Future<void> _save() async {
     final typed = _typed;
@@ -246,7 +274,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // safe costs a retype, while keeping one that was not costs a real
     // charge. So the two directions differ on purpose -- entering clears
     // only on success, leaving clears either way.
-    _forgetTypedCredentials();
+    _forgetWhatWasTyped();
     setState(() {
       _busy = false;
       _askingForLive = false;
@@ -281,7 +309,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // empty field it finds when it lands. It cannot undo this clear: a
     // `refused` of null means `enterLive` has already flipped the
     // environment, and [_load] reads that at the moment it lands.
-    if (refused == null) _forgetTypedCredentials();
+    if (refused == null) _forgetWhatWasTyped();
     setState(() {
       _busy = false;
       _askingForLive = refused != null;
@@ -303,16 +331,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  /// Empties the three credential fields without touching any store.
+  /// Empties every field this screen holds, without touching any store.
   ///
-  /// Crossing between environments in either direction: a sandbox credential
-  /// left on screen in Live is one Save away from the wrong place, and a
-  /// production credential left on screen in Test is one Save away from a
-  /// worse one.
-  void _forgetTypedCredentials() {
+  /// Crossing between environments in either direction: a sandbox
+  /// credential left on screen in Live is one tap away from the wrong
+  /// place, a production credential left on screen in Test is one Save
+  /// away from a worse one, and an identity typed for one Live session
+  /// has no business being pre-filled for the next.
+  void _forgetWhatWasTyped() {
     _clientId.clear();
     _clientSecret.clear();
     _googlePay.clear();
+    _liveName.clear();
+    _liveEmail.clear();
     // The reveal goes with them. It is a decision the human took about a
     // sandbox secret, in a room they judged safe for one; inheriting it puts
     // the next environment's secret on screen in plaintext without anybody
@@ -329,13 +360,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// a side effect of checking a password. (The figure lives in
   /// `liveSmokeMinorUnits`; this sentence deliberately does not repeat it.)
   void _useForThisSession(DemoEnvironmentState state) {
-    final typed = _typed;
-    final unusable = _whyUnusable(typed);
-    if (unusable != null) {
-      setState(() => _message = unusable);
-      return;
-    }
-    state.useForThisSession(typed);
+    final identity = _typedIdentity;
+    // The button is dead unless this is non-null, so this is the type
+    // system rather than a second rule: `parse` returns a nullable and
+    // the state takes a `LiveIdentity`.
+    if (identity == null) return;
+    state.useForThisSession(_typed);
+    state.useIdentityForThisSession(identity);
     setState(
       () => _message =
           'Held for this session. Nothing is saved — closing the app, or '
@@ -508,14 +539,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             controller: _clientId,
             autocorrect: false,
             enableSuggestions: false,
-            // In Live only, and only while there is something to retract:
-            // "Held for this session" describes a pair that has just stopped
-            // being what is on screen. Silence is the honest state -- the
-            // human presses the button again when they are ready, and the
-            // pair actually held is never changed behind their back.
-            onChanged: live && _message != null
-                ? (_) => setState(() => _message = null)
-                : null,
+            // In Live only: "Held for this session" describes a pair that
+            // has just stopped being what is on screen, and silence is the
+            // honest state -- the human presses the button again when they
+            // are ready, and the pair actually held is never changed behind
+            // their back. Unconditional now rather than only while there is
+            // something to retract, because the button's enablement is read
+            // off these fields on every keystroke and needs the rebuild.
+            // Setting `_message` to null when it is already null costs
+            // nothing. In Test it stays null, so *typing in Test does not
+            // take away the last outcome* is untouched.
+            onChanged: live ? (_) => setState(() => _message = null) : null,
             decoration: const InputDecoration(
               labelText: 'Client ID',
               border: OutlineInputBorder(),
@@ -528,14 +562,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             obscureText: !_revealSecret,
             autocorrect: false,
             enableSuggestions: false,
-            // In Live only, and only while there is something to retract:
-            // "Held for this session" describes a pair that has just stopped
-            // being what is on screen. Silence is the honest state -- the
-            // human presses the button again when they are ready, and the
-            // pair actually held is never changed behind their back.
-            onChanged: live && _message != null
-                ? (_) => setState(() => _message = null)
-                : null,
+            // In Live only: "Held for this session" describes a pair that
+            // has just stopped being what is on screen, and silence is the
+            // honest state -- the human presses the button again when they
+            // are ready, and the pair actually held is never changed behind
+            // their back. Unconditional now rather than only while there is
+            // something to retract, because the button's enablement is read
+            // off these fields on every keystroke and needs the rebuild.
+            // Setting `_message` to null when it is already null costs
+            // nothing. In Test it stays null, so *typing in Test does not
+            // take away the last outcome* is untouched.
+            onChanged: live ? (_) => setState(() => _message = null) : null,
             decoration: InputDecoration(
               labelText: 'Client secret',
               border: const OutlineInputBorder(),
@@ -549,6 +586,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
+          // Live only, and where the wallet id sits in Test. Who the charge
+          // is made under is typed here beside the credentials because it is
+          // held exactly as long as they are.
+          if (live) ...[
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('liveName'),
+              controller: _liveName,
+              autocorrect: false,
+              enableSuggestions: false,
+              textCapitalization: TextCapitalization.words,
+              onChanged: (_) => setState(() => _message = null),
+              decoration: InputDecoration(
+                labelText: 'Name on the charge',
+                helperText: 'First and last, split on the last space.',
+                helperMaxLines: 2,
+                // Only once there is text to be wrong about.
+                errorText: _liveName.text.trim().isEmpty
+                    ? null
+                    : liveNameProblem(_liveName.text),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('liveEmail'),
+              controller: _liveEmail,
+              autocorrect: false,
+              enableSuggestions: false,
+              keyboardType: TextInputType.emailAddress,
+              onChanged: (_) => setState(() => _message = null),
+              decoration: InputDecoration(
+                labelText: 'Email on the charge',
+                helperText: 'A real internal address. It receives the receipt.',
+                helperMaxLines: 2,
+                errorText: _liveEmail.text.trim().isEmpty
+                    ? null
+                    : liveEmailProblem(_liveEmail.text),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ],
           // Test only: there is no Google Pay tile in Live for a wallet id to
           // serve, and the id is configuration for one wallet on one
           // merchant.
@@ -570,14 +649,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
           const SizedBox(height: 20),
           if (live)
-            // Not gated on `_loaded`, unlike the three below it: there is no
-            // store read to wait for in Live, and a button dead until a
-            // Keychain answers would be a button dead for a reason that does
-            // not apply.
-            FilledButton(
-              key: const ValueKey('useForThisSession'),
-              onPressed: _busy ? null : () => _useForThisSession(state!),
-              child: const Text('Use for this session'),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                // Merged, so the hint lands on the button's own node rather
+                // than on a parent a screen reader reaches separately -- the
+                // same shape the gate's dead button uses, for the same
+                // reason.
+                MergeSemantics(
+                  child: Semantics(
+                    hint: _liveInputsComplete ? '' : _liveInputsHint,
+                    child: FilledButton(
+                      key: const ValueKey('useForThisSession'),
+                      // Not gated on `_loaded`, unlike the three in Test:
+                      // there is no store read to wait for here, and a button
+                      // dead until a Keychain answers would be dead for a
+                      // reason that does not apply.
+                      onPressed: _busy || !_liveInputsComplete
+                          ? null
+                          : () => _useForThisSession(state!),
+                      child: const Text('Use for this session'),
+                    ),
+                  ),
+                ),
+                if (!_liveInputsComplete) const Text(_liveInputsHint),
+              ],
             )
           else
             Wrap(
