@@ -2817,3 +2817,230 @@ def test_the_teardown_replay_happens_after_the_failure_dump(tmp_path):
 
     last_dump = max(i for i, a in enumerate(driver.actions) if a[0] == "dump_tree")
     assert driver.actions.index(("airplane", False)) > last_dump
+
+
+# --- Plan B D3: a cell may be excused the log line its own setting produces --
+
+FORCED_FINISH = (
+    "08-28 12:00:02.000 I ActivityManager: Force finishing activity "
+    "com.paycross.example/com.paycross.PaymentActivity"
+)
+
+
+class KeepsNoActivities(FakeDriver):
+    """A device that can actually perform the verb the cell under test uses.
+
+    `FakeDriver` inherits `Driver`'s NotImplementedError for it, which the
+    runner correctly reads as an authoring fault -- and that would fail these
+    cells for a reason that has nothing to do with what they are about.
+    """
+
+    def dont_keep_activities(self, on):
+        self.actions.append(("dont_keep_activities", on))
+
+
+def logging(driver, log):
+    """A device whose logs say whatever the test wants them to say."""
+    driver.logs_since = lambda since: log
+    return driver
+
+
+def keeping_no_activities(tmp_path, *, declared):
+    """The `dont_keep_activities` cell, with and without its declaration."""
+    body = textwrap.dedent(CELL.format(id="control")).replace(
+        DEFAULT_ACTIONS,
+        "  - paste_token\n  - dont_keep_activities on\n  - tap_pay\n"
+        "  - wait_result 60\n  - dont_keep_activities off\n",
+    )
+    if declared:
+        body += 'tolerated_crash_markers:\n  - "Force finishing activity"\n'
+    directory = tmp_path / "cells"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(body, encoding="utf-8")
+    return directory
+
+
+def test_the_forced_finish_fails_a_cell_that_did_not_declare_it(tmp_path):
+    # The default. `Force finishing activity` naming the app under test is a
+    # fault, and the whole allow-list exists so that stays true everywhere but
+    # the one cell that asked.
+    driver = logging(
+        KeepsNoActivities(labels=["result:success:txn-1"]), f"{FORCED_FINISH}\n"
+    )
+
+    report = run(keeping_no_activities(tmp_path, declared=False), tmp_path, driver)
+
+    assert not report.results[0].passed
+    assert any("crash:" in p for p in report.results[0].problems)
+    assert result_json(tmp_path)["tolerated_crash_lines"] == []
+
+
+def test_the_declared_marker_is_excused_and_written_into_the_evidence(tmp_path):
+    # Reclassified, never muted: the line is not a fault, and it is also the
+    # observation the cell was written to make, so it has to be readable
+    # afterwards.
+    driver = logging(
+        KeepsNoActivities(labels=["result:success:txn-1"]), f"{FORCED_FINISH}\n"
+    )
+
+    report = run(keeping_no_activities(tmp_path, declared=True), tmp_path, driver)
+
+    assert report.results[0].passed, report.results[0].problems
+    written = result_json(tmp_path)
+    assert written["tolerated_crash_markers"] == ["Force finishing activity"]
+    assert written["tolerated_crash_lines"] == [FORCED_FINISH]
+
+
+def test_a_real_crash_still_fails_the_cell_that_declared_the_other_marker(tmp_path):
+    # The excuse is per marker, not per cell. This cell is excused its forced
+    # finish and is still failed by the crash beside it.
+    log = (
+        f"{FORCED_FINISH}\n"
+        "08-28 12:00:04.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
+        "08-28 12:00:04.000 E AndroidRuntime: Process: com.paycross.example, PID: 9\n"
+    )
+    driver = logging(KeepsNoActivities(labels=["result:success:txn-1"]), log)
+
+    report = run(keeping_no_activities(tmp_path, declared=True), tmp_path, driver)
+
+    problems = report.results[0].problems
+    assert not report.results[0].passed
+    assert [p for p in problems if "crash:" in p] == [
+        "crash: 08-28 12:00:04.000 E AndroidRuntime: FATAL EXCEPTION: main"
+    ]
+    assert result_json(tmp_path)["tolerated_crash_lines"] == [FORCED_FINISH]
+
+
+# --- Plan B D3: a discovery cell records its id rather than hiding it -------
+
+
+def discovery_cell(tmp_path, label="<any>"):
+    """A cell that asserts the session but not which label appeared."""
+    body = textwrap.dedent(CELL.format(id="control")).replace(
+        'expected:\n  label: "result:success:<txn>"\n',
+        f'expected:\n  label: "{label}"\n',
+    )
+    directory = tmp_path / "cells"
+    directory.mkdir()
+    (directory / "control.yaml").write_text(body, encoding="utf-8")
+    return directory
+
+
+#: A session the merchant API knows about that holds no transaction at all --
+#: the shape D2's session_expired_server_submit came back with.
+EMPTY_SESSION = {"sess-0": {"id": "sess-0", "status": "completed", "transactions": []}}
+
+
+def test_a_discovery_cell_records_a_phantom_id_and_still_passes(tmp_path):
+    # `<any>` is a licence to record rather than assert, and that has to stay
+    # true of the id as well as of the label -- otherwise the fix turns every
+    # already-measured discovery cell red on a question they were never
+    # written to answer. What must not survive is the id being invisible.
+    driver = FakeDriver(labels=["result:failure:restart:txn-ghost"])
+
+    report = run(
+        discovery_cell(tmp_path),
+        tmp_path,
+        driver,
+        sandbox=FakeSandbox(sessions=EMPTY_SESSION),
+    )
+
+    written = result_json(tmp_path)
+    assert written["transaction_id"] == "txn-ghost"
+    assert any("txn-ghost" in note for note in written["label_transaction_notes"])
+    assert not any("txn-ghost" in p for p in report.results[0].problems)
+
+
+def test_a_discovery_cell_whose_id_checks_out_records_nothing(tmp_path):
+    driver = FakeDriver(labels=["result:success:txn-1"])
+
+    report = run(discovery_cell(tmp_path), tmp_path, driver)
+
+    assert report.results[0].passed, report.results[0].problems
+    assert result_json(tmp_path)["label_transaction_notes"] == []
+    assert result_json(tmp_path)["transaction_id"] == "txn-1"
+
+
+def test_a_pinned_cell_still_fails_on_a_phantom_id(tmp_path):
+    # The other half of the same rule, and the reason a discovery cell cannot
+    # simply be pinned later: the pin fails the very check `<any>` records.
+    driver = FakeDriver(labels=["result:success:txn-ghost"])
+
+    report = run(
+        discovery_cell(tmp_path, label="result:success:<txn>"),
+        tmp_path,
+        driver,
+        sandbox=FakeSandbox(sessions=EMPTY_SESSION),
+    )
+
+    assert not report.results[0].passed
+    assert any("label_transaction" in p for p in report.results[0].problems)
+    assert result_json(tmp_path)["label_transaction_notes"] == []
+
+
+def test_a_declared_marker_that_never_appears_fails_the_cell(tmp_path):
+    # The trap this closes, measured on the rig 2026-08-31: `settings put
+    # global always_finish_activities 1` writes the setting and reads back as
+    # `1`, and on API 35 the activity manager IGNORES it until the next boot.
+    # So the cell turned the developer option "on", measured an ordinary
+    # payment, and PASSED -- a green cell that observed nothing. A cell that
+    # declares a marker is a cell whose whole purpose is to provoke it, so its
+    # absence is a finding rather than a quiet success.
+    driver = logging(KeepsNoActivities(labels=["result:success:txn-1"]), "all quiet\n")
+
+    report = run(keeping_no_activities(tmp_path, declared=True), tmp_path, driver)
+
+    assert not report.results[0].passed
+    problems = report.results[0].problems
+    assert any(
+        "Force finishing activity" in p and "did not happen" in p for p in problems
+    ), problems
+    assert result_json(tmp_path)["tolerated_crash_lines"] == []
+
+
+def test_a_cell_declaring_nothing_is_not_held_to_that_rule(tmp_path):
+    driver = logging(KeepsNoActivities(labels=["result:success:txn-1"]), "all quiet\n")
+
+    report = run(keeping_no_activities(tmp_path, declared=False), tmp_path, driver)
+
+    assert report.results[0].passed, report.results[0].problems
+
+
+# --- Plan B D3: a cell that straddled a host suspend says so -----------------
+
+
+def test_the_two_clocks_only_disagree_across_a_suspend():
+    # Measured 2026-08-31, and it cost two runs. WSL slept for six and a half
+    # hours with two runs in flight. The monotonic clock does not advance
+    # across a suspend, so `timeout` never fired and neither run died -- each
+    # froze mid-cell and thawed hours later against a session minted before the
+    # sleep. `budget_for` cannot catch it: it is checked BETWEEN steps, and a
+    # suspend always lands INSIDE a driver call, because that is where the
+    # process spends its time.
+    #
+    # A pure function because the interesting cases are hours apart and no test
+    # should have to spend them.
+    assert runner.host_suspended_seconds(wall=100.0, monotonic=99.5) == 0.0
+    assert runner.host_suspended_seconds(wall=23963.0, monotonic=1400.0) > 3600
+    # Never negative: NTP can step the wall clock backwards, and "the host
+    # suspended for minus four seconds" helps nobody.
+    assert runner.host_suspended_seconds(wall=10.0, monotonic=14.0) == 0.0
+
+
+def test_a_short_divergence_is_not_called_a_suspend():
+    # Clock jitter and an NTP step are not a suspend, and a cell failed for
+    # one would be a rig fault invented out of nothing.
+    assert runner.SUSPEND_SECONDS >= 60
+    assert (
+        runner.host_suspended_seconds(wall=runner.SUSPEND_SECONDS - 1, monotonic=0.0)
+        == 0.0
+    )
+
+
+def test_an_ordinary_cell_records_no_suspend(tmp_path, cell_dir):
+    driver = FakeDriver(labels=["result:success:txn-1"])
+
+    report = run(cell_dir, tmp_path, driver)
+
+    assert report.results[0].passed, report.results[0].problems
+    assert result_json(tmp_path)["host_suspended_seconds"] == 0.0

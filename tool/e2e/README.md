@@ -231,14 +231,62 @@ file calls `check_cell_dir` rather than restating them.
 2. the merchant API agrees on every key the cell asserts;
 3. no crash, ANR or uncaught exception in the device log for the cell's window.
 
+#### The one line a cell may be excused
+
+`always_finish_activities 1` makes the activity manager log `Force finishing
+activity <package>/…` for the app under test **by design** — it is literally
+what the setting does, and it is the behaviour the `dont_keep_activities` cell
+exists to observe. Criterion 3 counts that as a fault, so before this the cell
+failed however the plugin behaved while its interleaved control passed: the
+exact shape of a false finding. The package filter does not help, because those
+lines genuinely name the app.
+
+A cell may therefore declare it:
+
+```yaml
+tolerated_crash_markers:
+  - "Force finishing activity"
+```
+
+Three things bound that, and they are the point:
+
+* **The list is closed and validated at load.** `cells.TOLERABLE_CRASH_MARKERS`
+  holds exactly one marker. `FATAL EXCEPTION`, `ANR in` and the Dart and Swift
+  markers are not in it and must never be — a cell that could mute those could
+  pass a crash through, which is the one thing criterion 3 exists to stop.
+* **`verify.crash_lines` honours only that list, whatever it is handed**, and
+  can excuse only from the scoped-fault branch. No caller — not just no cell
+  file — can talk it into muting a real crash.
+* **Nothing is muted, only reclassified.** The excused lines are written into
+  `result.json` as `tolerated_crash_lines`, beside the declared
+  `tolerated_crash_markers`. For that cell they *are* the observation it was
+  written to make, and an empty list where a marker was declared says the
+  behaviour did not happen — which is a finding of its own.
+
 ### Budgets
 
-Each cell gets a wall-clock budget derived from its actions. It is a **hang
-backstop, not a performance assertion**: it is checked between steps, never
+Each cell gets a budget derived from its actions. It is a **hang backstop, not
+a performance assertion**: it is checked between steps, never
 interrupts a driver call in progress, and a cell that finishes inside it has
 proved nothing about how quickly it did so. The same goes for the `wait_result`
 seconds in a cell file — they bound a hang, they do not describe expected
 latency.
+
+The budget is measured on the **monotonic** clock, which cannot see a host
+suspend — and a suspend always lands *inside* a driver call, because that is
+where the process spends its time, while the budget is only checked *between*
+steps. So each cell also compares wall-clock elapsed against monotonic
+elapsed. They agree to within scheduling noise while the machine is awake and
+diverge by exactly the suspend when it is not; a divergence over a minute is
+recorded as `host_suspended_seconds` and fails the cell saying so.
+
+That is not defensive. Measured 2026-08-31: WSL slept for six and a half hours
+with two runs in flight, `timeout` never fired because its alarm is monotonic
+too, and both runs froze mid-cell and thawed against sessions minted before
+the sleep. The cost was not the lost time but the **misdiagnosis** — the cell
+failed with `the sandbox ACS page never appeared within 120s`, which reads as
+a sandbox fault, and the only clue was `seconds: 23963` against
+`budget_seconds: 1446` in a field nothing asserted on.
 
 ## Cell files
 
@@ -310,7 +358,24 @@ the capture would be ambiguous). Two sentinels stand in for a literal:
 | Sentinel | Meaning |
 |---|---|
 | `<any>` | any well-formed contract label, whatever it turns out to be. A **discovery** cell: it asserts a terminal outcome, exactly once, with no crash, and nothing about which one. The label it measured is recorded in `result.json` rather than compared. |
-| `<none>` | no label may appear. For the Android process-kill cell, where the pending Dart call dies with the isolate and no result is delivered **by design**, so "the app said nothing" is the pass. Requires an `expect no_result` action. |
+| `<none>` | no label may appear. For the process-kill cell, where the pending Dart call dies with the isolate and no result is delivered **by design**, so "the app said nothing" is the pass. Requires an `expect no_result` action. |
+
+A cell carrying either sentinel still has to **pin the session** — `cell_rules`
+demands `session_status` or `txn_count`. It cannot honestly promise
+`no_succeeded_txn`, because whether money moved is part of what it is
+measuring; what it must not be allowed to do is assert nothing at all, which
+would pass on a device that did nothing at all.
+
+`<any>` **captures the transaction id and records it.** It did not used to,
+and because it captured nothing the id reaching `verify_label_transaction` was
+always `None`, so that check returned on its first line and any discovery cell
+could report an id naming nothing and still pass. Two D2 cells did exactly
+that. The cross-check now runs either way; for a pinned label a mismatch is a
+**problem**, and for a sentinel it is a **note** in `result.json`
+(`label_transaction_notes`) — recording rather than asserting, because a
+discovery cell named no label to be held to. The corollary matters when Phase 3
+pins these: a cell whose id does not check out **cannot** be pinned to
+`result:…:<txn>`, because the pin fails the very check `<any>` only recorded.
 
 ### Merchant assertions
 
@@ -366,7 +431,10 @@ Things worth knowing before you write an expectation:
 | `type_cvv` | types the cell's CVV into the CVV field and nothing else (D5) |
 | `save_card` | makes sure the save-card box is ticked, and reads the state back to prove it (D5) |
 | `select_saved_card` | chooses the first stored card, and verifies the form switched (D5) |
-| `background <s>`, `rotate`, `kill_activity`, `dont_keep_activities on\|off` | lifecycle (D3) |
+| `background <s>` | home screen, wait `<s>`, resume the **existing** task — never a fresh launch (D3) |
+| `rotate` | a quarter turn, and it stays turned — a cell must turn back (D3) |
+| `kill_activity` | ends the app's process, sheet and all — the stand-in for a low-memory kill (D3) |
+| `dont_keep_activities on\|off` | the developer option, read back after writing. **Android only** (D3) |
 
 Each `expect` argument has its own deadline, and a falsy answer fails the cell
 naming the expectation and the number the wait really used:
@@ -405,16 +473,20 @@ the expected answer: on iOS a malformed or expired token is refused before
 `present` is ever called, so waiting for a sheet costs a 60-second timeout and
 then reports the wrong failure.
 
-The lifecycle row is **in the grammar but not yet executable** — everything
-else in both tables now is. The vocabulary is opened a dimension at a time so
-cell files can be written against a stable list; the dimension that owns a verb
-writes the driver method, and every verb already reaches a `_perform` branch
-that calls it. Until the method lands, the declaration on `Driver` raises
+**Every verb in both tables above is now executable**, and every expectation
+too: D3 landed the four lifecycle verbs and D4/D5 the wallet and saved-card
+ones. The vocabulary is still opened a dimension at a time so cell files can be
+written against a stable list; the dimension that owns a verb writes the driver
+method, and every verb already reaches a `_perform` branch that calls it. Where
+a method has NOT landed, the declaration on `Driver` raises
 `NotImplementedError` and a cell using it fails as an **authoring mistake**
-rather than a device fault — so no control check is spent proving a rig that
-was never in doubt. That distinction is the whole reason the declarations
-exist: a missing attribute would raise `AttributeError`, which the runner
-reads as a broken device, and two of those in a row abort the run.
+rather than a device fault — so no control check is spent proving a rig that was
+never in doubt. That distinction is the whole reason the declarations exist: a
+missing attribute would raise `AttributeError`, which the runner reads as a
+broken device, and two of those in a row abort the run.
+
+Two refusals are permanent rather than pending, and each says so: `airplane` and
+`dont_keep_activities` on iOS.
 
 A verb outside the grammar, or an argument the verb does not take, is a
 different failure and stays a device-side `DriverError`: `load_cell` refuses
@@ -432,10 +504,39 @@ character class is narrow because Android hands the value to `input text` on a
 device shell that re-splits and expands whatever it is given, and a mangled
 literal would leave the cell measuring a string it never sent.
 
+**The challenge page is recognised by `ACS_MARKERS`, not by one title, and
+that is a scar rather than a design.** `payment-sandbox` 687bf4e redesigned the
+page, replacing `<strong>Sandbox 3DS Challenge</strong>` with a
+`<div class="sandbox-badge">Sandbox</div>`; the old phrase survives only in
+`<title>`, which never reaches an accessibility tree because a WebView exposes
+rendered DOM text and not the document title. That commit is dated
+**2026-04-13**: what happened mid-campaign was the TEST deployment *catching up*
+to a four-month-old commit, not a redesign landing — which is worse, because a
+rig cannot see which build is deployed, and reading `main` would have shown this
+markup all along while the rig passed against an older deployed page. The page
+carried the old text at 22:07Z and did not at 11:41Z the next morning, and
+every android cell waiting
+for a challenge failed in between while the frictionless control passed five
+times interleaved with them. iOS was untouched, because it matches
+`threeDSCancel`, an accessibility identifier on the SDK's own cancel bar,
+rather than page text.
+
+Two lessons are baked into that constant. **Match text the page renders**, and
+**keep the old marker as well as the new one**, because deployments lag and a
+detector that knows only the current wording breaks every rig still serving the
+previous page.
+
 `acs:<outcome>` must match the sandbox ACS button's text **verbatim** — the
-outcome is chosen by which button is tapped, not by the PAN. A typo there buys a
-120-second page wait before it fails. Use `expect acs` where the cell has to see
-the page and then leave it alone.
+outcome is chosen by which button is tapped, not by the PAN. It is checked
+against the buttons the sandbox actually renders (`cells.ACS_OUTCOMES`), so a
+typo is refused at load rather than after the 120-second page wait it used to
+cost. That list is all three of the sandbox's button groups —
+`authOutcomes`, `issuerOutcomes` **and** `technicalOutcomes`, which
+`challenge.html.tmpl` renders alike, each button's visible text being the token
+— and it is a literal here because the runner has no access to the Go repo. A
+sandbox that adds a button is a one-line change; one that removes a button
+shows up as a live cell failing rather than as a false pass. Use `expect acs`
+where the cell has to see the page and then leave it alone.
 
 `wait` exists for exactly one recipe and it is not slowness. A session token's
 JWT `exp` is mint + 900 s while the session's own `expires_at` is mint + 1200 s
@@ -496,7 +597,20 @@ not when the process exits. Left on, they fail every cell that follows —
 including the interleaved control, so the run aborts as a rig fault after two
 of them.
 
-Three things guard against that.
+**`rotate` is the third of these and does not fit the same shape.** Orientation
+outlives the cell on both platforms — `user_rotation` is a global setting on
+Android and the simulator keeps its pose — but it is not an on/off pair, so the
+runner's teardown replay has nothing to put back. This is measured, not
+hypothetical: a D3 probe rotated once, and the interleaved control after it
+failed with `no element named 'payButton' within 60s` — a rig fault wearing an
+SDK finding's clothes. So `cell_rules` requires an **even number of turns**, and
+both drivers' `launch()` refuses a device that is still turned, which is what
+catches the cell that died between two of them. On Android both rotation
+settings are read, because `user_rotation` only takes effect while
+`accelerometer_rotation` is 0 and refusing on a stale value the sensor overrides
+would break a rig nothing had turned.
+
+Three things guard against the two on/off settings.
 
 `cell_rules` refuses a cell that turns either on without turning it off, and
 allows only that teardown to follow the action that reads the outcome.
@@ -513,12 +627,19 @@ was replayed, or a second one if the replay itself failed, and `result.json`
 carries `teardown_replayed`. The original failure is never displaced by it, and
 a cell that put the device back is still a cell that failed.
 
-And `AndroidDriver.launch` still refuses to start on a device that is already in
-airplane mode, quoting the command to clear it:
+And `AndroidDriver.launch` still refuses to start on a device left dirty by
+either setting, quoting the command to clear it:
 
 ```bash
 $ADB shell cmd connectivity airplane-mode disable
+$ADB shell settings put global always_finish_activities 0
 ```
+
+`always_finish_activities` is the worse of the two to inherit. Airplane mode
+fails the next cell in a way that at least looks like a network problem; this
+one makes the plugin's detach path fire on **every** cell that follows, so each
+reports `error:resultUnknown` and each reads as an SDK finding rather than as
+the one rig fault it is.
 
 That last one is the backstop rather than the plan: a replay can fail too, and
 `launch` is what catches a device left dirty by anything the replay could not
@@ -647,6 +768,39 @@ the merchant check (transaction `failed`, session still `open`).
 * `cancel_challenge` taps `threeDSCancel`, which exists from PayCross 0.1.1
   onward. `cancel_form` matches the sheet's toolbar Cancel by identifier only,
   because the challenge bar's item is *labelled* "Cancel" too.
+* **This WDA is strict about which endpoints take a session and which do not**,
+  and the two lifecycle calls sit on opposite sides of that line. Measured
+  against the running 16.2.2 on 2026-08-31, each answers `unknown command —
+  Unhandled endpoint` to the other's form:
+
+  | Endpoint | Form |
+  |---|---|
+  | `POST /wda/homescreen` | unsessioned |
+  | `GET /wda/activeAppInfo` | unsessioned |
+  | `POST /session/<id>/wda/apps/activate` | sessioned |
+
+* `background` **re-activates and never re-launches**, for the same reason the
+  session names no bundle: a launch is terminate-then-launch and would take the
+  console capture with it.
+* `_foreground_bundle` asks `activeAppInfo`, **not** `/source`'s root element.
+  The root `XCUIElementTypeApplication` carries the app's *display* name in
+  `name` — `PayCross Demo` on this build, `Paycross Flutter` in the pre-rename
+  fixture — so comparing that against the bundle id never matches. The live
+  root does carry a `bundleId` attribute of its own, but `tree.parse_wda` does
+  not read it into `Node` and the committed fixture has none;
+  `activeAppInfo` needs no new shape, no session and no full `/source` body.
+* **The unified-log window is capped at an hour** (`LOG_WINDOW_CAP_SECONDS`).
+  It is anchored to `launch()`, so it normally tracks the cell's own duration —
+  10 s to 1313 s across the D2 run — but nothing bounded the host clock jumping,
+  and one D2 cell that straddled a WSL sleep asked simctl for `--last 35354s`.
+  The harm is asking for a 9.8-hour window at all: it is slow and fragile,
+  *not* voluminous (a sleeping simulator logs almost nothing, and that cell's
+  `logs.txt` was 2.0 MB against an ordinary cell's 4.8 MB). An hour clears the
+  widest per-cell budget in the matrix (~3026 s) with room to spare, and the
+  evidence header says when a window was capped. **The console half is never
+  capped** — it is a byte offset from this launch, and `relaunch()` keeps that
+  mark on purpose so a cell that relaunches halfway keeps its own criterion-3
+  evidence.
 
 ### Moving the rig
 
@@ -669,6 +823,10 @@ in the code's ambitions.
 | WDA session | none | owns one; created with no `bundleId`, deletes whatever is open |
 | Console capture | none (logcat is pulled per window) | owns one, truncated per launch |
 | Screenshots | captured, but black (`FLAG_SECURE`) | **none at all** — the guard refuses every frame |
+| Foreground check | `dumpsys window`, one adb call | `GET /wda/activeAppInfo`, unsessioned — **not** `/source`'s root, whose `name` is the app's display name |
+| `dont_keep_activities` | the developer option, written and read back | raises: there is no activity to not keep |
+| Settle after HOME / rotate | 3 s | 2 s — a simulator settles faster than an emulator |
+| Device log window | `logcat -t <cutoff>`, computed **on the device** | `log show --last <n>s`, anchored to `launch()` and capped at an hour |
 
 The PAN read-back is the regression path for the 0.3.1 caret bug, which 0.3.2
 fixed and which the read-back proves 0.3.3 still holds against. It reports what
@@ -708,8 +866,13 @@ accepts the swap and then end-anchors, so `Pay €10,000.00` no longer satisfies
   <cell>/merchant.json              the session resource, scrubbed
   <cell>/logs.txt                   device log for the cell's window
   <cell>/result.json                label, ids, timings, problems, budget, the
-                                    frames the screenshot guard refused, and any
-                                    teardown the runner replayed for the cell
+                                    frames the screenshot guard refused, any
+                                    teardown the runner replayed for the cell,
+                                    the criterion-3 lines a cell declared and
+                                    was excused (tolerated_crash_markers /
+                                    tolerated_crash_lines), and a discovery
+                                    cell's transaction-id cross-check
+                                    (label_transaction_notes)
 ```
 
 `report.json` is what a reader downstream — the nightly, the campaign report —
@@ -782,11 +945,12 @@ trailing it means a rule ran in the wrong order.
 pytest tool/e2e/tests -q
 ```
 
-772 tests, no device needed: every driver call is faked, so this covers the
+854 tests, no device needed: every driver call is faked, so this covers the
 parsing, the redaction, the label matching and the merchant verification — the
 places where a silent mistake would be read as an SDK finding. The shipped cell
 files are validated here too. CI runs this on Linux on every PR, in its own job,
-alongside the plugin's 18 Dart tests and the example's 10 for the label contract.
+alongside the plugin's 18 Dart tests and the example's own suite — the label
+contract among them, since the demo app landed.
 
 ## Troubleshooting
 
@@ -833,12 +997,17 @@ credential is read. Add a control cell, or check the cell's `platforms:` list.
 
 ## What is not here
 
-Phases 2–4: lifecycle, Google Pay, saved cards and version floors (the release
-builds and the decline and integration-error matrix are above). Every action and
+Google Pay, saved cards and version floors (the release builds, the decline and
+integration-error matrix, and app lifecycle are above). Every action and
 expectation those dimensions own is declared in the driver protocol and raises
 `NotImplementedError`, so cell files can be written against a stable vocabulary
 before the drivers implement them — and a cell that reaches one early fails as
 the authoring mistake it is rather than as a broken device.
+
+Two of those refusals are permanent rather than pending, and each says so:
+`airplane` on iOS (the simulator shares the host's network) and
+`dont_keep_activities` on iOS (there is no activity to not keep). A cell that
+needs either is `platforms: [android]`.
 
 Known gaps, tracked for the next phase:
 

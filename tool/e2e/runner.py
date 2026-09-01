@@ -54,6 +54,7 @@ from . import evidence, tree, verify
 from .cells import (
     ARG_ACTIONS,
     BARE_ACTIONS,
+    LABEL_SENTINELS,
     TEARDOWN,
     Action,
     Card,
@@ -156,6 +157,33 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_SETUP = 2
 EXIT_ABORTED = 3
+
+#: How far the wall clock and the monotonic clock may drift apart within one
+#: cell before the runner calls it a host suspend rather than clock jitter.
+#:
+#: A minute is far above an NTP step and far below any suspend worth having.
+#: Measured 2026-08-31: WSL slept for six and a half hours with two runs in
+#: flight, and because the monotonic clock does not advance across a suspend,
+#: `timeout` never fired and neither run died -- each froze mid-cell and thawed
+#: hours later against a session minted before the sleep.
+SUSPEND_SECONDS = 60
+
+
+def host_suspended_seconds(*, wall: float, monotonic: float) -> float:
+    """How long the host was asleep during a cell, or 0.0.
+
+    The two clocks agree to within scheduling noise while the machine is
+    awake and diverge by exactly the suspend when it is not. Clamped at zero
+    in both directions: below the threshold it is jitter, and a wall clock
+    stepped BACKWARDS by NTP would otherwise report a negative suspend, which
+    helps nobody.
+
+    A pure function because the interesting cases are hours apart and no test
+    should have to spend them.
+    """
+    slept = wall - monotonic
+    return slept if slept >= SUSPEND_SECONDS else 0.0
+
 
 #: How much of the token has to appear in a dump for the runner to conclude
 #: that the example's own screen is showing. Short enough to survive a viewer
@@ -679,6 +707,8 @@ def run_cell(
     amount_text = tree.format_amount_en_us(cell.session.amount, cell.session.currency)
     budget = budget_for(cell)
     started = datetime.now(timezone.utc)
+    # Both clocks, because only their disagreement can see a host suspend.
+    started_monotonic = time.monotonic()
 
     problems: list[str] = []
     run_problems: list[str] = []
@@ -695,6 +725,18 @@ def run_cell(
     #: dirty and I cleaned it" is a different story from "it was never dirty",
     #: and the next cell's launch guard cannot tell them apart afterwards.
     teardown_replayed: list[str] = []
+    #: Criterion-3 lines this cell declared its own behaviour produces, and
+    #: which were therefore not counted as faults. Filed rather than dropped:
+    #: for the one cell that declares anything, these lines ARE the
+    #: observation it was written to make -- and an empty list on a cell that
+    #: declared a marker says the behaviour did not happen, which is a
+    #: finding of its own.
+    tolerated_crash_lines: list[str] = []
+    #: What a DISCOVERY cell's transaction-id cross-check said. Recorded
+    #: rather than asserted, because such a cell named no label to be held to
+    #: -- but an id that names nothing is worth seeing, and this is where it
+    #: becomes visible without failing a cell for a question it never asked.
+    label_transaction_notes: list[str] = []
     reached_the_end = False
     authoring = False
 
@@ -912,7 +954,21 @@ def run_cell(
                 # short never reached the state it describes, so a mismatch
                 # here is the first failure's consequence, not a finding.
                 problems += verify.verify_merchant(resource, expected.merchant)
-                problems += verify.verify_label_transaction(resource, transaction_id)
+                # Where the id goes depends on whether the cell named a
+                # label. A pinned cell asserts it. A discovery cell RECORDS
+                # it -- `<any>` is a licence to record rather than assert,
+                # and that has to cover the id as well as the label, or the
+                # cells already measured turn red on a question they were
+                # never written to answer. What it may not do is stay
+                # invisible: before `<any>` captured, the id here was always
+                # None, the check returned on its first line, and a discovery
+                # cell could report a transaction that names nothing and
+                # pass. Two of D2's did.
+                said = verify.verify_label_transaction(resource, transaction_id)
+                if expected.label in LABEL_SENTINELS:
+                    label_transaction_notes += said
+                else:
+                    problems += said
 
         try:
             # Before the next cell's launch(), which is where the iOS console
@@ -926,10 +982,50 @@ def run_cell(
             write("logs.txt", log.encode())
             # Never gated on reaching the end: a crash is not a consequence of
             # the first failure, it is very often the cause of it.
-            problems += [
-                f"crash: {line.strip()}"
-                for line in verify.crash_lines(log, driver.package)
-            ]
+            #
+            # What the cell declared it expects is excused rather than
+            # dropped: `tolerated_crash_lines` goes into result.json below, so
+            # the observation the cell was written to make is in the evidence
+            # beside the verdict. Nothing is muted, only reclassified.
+            faults, tolerated_crash_lines = verify.crash_lines(
+                log, driver.package, cell.tolerated_crash_markers
+            )
+            problems += [f"crash: {line.strip()}" for line in faults]
+            # A cell that declares a marker is a cell whose whole purpose is to
+            # provoke it, so its ABSENCE is a finding rather than a quiet
+            # success. Measured on the rig 2026-08-31 and this is why the check
+            # exists: `settings put global always_finish_activities 1` writes
+            # the setting and reads back as `1`, and on API 35 the activity
+            # manager ignores it until the next boot -- so the cell turned the
+            # developer option "on", measured an ordinary payment, and PASSED.
+            # It is the same shape as the airplane broadcast that flipped a
+            # setting while the radios stayed up, and the same answer: prove
+            # the behaviour, not the request.
+            if cell.tolerated_crash_markers and not tolerated_crash_lines:
+                problems.append(
+                    "tolerated_crash_markers: the cell declared "
+                    f"{list(cell.tolerated_crash_markers)} and none of it ever "
+                    "appeared in the log, so the behaviour the cell was written "
+                    "to observe did not happen and whatever it measured was "
+                    "something else"
+                )
+
+    # Before the verdict is assembled, because a cell that straddled a suspend
+    # has produced meaningless evidence whatever else it says: its session was
+    # minted before the sleep and expired during it. The failure it reports on
+    # its own is a misdiagnosis -- the one that cost two runs said `the sandbox
+    # ACS page never appeared within 120s`, which reads as a sandbox fault.
+    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+    suspended = host_suspended_seconds(
+        wall=elapsed, monotonic=time.monotonic() - started_monotonic
+    )
+    if suspended:
+        problems.append(
+            f"host: the machine was suspended for about {suspended / 3600:.1f}h "
+            "during this cell, so its session expired mid-flight and nothing it "
+            "measured is evidence of anything. Rerun it; do not triage the "
+            "failure above"
+        )
 
     problems = [_redacted(problem, *secrets) for problem in problems]
     result = CellResult(
@@ -961,8 +1057,14 @@ def run_cell(
                 "problems": problems,
                 "screenshots_skipped": screenshots_skipped,
                 "teardown_replayed": teardown_replayed,
+                "label_transaction_notes": label_transaction_notes,
+                "tolerated_crash_markers": list(cell.tolerated_crash_markers),
+                "tolerated_crash_lines": [
+                    _redacted(line.strip(), *secrets) for line in tolerated_crash_lines
+                ],
                 "budget_seconds": budget,
-                "seconds": (datetime.now(timezone.utc) - started).total_seconds(),
+                "host_suspended_seconds": suspended,
+                "seconds": elapsed,
             },
             indent=2,
         ).encode(),

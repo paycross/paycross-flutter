@@ -90,6 +90,14 @@ EXAMPLE_PAY = "Pay"
 #: a cell that submits into a half-cut network measures neither state.
 AIRPLANE_SETTLE_SECONDS = 8
 
+#: How long the window manager is given to settle after a HOME, a resume or
+#: a rotation. Generous: a look taken mid-animation reads the old screen.
+BACKGROUND_SETTLE_SECONDS = 3
+ROTATE_SETTLE_SECONDS = 3
+_KEYCODE_HOME = 3
+
+#: `mCurrentFocus=Window{... com.example/com.example.MainActivity}`.
+_FOCUSED = re.compile(r"([A-Za-z0-9_.]+)/[A-Za-z0-9_.$]+")
 #: How long the save-card checkbox is given to appear, and to read back as
 #: ticked. Short: it is composed with the rest of the form, so a wait here is
 #: covering a slow frame rather than a round trip.
@@ -107,6 +115,34 @@ CARD_NUMBER = "Card number input"
 EXPIRY = "Expiry date input"
 CVV = "CVV input"
 CARDHOLDER = "Cardholder name input"
+#: How the sandbox's challenge page is recognised. More than one marker, and
+#: both of them text the page RENDERS, because this detector has already been
+#: broken once by a change that was nobody's fault here.
+#:
+#: `payment-sandbox` 687bf4e ("Redesign challenge page to match payment page
+#: design system") replaced `<strong>Sandbox 3DS Challenge</strong>` with
+#: `<div class="sandbox-badge">Sandbox</div>`. The phrase survives only in
+#: `<title>`, which never reaches an accessibility tree -- a WebView exposes
+#: rendered DOM text, not the document title.
+#:
+#: What bit us was NOT that redesign landing. 687bf4e is dated 2026-04-13,
+#: four months earlier: what happened mid-campaign was the TEST DEPLOYMENT
+#: CATCHING UP to it. That is the worse failure mode, because a rig cannot see
+#: which build is deployed -- reading `main` would have shown this markup all
+#: along while the rig passed against an older deployed page. Source and
+#: behaviour disagreed for four months and nothing here could tell. The page
+#: carried the old text at 22:07Z and did not at 11:41Z the next morning, and
+#: every android cell that waits for a challenge failed in between while the
+#: frictionless control passed five times.
+#:
+#: `AUTHENTICATION OUTCOMES` is the section heading above the outcome buttons
+#: and is present in both designs. The old phrase is kept because deployments
+#: lag, and a detector that knew only the new wording would break every rig
+#: still serving the old page -- the same mistake in the mirror.
+#:
+#: A bare `Sandbox` is deliberately NOT here: it is the badge text on the new
+#: design and far too generic to be evidence of anything.
+ACS_MARKERS = ("AUTHENTICATION OUTCOMES", "Sandbox 3DS Challenge")
 #: Rendered by Google Play services, not by the SDK -- so it moves with the
 #: GMS version and with the device locale. The SDK's own testTag is invisible
 #: to uiautomator because testTagsAsResourceId is never set; that is filed as
@@ -145,7 +181,6 @@ SAVED_CARD_CVV_PROMPT = "Enter CVV for "
 #: no-op as a success.
 _MASKED_PAN = re.compile(r"\d{6}\*+\d{4}")
 
-ACS_TITLE = "Sandbox 3DS Challenge"
 CANCEL_TITLE = "Cancel Payment?"
 CANCEL_CONFIRM = "Yes, Cancel"
 
@@ -342,6 +377,47 @@ class AndroidDriver(Driver):
                 "the device is in airplane mode: a previous cell left it on. "
                 "Run: adb shell cmd connectivity airplane-mode disable"
             )
+        # The same shape, for the same reason, one setting along. This one is
+        # worse to inherit than airplane mode: the plugin's detach path fires
+        # on EVERY cell that follows, so each of them reports
+        # `error:resultUnknown` and each looks like an SDK finding rather than
+        # like the one rig fault it is.
+        if (
+            self._shell(
+                ["shell", "settings get global always_finish_activities"]
+            ).strip()
+            == "1"
+        ):
+            raise DriverError(
+                "'Don't keep activities' is on: a previous cell left it set, and "
+                "every cell after it would fail for that reason while looking "
+                "like an SDK finding. Run: adb shell settings put global "
+                "always_finish_activities 0"
+            )
+        # And the third: a cell that rotated and did not rotate back. Both
+        # settings are read, because `user_rotation` only takes effect while
+        # `accelerometer_rotation` is 0 -- with the sensor in charge the device
+        # is upright whatever `user_rotation` says, and refusing on that alone
+        # would break a rig nothing had turned. `rotate()` writes both, so this
+        # is exactly the state it leaves.
+        #
+        # Measured on the D3 probe: one un-restored rotation, and the
+        # interleaved control after it failed with "no element named
+        # 'payButton' within 60s" -- which reads as an SDK finding and is a rig
+        # fault. `cell_rules` refuses a cell with an odd number of turns; this
+        # catches the cell that died between two of them, where the teardown
+        # replay cannot help because `rotate` has no on/off pair.
+        sensor = self._shell(
+            ["shell", "settings get system accelerometer_rotation"]
+        ).strip()
+        turned = self._shell(["shell", "settings get system user_rotation"]).strip()
+        if sensor == "0" and turned not in ("0", "null", ""):
+            raise DriverError(
+                f"the device is not upright: user_rotation reads {turned!r} with "
+                "accelerometer_rotation off, so a previous cell rotated and did "
+                "not rotate back. Every cell after it looks for buttons that are "
+                "off screen. Run: adb shell settings put system user_rotation 0"
+            )
         self._shell(["shell", "am", "force-stop", PACKAGE])
         self._shell(["shell", "monkey", "-p", PACKAGE, "-c", _LAUNCHER, "1"])
         self._sleep(LAUNCH_SETTLE_SECONDS)
@@ -469,6 +545,126 @@ class AndroidDriver(Driver):
                 f"asking for {want!r}: the cut did not take, so anything this "
                 "cell measured is meaningless. The toggle said "
                 f"{said.strip()[:QUOTED_DEVICE_TEXT_CHARS]!r}"
+            )
+
+    # -- the app process and the device --------------------------------------
+
+    def _foreground_package(self) -> str:
+        """Which app the window manager says is focused, or "".
+
+        Asked of the window manager rather than inferred from a tree dump:
+        a dump of the launcher and a dump of an app mid-transition look alike
+        from up here, and this is the question both `background` halves
+        actually have.
+        """
+        said = self._shell(
+            ["shell", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"]
+        )
+        found = _FOCUSED.search(said)
+        return found.group(1) if found else ""
+
+    def _wait_foreground(
+        self, package: str, *, timeout: float = 30, interval: float = 1
+    ) -> None:
+        # Same deadline convention as `_poll`: with timeout=0 it looks once
+        # and then gives up, which is how a test reaches the failure branch
+        # without spending the wait.
+        deadline = time.monotonic() + timeout
+        while True:
+            live = time.monotonic() < deadline
+            seen = self._foreground_package()
+            if seen == package:
+                return
+            if not live:
+                raise DriverError(
+                    f"{package} is not in the foreground after {timeout}s; the "
+                    f"window manager reports {seen!r}"
+                )
+            self._sleep(interval)
+
+    def background(self, seconds: float) -> None:
+        """HOME, wait, and bring the task back the way a shopper would.
+
+        `monkey` with the LAUNCHER category, exactly as `launch()` uses --
+        but WITHOUT the force-stop that precedes it there. That is the whole
+        point: tapping the icon RESUMES the existing task with the SDK's
+        PaymentActivity still on top of it, where `am start` on MainActivity
+        would reorder the task and change what is being measured.
+
+        Both halves are verified. A HOME that did not take would background
+        nothing and the cell would report that the SDK survived something
+        that never happened.
+        """
+        self._key(_KEYCODE_HOME)
+        self._sleep(BACKGROUND_SETTLE_SECONDS)
+        if self._foreground_package() == self.package:
+            raise DriverError("the app is still in the foreground after HOME")
+        self._sleep(seconds)
+        self._shell(["shell", "monkey", "-p", self.package, "-c", _LAUNCHER, "1"])
+        self._wait_foreground(self.package)
+        self._sleep(BACKGROUND_SETTLE_SECONDS)
+
+    def rotate(self) -> None:
+        """A quarter turn, and it stays turned.
+
+        Accelerometer rotation goes off first or the emulator's own sensor
+        puts it straight back.
+
+        What this actually exercises: the SDK's PaymentActivity declares no
+        `android:configChanges` at all (sdk AndroidManifest.xml:12-15), so a
+        rotation DESTROYS AND RECREATES it. The example app does the
+        opposite -- its manifest lists orientation, screenSize and locale --
+        so MainActivity absorbs the change and the plugin's
+        onDetachedFromActivityForConfigChanges never fires. A rotation here
+        measures the SDK's recreation, not the plugin's detach path.
+
+        One consequence for cell authoring: the CVV field is a plain
+        `remember`, not `rememberSaveable` (CardFormScreen.kt:91-95, citing
+        PCI DSS 3.3.1), so rotating on the form clears it. Rotate after
+        submitting, or retype.
+        """
+        self._shell(["shell", "settings put system accelerometer_rotation 0"])
+        current = self._shell(["shell", "settings get system user_rotation"]).strip()
+        target = "0" if current == "1" else "1"
+        self._shell(["shell", f"settings put system user_rotation {target}"])
+        self._sleep(ROTATE_SETTLE_SECONDS)
+
+    def kill_activity(self) -> None:
+        """Ends the app's process, sheet and all.
+
+        `am force-stop`, not `am kill`: `am kill` only takes processes that
+        are safe to kill, and this one is foreground with the SDK's activity
+        on top, so it would do nothing at all and the cell would pass having
+        killed nothing. What this stands in for is a low-memory kill -- the
+        Dart isolate dies with the process and the pending call dies with it,
+        which is the contract D3 exists to record. The verb's name is Phase
+        0's; what it does is end the process.
+        """
+        self._shell(["shell", "am", "force-stop", self.package])
+        self._sleep(SETTLE_SECONDS)
+
+    def dont_keep_activities(self, on: bool) -> None:
+        """The developer option, from the command line.
+
+        With it on, MainActivity is destroyed the moment the SDK's
+        PaymentActivity comes to the front, so the plugin's
+        `onDetachedFromActivity` fires and finishes the pending call with
+        `paycross_result_unknown` (PayCrossPlugin.kt:82-94) while the sheet
+        is still up and the shopper can still pay.
+
+        Read back, because a setting that silently did not take would make
+        the cell measure an ordinary payment. And left on it poisons every
+        later cell, which is why `launch()` refuses to start while it is set.
+        """
+        want = "1" if on else "0"
+        self._shell(["shell", f"settings put global always_finish_activities {want}"])
+        self._sleep(SETTLE_SECONDS)
+        got = self._shell(
+            ["shell", "settings get global always_finish_activities"]
+        ).strip()
+        if got != want:
+            raise DriverError(
+                f"always_finish_activities reads {got!r} after asking for {want!r}"
             )
 
     def type_card(self, card: Card, *, verify_pan: bool = True) -> None:
@@ -635,10 +831,24 @@ class AndroidDriver(Driver):
         return label
 
     def wait_acs(self, timeout: float = 120) -> bool:
-        """Waits for the sandbox ACS page without answering it."""
-        self._find(
-            tree.find_text_exact, ACS_TITLE, "the sandbox ACS page", timeout=timeout
+        """Waits for the sandbox ACS page without answering it.
+
+        Any of `ACS_MARKERS` identifies it. See that constant for why this is
+        a list rather than the single title it used to be.
+        """
+        found = self._poll(
+            lambda nodes: next(
+                (n for n in nodes if n.text in ACS_MARKERS),
+                None,
+            ),
+            timeout,
+            2,
         )
+        if found is None:
+            raise DriverError(
+                f"the sandbox ACS page never appeared within {timeout}s; looked "
+                f"for any of {list(ACS_MARKERS)}"
+            )
         return True
 
     def select_saved_card(self, *, timeout: float = 30) -> None:

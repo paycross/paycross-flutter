@@ -404,6 +404,7 @@ def launch_outputs(
     stopping=False,
     mark=CONSOLE_MARK,
     locale="en_US@rg=lvzzzz\n",
+    orientation=None,
 ):
     """One launch's worth of remote answers, in the order launch() asks.
 
@@ -425,6 +426,8 @@ def launch_outputs(
         f"    {mark}\n12345\n",
         session or json.dumps({"value": {"sessionId": "sess-9"}}),
         alive,
+        # Asked last, because /orientation needs the session.
+        orientation or json.dumps({"value": "PORTRAIT"}),
     )
 
 
@@ -1936,16 +1939,14 @@ def test_logs_since_still_returns_a_console_that_outlived_its_capture():
 # -- D3 -----------------------------------------------------------------------
 
 
-def test_the_d3_actions_refuse():
+def test_the_two_actions_this_platform_cannot_have_still_refuse():
+    # D3 implements background, rotate and kill_activity here. These two are
+    # not "not yet": the simulator shares the host's network (R6) and iOS has
+    # no activity to not keep, so both refusals are permanent and each says
+    # which platform the cell using it belongs on.
     d = driver(FakeSsh())
 
-    refusals = (
-        lambda: d.background(5),
-        d.rotate,
-        lambda: d.airplane(True),
-        d.kill_activity,
-    )
-    for call in refusals:
+    for call in (lambda: d.airplane(True), lambda: d.dont_keep_activities(True)):
         with pytest.raises(NotImplementedError):
             call()
 
@@ -2287,26 +2288,225 @@ def test_the_google_pay_vocabulary_refuses_and_says_it_is_android_only(name, arg
     assert "Android-only" in str(excinfo.value)
 
 
-# -- the vocabulary that later dimensions fill in ------------------------------
+# -- D3: lifecycle ------------------------------------------------------------
 
 
-#: Everything `cells.py` accepts today whose driver method belongs to a later
-#: dimension, with the arguments `runner._perform` calls it with. Declared on
-#: `Driver` and raising, rather than simply absent: `run_cell` reads
-#: NotImplementedError as a cell-authoring fault and spends no control check on
-#: it, where an AttributeError reads as a device problem -- and two of those in
-#: a row abort a forty-minute matrix as a rig fault.
-NOT_LANDED_YET = [
-    ("background", (5,)),
-    ("rotate", ()),
-    ("kill_activity", ()),
-    ("dont_keep_activities", (True,)),
-]
+def active_app(bundle):
+    """What `GET /wda/activeAppInfo` answers with, envelope and all."""
+    return json.dumps({"value": {"name": "", "pid": 8580, "bundleId": bundle}})
 
 
-@pytest.mark.parametrize("name, args", NOT_LANDED_YET + [("airplane", (True,))])
-def test_a_verb_or_predicate_from_a_later_dimension_refuses(name, args):
-    d = driver(FakeSsh())
+SPRINGBOARD = active_app("com.apple.springboard")
+OUR_APP = active_app("com.paycross.flutterdemo")
 
-    with pytest.raises(NotImplementedError):
-        getattr(d, name)(*args)
+
+def test_the_foreground_bundle_is_asked_of_wda_directly():
+    # NOT read off `/source`'s root element. Measured on the rig 2026-08-31:
+    # WebDriverAgent roots the source at an XCUIElementTypeApplication whose
+    # `name` is the app's DISPLAY name ("PayCross Demo"), not its bundle id --
+    # so a comparison against the bundle would never match, `_wait_foreground`
+    # would time out on every resume, and `background` would fail every time.
+    # `activeAppInfo` answers the question this method is named for.
+    ssh = FakeSsh(OUR_APP)
+
+    assert driver(ssh)._foreground_bundle() == "com.paycross.flutterdemo"
+    assert "/wda/activeAppInfo" in ssh.joined()
+
+
+def test_the_foreground_bundle_needs_no_session():
+    # It is unsessioned on WDA's side, and `background`'s first half asks it
+    # about a moment when the app under test is not even frontmost.
+    assert unlaunched(FakeSsh(SPRINGBOARD))._foreground_bundle() == (
+        "com.apple.springboard"
+    )
+
+
+def test_an_answer_without_a_bundle_reads_as_nothing_frontmost():
+    ssh = FakeSsh(json.dumps({"value": {"pid": 1}}))
+
+    assert driver(ssh)._foreground_bundle() == ""
+
+
+def test_wait_foreground_gives_up_naming_what_it_saw():
+    ssh = FakeSsh(SPRINGBOARD)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh)._wait_foreground(timeout=0)
+
+    message = str(excinfo.value)
+    assert "com.paycross.flutterdemo is not frontmost" in message
+    assert "com.apple.springboard" in message
+
+
+def test_wait_foreground_keeps_looking_until_the_app_is_back():
+    ssh = FakeSsh(SPRINGBOARD, SPRINGBOARD, OUR_APP)
+    naps = []
+
+    driver(ssh, naps)._wait_foreground(interval=1)
+
+    assert len(ssh.calls) == 3
+    assert naps == [1, 1]
+
+
+def test_background_goes_home_waits_and_re_activates():
+    # `activate` attaches to the running process. Anything named "launch" here
+    # means terminate-then-launch for XCUIApplication, which would take the
+    # --console-pty capture with it and leave criterion 3 reading an empty log.
+    ssh = FakeSsh(
+        json.dumps({"value": None}), SPRINGBOARD, json.dumps({"value": None}), OUR_APP
+    )
+    naps = []
+
+    driver(ssh, naps).background(60)
+
+    # Unsessioned, and `apps/activate` sessioned: this WDA answers `unknown
+    # command` to either one written the other way round.
+    assert "http://127.0.0.1:8100/wda/homescreen" in ssh.calls[0]
+    assert "/session/" not in ssh.calls[0]
+    assert "/wda/activeAppInfo" in ssh.calls[1]
+    assert "/session/sess-1/wda/apps/activate" in ssh.calls[2]
+    assert payloads_for(ssh, "/wda/apps/activate") == [
+        {"bundleId": "com.paycross.flutterdemo"}
+    ]
+    assert naps == [
+        ios.BACKGROUND_SETTLE_SECONDS,
+        60,
+        ios.BACKGROUND_SETTLE_SECONDS,
+    ]
+    # Nothing that would restart the app and take the console capture with it.
+    assert "apps/launch" not in ssh.joined()
+    assert "simctl terminate" not in ssh.joined()
+
+
+def test_background_refuses_a_home_screen_that_did_not_take():
+    ssh = FakeSsh(json.dumps({"value": None}), OUR_APP)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).background(60)
+
+    assert "still frontmost after /wda/homescreen" in str(excinfo.value)
+    assert "apps/activate" not in ssh.joined()
+
+
+def test_rotate_toggles_the_orientation_it_read():
+    ssh = FakeSsh(json.dumps({"value": "PORTRAIT"}))
+    naps = []
+
+    driver(ssh, naps).rotate()
+
+    assert payloads_for(ssh, "/orientation") == [{"orientation": "LANDSCAPE"}]
+    assert naps == [ios.ROTATE_SETTLE_SECONDS]
+
+
+def test_rotate_turns_back_from_landscape():
+    ssh = FakeSsh(json.dumps({"value": "LANDSCAPE"}))
+
+    driver(ssh).rotate()
+
+    assert payloads_for(ssh, "/orientation") == [{"orientation": "PORTRAIT"}]
+
+
+def test_the_settle_waits_are_this_rigs_own():
+    # The Android values are that driver's; the two rigs settle at different
+    # speeds and copying one onto the other hides which was measured.
+    assert (ios.BACKGROUND_SETTLE_SECONDS, ios.ROTATE_SETTLE_SECONDS) == (2, 2)
+
+
+def test_kill_activity_terminates_the_app():
+    ssh = FakeSsh()
+    naps = []
+
+    driver(ssh, naps).kill_activity()
+
+    assert "xcrun simctl terminate" in ssh.calls[0]
+    assert "com.paycross.flutterdemo" in ssh.calls[0]
+    assert naps == [ios.SETTLE_SECONDS]
+
+
+def test_dont_keep_activities_refuses_and_says_why():
+    # An Android developer option. There is no activity to not keep.
+    with pytest.raises(NotImplementedError) as excinfo:
+        driver(FakeSsh()).dont_keep_activities(True)
+
+    message = str(excinfo.value)
+    assert "Android developer option" in message
+    assert "platforms: [android]" in message
+
+
+def test_the_unified_log_window_is_capped():
+    # Measured in D2: a cell whose run straddled a host sleep asked simctl for
+    # `--last 35354s` -- 9.8 hours. The window is anchored to `launch()`, so
+    # it tracks the cell's own duration and normally that is fine; what it has
+    # no bound on is the host clock jumping. The harm is asking simctl for a
+    # 9.8-hour window at all, which is slow and fragile, not the volume that
+    # comes back -- a sleeping simulator logs almost nothing.
+    ssh = FakeSsh(console_response(), "log output\n")
+    slept = datetime.now(timezone.utc) - timedelta(seconds=35354)
+
+    launched(ssh).logs_since(slept)
+
+    assert f"--last {ios.LOG_WINDOW_CAP_SECONDS}s" in ssh.calls[1]
+
+
+def test_the_cap_clears_the_longest_cell_the_matrix_can_run():
+    # It must never truncate a cell that really ran that long. The widest
+    # per-cell budget in the matrix is session_expired_server's ~3026 s.
+    assert ios.LOG_WINDOW_CAP_SECONDS > 3026
+
+
+def test_a_capped_window_says_so_in_the_evidence_header():
+    # The header names the number actually asked for, so nobody reading the
+    # log later measures the cell's duration from it.
+    ssh = FakeSsh(console_response(), "log output\n")
+    slept = datetime.now(timezone.utc) - timedelta(seconds=35354)
+
+    text = launched(ssh).logs_since(slept)
+
+    assert f"--last {ios.LOG_WINDOW_CAP_SECONDS}s" in text
+    assert "capped" in text
+
+
+def test_an_ordinary_cell_is_not_capped_and_says_nothing_about_it():
+    ssh = FakeSsh(console_response(), "log output\n")
+    when = datetime.now(timezone.utc) - timedelta(seconds=90)
+
+    text = launched(ssh).logs_since(when)
+
+    assert "--last 95s" in text
+    assert "capped" not in text
+
+
+def test_the_console_half_is_never_capped():
+    # The cap is on the unified log alone. The console window is a byte offset
+    # from this launch, and `relaunch()` deliberately keeps that mark so a cell
+    # that relaunches halfway keeps its own criterion-3 evidence. Bounding the
+    # unified window must not undo that.
+    ssh = FakeSsh(console_response(), "log output\n")
+    slept = datetime.now(timezone.utc) - timedelta(seconds=35354)
+
+    launched(ssh).logs_since(slept)
+
+    assert f"tail -c +{CONSOLE_MARK + 1}" in ssh.calls[0]
+
+
+def test_launch_refuses_a_simulator_a_previous_cell_left_turned():
+    # Measured on the D3 probe: a cell rotated once and did not rotate back,
+    # and the interleaved control after it failed with "no element named
+    # 'payButton' within 60s" -- a rig fault wearing an SDK finding's clothes.
+    ssh = FakeSsh(*launch_outputs(orientation=json.dumps({"value": "LANDSCAPE"})))
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+
+    with pytest.raises(DriverError) as excinfo:
+        d.launch()
+
+    message = str(excinfo.value)
+    assert "not upright" in message
+    assert "LANDSCAPE" in message
+
+
+def test_launch_is_happy_with_an_upright_simulator():
+    ssh = FakeSsh(*launch_outputs())
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    assert "/orientation" in ssh.joined()

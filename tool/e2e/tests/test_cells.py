@@ -208,6 +208,11 @@ def test_accepts_valid_action_arguments(tmp_path, action):
         "acs:Authentication_Failed",
         "acs:auth-failed",
         "acs:123",
+        # Shape-legal and completely wrong: the sandbox has no such
+        # button, so this costs the 120 s ACS page wait and then fails
+        # looking for text nothing renders.
+        "acs:card_expird",
+        "acs:decline",
         "airplane maybe",
         "background 0",
         "background -1",
@@ -786,3 +791,73 @@ def test_a_duplicate_platform_is_refused(tmp_path):
     body = CONTROL.replace("platforms: [android, ios]", "platforms: [android, android]")
 
     assert "duplicate platform" in expect_rejected(tmp_path, body)
+
+
+# --- C1b: the ACS outcome allow-list ---------------------------------------
+
+
+def test_every_acs_outcome_the_sandbox_renders_is_accepted(tmp_path):
+    # The list is the sandbox's, and every token in it is a real button.
+    for outcome in sorted(cells.ACS_OUTCOMES):
+        cell = cells.load_cell(
+            write(tmp_path, "control.yaml", with_action(CONTROL, f"acs:{outcome}"))
+        )
+        assert ("acs", outcome) in [(a.verb, a.arg) for a in cell.actions]
+
+
+def test_a_misspelled_acs_outcome_names_what_it_could_have_been(tmp_path):
+    # The whole point of the list: a typo is caught at authoring time rather
+    # than after a live cell has spent two minutes waiting for a button that
+    # does not exist.
+    message = expect_rejected(tmp_path, with_action(CONTROL, "acs:card_expird"))
+
+    assert "card_expired" in message
+
+
+def test_the_acs_allow_list_holds_all_three_of_the_sandboxs_button_groups():
+    # render.go builds authOutcomes, issuerOutcomes AND technicalOutcomes, and
+    # challenge.html.tmpl:142-153 renders each group as buttons whose visible
+    # text is the token. A list covering only two groups would refuse a legal
+    # cell.
+    assert {"approve", "authentication_rejected"} <= cells.ACS_OUTCOMES
+    assert {"do_not_honor", "card_expired", "invalid_cvv"} <= cells.ACS_OUTCOMES
+    assert {"timeout", "issuer_unavailable", "unknown_error"} <= cells.ACS_OUTCOMES
+
+
+# --- C6: tolerated crash markers -------------------------------------------
+
+
+def test_a_cell_declares_no_tolerated_markers_by_default(tmp_path):
+    cell = cells.load_cell(write(tmp_path, "control.yaml", CONTROL))
+
+    assert cell.tolerated_crash_markers == ()
+
+
+def test_a_cell_may_declare_the_one_marker_its_own_setting_produces(tmp_path):
+    body = CONTROL + 'tolerated_crash_markers:\n  - "Force finishing activity"\n'
+
+    cell = cells.load_cell(write(tmp_path, "control.yaml", body))
+
+    assert cell.tolerated_crash_markers == ("Force finishing activity",)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    ["FATAL EXCEPTION", "ANR in", "Unhandled Exception:", "Fatal error:"],
+)
+def test_no_cell_may_declare_a_marker_that_would_mute_a_crash(tmp_path, marker):
+    # The closed set is the whole point: a cell that could excuse one of these
+    # could pass through a crash, which is the one thing criterion 3 exists to
+    # stop.
+    body = CONTROL + f'tolerated_crash_markers:\n  - "{marker}"\n'
+
+    message = expect_rejected(tmp_path, body)
+
+    assert "not tolerable" in message
+    assert marker in message
+
+
+def test_tolerated_crash_markers_must_be_a_list(tmp_path):
+    body = CONTROL + 'tolerated_crash_markers: "Force finishing activity"\n'
+
+    assert "must be a list" in expect_rejected(tmp_path, body)

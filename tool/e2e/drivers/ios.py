@@ -130,12 +130,42 @@ SCROLL_SETTLE_SECONDS = 1.0
 ALERT_SETTLE_SECONDS = 1
 POLL_INTERVAL_SECONDS = 1
 
+#: How long the window server is given after a home-screen press, a
+#: re-activation or a rotation. This rig's own numbers: the Android driver's
+#: are three seconds, and a simulator settles faster than an emulator. Copying
+#: one onto the other would hide which of them was measured.
+BACKGROUND_SETTLE_SECONDS = 2
+ROTATE_SETTLE_SECONDS = 2
+
 #: How long the pasted field is given to show that it took anything at all.
 TOKEN_READBACK_SECONDS = 10
 
 #: How long the example's own screen and then the sheet are each given to come
 #: up. Named rather than inline because the tests reach past them.
 SCREEN_TIMEOUT_SECONDS = 60
+
+#: The widest `log show --last <n>s` window this driver will ask for.
+#:
+#: The window is anchored to `launch()`, so it normally tracks the cell's own
+#: duration -- measured across a D2 run it ranged from 10 s to 1313 s. What it
+#: has no bound on is the HOST CLOCK JUMPING: one D2 cell straddled a WSL
+#: sleep and asked simctl for `--last 35354s`, 9.8 hours.
+#:
+#: The harm is asking for the window at all, not what comes back. A sleeping
+#: simulator logs almost nothing -- that cell's `logs.txt` came to 2.0 MB,
+#: SMALLER than an ordinary cell's 4.8 MB -- so the earlier "hours of log in
+#: one file" reading was measured and is false. What is true is that a
+#: 9.8-hour `log show` is slow and fragile to ask of simctl however little it
+#: returns.
+#:
+#: An hour, because it has to clear the longest cell the matrix can legitimately
+#: run and stop well short of a clock jump: the widest per-cell budget is
+#: `session_expired_server`'s ~3026 s, so an hour is above every real cell with
+#: room to spare. Capping bounds the unified log ONLY. The console half is a
+#: byte offset from this launch and is never capped, because `relaunch()`
+#: deliberately keeps that mark so a cell that relaunches halfway keeps its own
+#: criterion-3 evidence.
+LOG_WINDOW_CAP_SECONDS = 3600
 
 #: How long the previous cell's console capture is given to die, polled on the
 #: Mac so it costs one round trip rather than one per look.
@@ -572,6 +602,21 @@ class IosDriver(Driver):
         # A new session can mean a new window; the cached size is not carried.
         self._window = None
         self._check_console()
+        # Last, because /orientation needs the session. A cell that rotated and
+        # did not rotate back leaves the simulator turned, and every cell after
+        # it looks for buttons that are off screen -- measured on the D3 probe,
+        # where the interleaved control failed with "no element named
+        # 'payButton' within 60s", which reads as an SDK finding and is a rig
+        # fault. `cell_rules` refuses a cell with an odd number of turns; this
+        # catches the cell that died between two of them, where the runner's
+        # teardown replay cannot help because `rotate` has no on/off pair.
+        pose = self._wda("GET", self._session("/orientation")).get("value")
+        if pose not in (None, "PORTRAIT"):
+            raise DriverError(
+                f"the simulator is not upright: WebDriverAgent reports {pose!r}, "
+                "so a previous cell rotated and did not rotate back. Every cell "
+                "after it looks for buttons that are off screen"
+            )
 
     def relaunch(self) -> None:
         self.launch(truncate_console=False)
@@ -1016,6 +1061,115 @@ class IosDriver(Driver):
             "host's network, and cutting that needs sudo or the GUI"
         )
 
+    # -- the app process and the device --------------------------------------
+
+    def _foreground_bundle(self) -> str:
+        """The bundle id of whatever is frontmost, or "".
+
+        Asked of `GET /wda/activeAppInfo`, which answers with the bundle id
+        directly. NOT read off `/source`'s root element, which is where an
+        earlier design put it: measured on this rig 2026-08-31, WebDriverAgent
+        roots the source at an XCUIElementTypeApplication whose `name` is the
+        app's DISPLAY name -- `PayCross Demo`, and `Paycross Flutter` before
+        the rename, both of which are in the committed fixture. Comparing that
+        against `self._bundle` would never match, `_wait_foreground` would
+        time out on every resume, and `background` would fail every cell that
+        used it while looking like an SDK finding.
+
+        Unsessioned, which matters: `background`'s first half asks this about
+        a moment when the app under test is deliberately not frontmost. One
+        small JSON answer rather than a whole `/source` body, which on the
+        sheet is large.
+        """
+        value = self._wda("GET", "/wda/activeAppInfo").get("value") or {}
+        return str(value.get("bundleId") or "") if isinstance(value, dict) else ""
+
+    def _wait_foreground(
+        self, *, timeout: float = 30, interval: float = POLL_INTERVAL_SECONDS
+    ) -> None:
+        # Same deadline convention as `_poll`: with timeout=0 it looks once
+        # and then gives up, which is how a test reaches the failure branch
+        # without spending the wait.
+        deadline = time.monotonic() + timeout
+        while True:
+            live = time.monotonic() < deadline
+            seen = self._foreground_bundle()
+            if seen == self._bundle:
+                return
+            if not live:
+                raise DriverError(
+                    f"{self._bundle} is not frontmost after {timeout}s; "
+                    f"WebDriverAgent reports {seen!r}"
+                )
+            self._sleep(interval)
+
+    def background(self, seconds: float) -> None:
+        """Home screen, wait, then re-activate -- never re-launch.
+
+        `activate` attaches to the running process. Anything named "launch"
+        here means terminate-then-launch for XCUIApplication, which would
+        take the --console-pty capture with it and leave criterion 3 reading
+        an empty log -- the same trap `launch()`'s bundle-less session
+        capabilities exist to avoid.
+
+        Both halves are verified, for the reason the Android side has: a home
+        press that did not take would background nothing, and the cell would
+        report that the SDK survived something that never happened.
+
+        The two endpoints have different shapes and this WDA is strict about
+        it, so they are written out rather than made uniform: `/wda/homescreen`
+        is UNSESSIONED and `/wda/apps/activate` is SESSIONED. Measured against
+        the running 16.2.2 on 2026-08-31 -- each answers `unknown command -
+        Unhandled endpoint` to the other's form, and the sessioned homescreen
+        is what failed the first probe run.
+        """
+        self._wda("POST", "/wda/homescreen", {})
+        self._sleep(BACKGROUND_SETTLE_SECONDS)
+        if self._foreground_bundle() == self._bundle:
+            raise DriverError("the app is still frontmost after /wda/homescreen")
+        self._sleep(seconds)
+        self._wda(
+            "POST", self._session("/wda/apps/activate"), {"bundleId": self._bundle}
+        )
+        self._wait_foreground()
+        self._sleep(BACKGROUND_SETTLE_SECONDS)
+
+    def rotate(self) -> None:
+        """A quarter turn through WebDriverAgent.
+
+        Nothing in the SDK locks an orientation and nothing resets on a
+        rotation: the sheet's state lives in a PaymentSheetModel held by the
+        awaiting frame, and `load()` runs from a `.task` that re-fires only
+        on a view-identity change. A challenge survives too -- it is a child
+        view controller pinned with a flexible autoresizing mask, not a
+        separate presentation. So on iOS this cell asserts that nothing
+        happens, which is a real assertion.
+        """
+        current = self._wda("GET", self._session("/orientation")).get("value")
+        target = "PORTRAIT" if current == "LANDSCAPE" else "LANDSCAPE"
+        self._wda("POST", self._session("/orientation"), {"orientation": target})
+        self._sleep(ROTATE_SETTLE_SECONDS)
+
+    def kill_activity(self) -> None:
+        """Ends the app's process, sheet and all.
+
+        `simctl terminate` rather than anything through WebDriverAgent: this
+        stands in for a low-memory kill, and what the cell measures is that
+        the pending Dart call dies with the isolate.
+        """
+        self._remote(
+            f"xcrun simctl terminate {self._quoted_udid} {self._bundle} "
+            "2>/dev/null || true"
+        )
+        self._sleep(SETTLE_SECONDS)
+
+    def dont_keep_activities(self, on: bool) -> None:
+        raise NotImplementedError(
+            "'Don't keep activities' is an Android developer option and iOS has "
+            "no equivalent: there is no activity to not keep. A cell using it "
+            "must be platforms: [android]."
+        )
+
     # D4's whole vocabulary, refused here rather than left to `Driver`'s
     # declaration for the same reason `airplane` is: the refusal names this
     # platform's own reason. There is no wallet in the iOS SDK at all, and
@@ -1458,7 +1612,8 @@ class IosDriver(Driver):
                 "no console mark; call launch() first, or the window would "
                 "start at a previous cell's output"
             )
-        seconds = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
+        elapsed = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
+        seconds = min(elapsed, LOG_WINDOW_CAP_SECONDS)
         # Complaints are kept rather than discarded: a `tail` that found no file
         # and a `log show` that refused both read as a quiet run otherwise. The
         # size is therefore asked for separately -- "No such file or directory"
@@ -1494,9 +1649,14 @@ class IosDriver(Driver):
             f"xcrun simctl spawn {self._quoted_udid} log show --last {seconds}s "
             "--info --debug --predicate 'process == \"Runner\"' 2>&1"
         )
+        # The header names the number actually asked for, and says when that
+        # is not the cell's own elapsed time -- otherwise whoever reads the
+        # log later measures the cell's duration from a capped window.
+        capped = f" (capped from {elapsed}s)" if seconds < elapsed else ""
         return (
             f"--- app console (simctl launch --console-pty), since this launch ---\n"
             f"{console}\n"
-            f'--- log show --last {seconds}s, predicate process == "Runner" ---\n'
+            f"--- log show --last {seconds}s{capped}, "
+            f'predicate process == "Runner" ---\n'
             f"{unified}"
         )

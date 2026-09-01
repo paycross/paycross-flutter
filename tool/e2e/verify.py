@@ -16,6 +16,7 @@ about, so a report can be scanned down its first column.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Any
 
 #: `<txn>` only ever appears last in a label, so `.*` cannot swallow a later
@@ -23,7 +24,13 @@ from typing import Any
 #: carrying two of them; imported here, and still readable as
 #: `verify.TXN_PLACEHOLDER`, because this is where the label rules live.
 #: Importing the other way round would be a cycle.
-from .cells import ANY_LABEL, LABEL_RE, NO_LABEL, TXN_PLACEHOLDER
+from .cells import (
+    ANY_LABEL,
+    LABEL_RE,
+    NO_LABEL,
+    TOLERABLE_CRASH_MARKERS,
+    TXN_PLACEHOLDER,
+)
 
 #: Faults whose own log line names the component it is about, and which are
 #: therefore matched only when that component is the app under test. `ANR in
@@ -89,12 +96,29 @@ def match_label(template: str, actual: str | None) -> tuple[bool, str | None]:
     """Compares a label against a cell's expectation.
 
     Three shapes. `<none>` passes only when nothing was rendered. `<any>`
-    passes on any well-formed contract label and captures nothing -- it is a
-    discovery cell's expectation, and the label it measured is recorded in
-    result.json rather than compared. Anything else is a literal, in which
-    `<txn>` is a capture: a transaction id is minted by the server, so a cell
-    can never name one, and `verify_label_transaction` cross-checks the
-    captured value against the merchant API instead.
+    passes on any well-formed contract label -- it is a discovery cell's
+    expectation, and the label it measured is recorded in result.json rather
+    than compared. Anything else is a literal, in which `<txn>` is a capture:
+    a transaction id is minted by the server, so a cell can never name one,
+    and `verify_label_transaction` cross-checks the captured value against
+    the merchant API instead.
+
+    `<any>` captures too, and did not used to. Because it captured nothing,
+    the id reaching `verify_label_transaction` was always None and that check
+    returned on its first line -- so every discovery cell in the matrix could
+    report a transaction id naming nothing and still pass. Not hypothetical:
+    D2's `session_expired_server_submit` measured
+    `result:failure:restart:3a9c6d3b-...` on Android and `...:71dfcbf5-...`
+    on iOS against sessions whose merchant record held `"transactions": []`,
+    and both cells passed. It took reading merchant.json by hand to notice.
+
+    What the caller does with the captured id is where the two part company:
+    for a literal the mismatch is a problem, and for `<any>` the runner
+    RECORDS it instead, so a discovery cell still discovers but can no longer
+    hide a phantom id. The corollary is worth stating, because Phase 3 walks
+    into it: a cell whose id does not check out cannot later be pinned to
+    `result:...:<txn>`, because the pin would fail the very check `<any>` was
+    skipping.
 
     `LABEL_RE` is imported rather than restated -- unlike `MERCHANT_CHECKS`,
     which is deliberately kept equal to `cells.MERCHANT_KEYS` by a test. Two
@@ -106,7 +130,8 @@ def match_label(template: str, actual: str | None) -> tuple[bool, str | None]:
     if actual is None:
         return False, None
     if template == ANY_LABEL:
-        return bool(LABEL_RE.fullmatch(actual)), None
+        found = LABEL_RE.fullmatch(actual)
+        return bool(found), found.group("txn") if found else None
     if TXN_PLACEHOLDER not in template:
         return template == actual, None
     head, _, tail = template.partition(TXN_PLACEHOLDER)
@@ -286,17 +311,46 @@ def _fatal_is_ours(lines: list[str], index: int, package: str) -> bool:
     return True
 
 
-def crash_lines(log: str, package: str) -> list[str]:
-    """Pass criterion 3, over logcat or the simulator's unified log."""
+def crash_lines(
+    log: str, package: str, tolerated: Iterable[str] = ()
+) -> tuple[list[str], list[str]]:
+    """Pass criterion 3, and what a cell asked to be excused from it.
+
+    Two lists rather than one: what a cell tolerated is not a fault, but it
+    is not nothing either -- it is the observation the cell was written to
+    make, and it belongs in the evidence beside the verdict rather than
+    being dropped on the floor.
+
+    Only the closed allow-list is honoured, whatever this is handed. A cell
+    file cannot carry anything else -- `load_cell` refuses it -- but this is
+    called from a runner rather than only from a validated cell, and a
+    function that could be talked into muting a `FATAL EXCEPTION` would
+    defeat the one thing criterion 3 exists to stop. Anything outside the
+    list is silently not honoured rather than raising: the direction that
+    fails safe here is "the fault is still reported", and the load-time guard
+    is what catches the typo that got it here.
+
+    Excusing is reachable only from the scoped-fault branch, which is where
+    `Force finishing activity` lives. A `FATAL EXCEPTION`, an ANR or a Dart
+    or Swift fault is a fault on a structural level, not on the strength of
+    the allow-list alone.
+    """
+    allowed = set(tolerated) & TOLERABLE_CRASH_MARKERS
     lines = log.splitlines()
-    faults = []
+    faults: list[str] = []
+    excused: list[str] = []
     for index, line in enumerate(lines):
         if _FATAL in line:
             if _fatal_is_ours(lines, index, package):
                 faults.append(line)
         elif any(marker in line for marker in _SCOPED_FAULTS):
+            # The package filter decides first: a line naming another app was
+            # never this cell's fault, so it is not this cell's excuse either.
             if package in line:
-                faults.append(line)
+                if any(marker in line for marker in allowed):
+                    excused.append(line)
+                else:
+                    faults.append(line)
         elif any(marker in line for marker in _FAULTS):
             faults.append(line)
-    return faults
+    return faults, excused

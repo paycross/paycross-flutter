@@ -84,9 +84,64 @@ EXPECTATIONS = frozenset(
 _LITERAL_TOKEN = re.compile(r"[A-Za-z0-9._~-]{1,200}")
 
 
+#: Every button the sandbox's challenge page renders, which is what
+#: `acs:<outcome>` taps. Three groups, not two: `internal/challenge/render.go`
+#: builds `authOutcomes`, `issuerOutcomes` AND `technicalOutcomes`, and
+#: `assets/challenge.html.tmpl:142-153` renders each of them as
+#: `<button data-outcome="{{.}}">{{.}}</button>` -- so the visible text a
+#: driver taps is the token verbatim, and every token here is reachable.
+#: Values from `internal/sandboxcore/outcome.go` on payment-sandbox
+#: `origin/main` (read 2026-08-31; the local working tree runs behind).
+#:
+#: A membership check rather than the shape check this used to be. `[a-z_]+`
+#: accepts `card_expird`, which authors cleanly, reaches a device, and then
+#: spends the full 120-second ACS page wait before failing on text that
+#: nothing renders -- a live cell burned on a typo. Membership costs nothing
+#: and answers at load time.
+#:
+#: Kept as a literal rather than fetched: the runner has no access to the Go
+#: repo, and a list that could not be read would fail closed on a legal cell.
+#: A sandbox that adds a button is a one-line change here, and one that
+#: REMOVES one shows up as a live cell failing rather than as a false pass.
+ACS_OUTCOMES = frozenset(
+    {
+        # authOutcomes
+        "approve",
+        "authentication_failed",
+        "authentication_rejected",
+        "authentication_abandoned",
+        "authentication_timeout",
+        "authentication_required",
+        # issuerOutcomes
+        "do_not_honor",
+        "insufficient_funds",
+        "card_expired",
+        "invalid_card_number",
+        "invalid_cvv",
+        "card_lost_stolen",
+        "card_restricted",
+        "fraud_suspected",
+        "transaction_not_allowed",
+        "account_closed",
+        "limit_exceeded",
+        "duplicate_transaction",
+        "customer_abandoned",
+        # technicalOutcomes
+        "gateway_error",
+        "issuer_unavailable",
+        "timeout",
+        "invalid_request",
+        "session_expired",
+        "merchant_configuration",
+        "method_not_supported",
+        "unknown_error",
+    }
+)
+
+
 def _is_acs_outcome(arg: str) -> bool:
-    """The sandbox ACS buttons are all lower-case snake tokens."""
-    return bool(re.fullmatch(r"[a-z_]+", arg))
+    """One of the buttons the sandbox's challenge page actually renders."""
+    return arg in ACS_OUTCOMES
 
 
 def _is_positive_seconds(arg: str) -> bool:
@@ -116,7 +171,10 @@ def _is_literal_token(arg: str) -> bool:
 #: `verb in ARG_ACTIONS` still reads as membership.
 ARG_ACTIONS = MappingProxyType(
     {
-        "acs": (_is_acs_outcome, "a lower-case ACS outcome token"),
+        # The whole list, not a description of it: this message is read by
+        # whoever mistyped an outcome, and the answer they need is which
+        # token to write instead.
+        "acs": (_is_acs_outcome, f"one of {sorted(ACS_OUTCOMES)}"),
         "airplane": (_is_on_off, "'on' or 'off'"),
         "background": (_is_positive_seconds, "a positive number of seconds"),
         "dont_keep_activities": (_is_on_off, "'on' or 'off'"),
@@ -152,6 +210,14 @@ ARG_ACTIONS = MappingProxyType(
 #: runner cannot import from the test tree, and because which settings outlive
 #: a cell is a fact about the grammar rather than about how cells are written.
 TEARDOWN = frozenset({("airplane", "off"), ("dont_keep_activities", "off")})
+
+#: Log markers a cell may declare it expects. Deliberately a closed set of
+#: one: `Force finishing activity` is a fault everywhere except in the cell
+#: that turns on the developer option whose entire effect is to produce it.
+#: `FATAL EXCEPTION`, `ANR in` and the Dart and Swift markers are not here
+#: and must never be -- a cell that could mute those could pass through a
+#: crash, which is the one thing criterion 3 exists to stop.
+TOLERABLE_CRASH_MARKERS = frozenset({"Force finishing activity"})
 
 
 def _is_non_empty_str(value: Any) -> bool:
@@ -217,13 +283,24 @@ _CURRENCY = re.compile(r"^[A-Z]{3}$")
 #: whole and never split on ':' -- an `unrecognized(<raw>)` token may itself
 #: contain colons. An empty `<txn>` is allowed; the app emits one when the
 #: session never reached a transaction.
+#:
+#: The two shapes that carry a transaction id share one trailing `:<txn>`,
+#: factored out here so it can be a named capture. `verify.match_label` reads
+#: it for a `<any>` cell, which names no id of its own and so has nothing else
+#: to cross-check against the merchant API. `result:cancelled` and `error:...`
+#: carry no id and the group is None for them, which is the honest answer:
+#: there was never one to read, as distinct from an empty one the app emitted
+#: because the session reached no transaction.
 LABEL_RE = re.compile(
-    r"^(result:success:[^\s]*"
+    r"^(?:"
+    r"(?:result:success"
     r"|result:failure:"
-    r"(retry|change_method|restart|do_not_retry|contact_support|unrecognized\(.*\))"
-    r":[^\s]*"
+    r"(?:retry|change_method|restart|do_not_retry|contact_support"
+    r"|unrecognized\(.*\))"
+    r"):(?P<txn>[^\s]*)"
     r"|result:cancelled"
-    r"|error:[A-Za-z]+)$"
+    r"|error:[A-Za-z]+"
+    r")$"
 )
 
 #: Expectations that are not a literal label.
@@ -299,6 +376,11 @@ class Cell:
     #: platform. Call `expected_for(platform)` instead.
     expected: Expected
     overrides: dict[str, dict[str, Any]]
+    #: Criterion-3 markers this cell has declared its own behaviour produces.
+    #: Validated against `TOLERABLE_CRASH_MARKERS` at load, so this can only
+    #: ever hold what that closed set allows. Defaulted, because exactly one
+    #: cell in the whole matrix declares anything.
+    tolerated_crash_markers: tuple[str, ...] = ()
 
     def expected_for(self, platform: str) -> Expected:
         """The base expectation with this platform's overrides merged in.
@@ -605,6 +687,20 @@ def load_cell(path: Path) -> Cell:
 
     expected = _expected(_require(raw, "expected", where), where)
 
+    # Refused here rather than reported by `verify`: a cell asking to be
+    # excused something it must never be excused is a cell that would pass a
+    # crash through, and the cheap moment to say so is before a device is
+    # touched.
+    tolerated = raw.get("tolerated_crash_markers") or []
+    if not isinstance(tolerated, list):
+        raise CellError(f"{where}: tolerated_crash_markers must be a list")
+    unknown = sorted(set(map(str, tolerated)) - TOLERABLE_CRASH_MARKERS)
+    if unknown:
+        raise CellError(
+            f"{where}: tolerated_crash_markers {unknown} is not tolerable; only "
+            f"{sorted(TOLERABLE_CRASH_MARKERS)} may be declared"
+        )
+
     overrides = {}
     for platform in PLATFORMS:
         override = raw.get(f"expected.{platform}")
@@ -632,6 +728,7 @@ def load_cell(path: Path) -> Cell:
         actions=tuple(parse_action(a, where) for a in raw_actions),
         expected=expected,
         overrides=overrides,
+        tolerated_crash_markers=tuple(map(str, tolerated)),
     )
     # After construction rather than inline above: these rules read
     # `expected_for(platform)`, which needs the whole cell.

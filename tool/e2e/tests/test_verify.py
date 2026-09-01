@@ -226,10 +226,11 @@ def test_crash_lines_finds_only_real_faults():
         "com.paycross.flutterdemo\n"
     )
 
-    found = verify.crash_lines(logcat, "com.paycross.flutterdemo")
+    found, excused = verify.crash_lines(logcat, "com.paycross.flutterdemo")
 
     assert len(found) == 2
-    assert verify.crash_lines("all quiet\n", "com.paycross.x") == []
+    assert excused == []
+    assert verify.crash_lines("all quiet\n", "com.paycross.x") == ([], [])
 
 
 @pytest.mark.parametrize(
@@ -245,7 +246,10 @@ def test_crash_lines_finds_only_real_faults():
 def test_every_unscoped_fault_marker_fires(line):
     # The package is deliberately absent from each line: these markers carry no
     # component of their own, so a marker is a fault on its own.
-    assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == [line]
+    assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == (
+        [line],
+        [],
+    )
 
 
 @pytest.mark.parametrize(
@@ -257,7 +261,10 @@ def test_every_unscoped_fault_marker_fires(line):
     ],
 )
 def test_every_scoped_fault_marker_fires_for_this_app(line):
-    assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == [line]
+    assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == (
+        [line],
+        [],
+    )
 
 
 def test_an_anr_in_another_package_is_not_this_apps_crash():
@@ -265,7 +272,7 @@ def test_an_anr_in_another_package_is_not_this_apps_crash():
     # its own housekeeping often enough that the difference matters.
     log = "08-28 12:00:03.000 E ActivityManager: ANR in com.other.app\n"
 
-    assert verify.crash_lines(log, "com.paycross.flutterdemo") == []
+    assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [])
 
 
 def test_a_force_finish_of_another_app_is_not_this_apps_crash():
@@ -277,7 +284,7 @@ def test_a_force_finish_of_another_app_is_not_this_apps_crash():
         "com.android.settings/.Settings\n"
     )
 
-    assert verify.crash_lines(log, "com.paycross.flutterdemo") == []
+    assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [])
 
 
 def test_a_fatal_exception_in_another_process_is_not_ours():
@@ -288,7 +295,7 @@ def test_a_fatal_exception_in_another_process_is_not_ours():
         "08-28 12:00:02.000 E AndroidRuntime: java.lang.NullPointerException\n"
     )
 
-    assert verify.crash_lines(log, "com.paycross.flutterdemo") == []
+    assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [])
 
 
 def test_a_fatal_exception_in_our_process_is_ours():
@@ -297,10 +304,11 @@ def test_a_fatal_exception_in_our_process_is_ours():
         "08-28 12:00:02.000 E AndroidRuntime: Process: com.paycross.x, PID: 9\n"
     )
 
-    found = verify.crash_lines(log, "com.paycross.x")
+    found, excused = verify.crash_lines(log, "com.paycross.x")
 
     assert len(found) == 1
     assert "FATAL EXCEPTION" in found[0]
+    assert excused == []
 
 
 def test_a_fatal_exception_with_no_process_line_is_kept():
@@ -308,7 +316,7 @@ def test_a_fatal_exception_with_no_process_line_is_kept():
     # A missed crash is the expensive direction to be wrong in.
     log = "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
 
-    assert verify.crash_lines(log, "com.paycross.x") == [log.strip()]
+    assert verify.crash_lines(log, "com.paycross.x") == ([log.strip()], [])
 
 
 # --- Plan B: no_succeeded_txn: false is an assertion ----------------------
@@ -467,23 +475,52 @@ def test_a_real_scrub_leaves_the_saved_card_assertions_something_to_read():
 
 
 @pytest.mark.parametrize(
-    "template, actual, ok",
+    "template, actual, ok, captured",
     [
-        ("<none>", None, True),
-        ("<none>", "result:cancelled", False),
-        ("<any>", "result:cancelled", True),
-        ("<any>", "result:failure:retry:txn-1", True),
-        ("<any>", "not a label", False),
-        ("<any>", None, False),
+        ("<none>", None, True, None),
+        ("<none>", "result:cancelled", False, None),
+        ("<any>", "result:cancelled", True, None),
+        ("<any>", "result:failure:retry:txn-1", True, "txn-1"),
+        ("<any>", "result:success:txn-9", True, "txn-9"),
+        # The app emits an empty one when the session never reached a
+        # transaction, and that is not the same as there being none to read.
+        ("<any>", "result:success:", True, ""),
+        ("<any>", "error:resultUnknown", True, None),
+        ("<any>", "not a label", False, None),
+        ("<any>", None, False, None),
     ],
 )
-def test_a_sentinel_decides_whether_a_label_had_to_appear(template, actual, ok):
-    matched, captured = verify.match_label(template, actual)
+def test_a_sentinel_decides_whether_a_label_had_to_appear(
+    template, actual, ok, captured
+):
+    assert verify.match_label(template, actual) == (ok, captured)
 
-    assert matched is ok
-    # Neither sentinel captures: `<any>` records the label it measured in
-    # result.json rather than cross-checking an id it never named.
-    assert captured is None
+
+def test_a_discovery_cell_captures_the_id_it_reports():
+    # `<any>` used to capture nothing, so the id reaching
+    # verify_label_transaction was always None and the check returned on its
+    # first line. Every discovery cell in the matrix could therefore report a
+    # transaction id that names nothing and still pass -- which happened:
+    # D2's session_expired_server_submit measured
+    # `result:failure:restart:3a9c6d3b-...` against a session whose merchant
+    # record held `"transactions": []`, and it took reading merchant.json by
+    # hand to notice.
+    _, captured = verify.match_label(
+        "<any>", "result:failure:restart:3a9c6d3b-0000-0000-0000-000000000000"
+    )
+
+    assert captured == "3a9c6d3b-0000-0000-0000-000000000000"
+    assert verify.verify_label_transaction(session(txns=[]), captured) != []
+
+
+def test_an_unrecognized_recovery_may_hold_colons_and_the_id_still_comes_out():
+    # `unrecognized(<raw>)` wraps whatever the app could not parse, so the id
+    # cannot be found by splitting on ':'.
+    _, captured = verify.match_label(
+        "<any>", "result:failure:unrecognized(weird:thing):txn-1"
+    )
+
+    assert captured == "txn-1"
 
 
 def test_a_stored_credentials_of_the_wrong_shape_is_a_problem_not_a_crash():
@@ -495,3 +532,78 @@ def test_a_stored_credentials_of_the_wrong_shape_is_a_problem_not_a_crash():
 
     assert len(problems) == 1
     assert "stored_credentials is a list" in problems[0]
+
+
+# --- criterion 3: what a cell may be excused from --------------------------
+
+FORCE_FINISH = (
+    "08-28 12:00:02.000 I ActivityManager: Force finishing activity "
+    "com.paycross.x/com.paycross.PaymentActivity"
+)
+
+
+def test_a_force_finish_is_a_fault_by_default():
+    # It is what a crash-looping activity looks like, and no cell that has not
+    # asked for it should ever see one.
+    faults, excused = verify.crash_lines(f"quiet\n{FORCE_FINISH}\n", "com.paycross.x")
+
+    assert faults == [FORCE_FINISH]
+    assert excused == []
+
+
+def test_a_cell_may_be_excused_the_force_finish_it_asked_for():
+    # `always_finish_activities 1` makes the activity manager log exactly this
+    # for the app under test, by design -- it is literally what the setting
+    # does, and it is the behaviour the cell exists to observe.
+    faults, excused = verify.crash_lines(
+        f"quiet\n{FORCE_FINISH}\n",
+        "com.paycross.x",
+        tolerated=("Force finishing activity",),
+    )
+
+    assert faults == []
+    assert excused == [FORCE_FINISH]
+
+
+def test_an_excuse_does_not_reach_another_apps_line():
+    # The package filter still decides first: a line naming another app was
+    # never this cell's fault, so it is not this cell's excuse either.
+    other = (
+        "08-28 12:00:02.000 I ActivityManager: Force finishing activity "
+        "com.android.settings/.Settings"
+    )
+
+    faults, excused = verify.crash_lines(
+        f"{other}\n", "com.paycross.x", tolerated=("Force finishing activity",)
+    )
+
+    assert (faults, excused) == ([], [])
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main",
+        "08-28 12:00:03.000 E ActivityManager: ANR in com.paycross.x",
+        "Fatal error: Unexpectedly found nil while unwrapping an Optional",
+        "*** Terminating app due to uncaught exception 'NSInvalidArgument'",
+        "E/flutter ( 8123): Unhandled Exception: Bad state: no element",
+    ],
+)
+def test_no_caller_can_excuse_a_real_crash(line):
+    # Belt and braces over the load-time guard. `crash_lines` honours only the
+    # closed allow-list, whatever it is handed, because a function that could
+    # be talked into muting a FATAL EXCEPTION would defeat the one thing
+    # criterion 3 exists to stop -- and this one is called from a runner, not
+    # only from a validated cell file.
+    faults, excused = verify.crash_lines(
+        f"quiet\n{line}\n", "com.paycross.x", tolerated=(line, "ANR in")
+    )
+
+    assert faults == [line]
+    assert excused == []
+
+
+def test_the_tolerable_markers_are_exactly_one():
+    # If this ever grows, whoever grew it has to come here and say why.
+    assert cells.TOLERABLE_CRASH_MARKERS == frozenset({"Force finishing activity"})
