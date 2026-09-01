@@ -324,9 +324,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Holds what is typed for this session, in memory, and says so.
   ///
   /// The Live counterpart of Save, and deliberately not called one: nothing
-  /// is saved. There is no Verify beside it because the €1.00 smoke is the
+  /// is saved. There is no Verify beside it because the smoke charge is the
   /// verification -- a Live probe would create a real production session as
-  /// a side effect of checking a password.
+  /// a side effect of checking a password. (The figure lives in
+  /// `liveSmokeMinorUnits`; this sentence deliberately does not repeat it.)
   void _useForThisSession(DemoEnvironmentState state) {
     final typed = _typed;
     final unusable = _whyUnusable(typed);

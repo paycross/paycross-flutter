@@ -1,8 +1,8 @@
 # PayCross Demo
 
-An internal QA app for the PayCross payment SDKs. Install it, type merchant
-credentials into it once, and run payment scenarios on a real phone without
-anybody minting a session token for you.
+An internal QA app for the PayCross payment SDKs. Install it, type sandbox
+merchant credentials into it once, and run payment scenarios on a real phone
+without anybody minting a session token for you.
 
 **It holds merchant credentials on your phone.** It is for colleagues, never
 for merchants or anyone outside the company.
@@ -10,9 +10,9 @@ for merchants or anyone outside the company.
 It has two environments. **Test** is the PayCross sandbox and is where
 everything in this guide happens unless it says otherwise. **Live** is
 production: real cards, real money, one scenario, and a red banner across
-every screen while you are in it. The app starts in Test on every launch and
-the choice is never remembered. See [Live mode](#live-mode). Both sets of
-endpoints are compile-time constants; they are in
+every screen of the app while you are in it. The app starts in Test on every
+launch and the choice is never remembered. See [Live mode](#live-mode). Both
+sets of endpoints are compile-time constants; they are in
 [`lib/demo/endpoints.dart`](lib/demo/endpoints.dart).
 
 ## Install
@@ -239,14 +239,24 @@ Home shows one tile: **Live smoke — €1.00 charge**. No presets, no editor, n
 Custom, no saved-card scenarios, no Google Pay, and no test-card cheat sheet in
 the top bar — those PANs mean nothing on a production merchant.
 
-With no credentials armed the tile does not ask anything: it takes you to
-Settings, so the only way to a dialog is to have already typed a production
-pair in this session.
+**On the build you have, the tile refuses.** The identity a Live charge is made
+under is still a placeholder, and that refusal fires first — before the tile
+looks at credentials or asks you anything. Read [The tile refuses on the build
+you have](#the-tile-refuses-on-the-build-you-have) before you go looking for a
+fault. The rest of this section is what happens once the owner has filled that
+constant in.
+
+After that: with no credentials armed the tile still does not ask anything, it
+takes you to Settings. So the only way to reach a dialog is to have already
+typed a production pair in this session.
 
 Once it can run, tapping it asks *"This will charge a real card €1.00.
 Continue?"* Cancel is the default and holds the focus, and dismissing the
-dialog — Android back button included — counts as Cancel. Continue mints a production session and opens the
-native sheet, and from there it is an ordinary payment with an ordinary card.
+dialog — Android back button included — counts as Cancel. Continue mints a
+production session and opens the native sheet, and from there it is an
+ordinary payment with an ordinary card. The red bar is **not** over that
+sheet: it is a platform view this app does not draw, so at the one moment you
+are typing a real card number, nothing on screen says LIVE.
 
 **If you ever change the amount, change it in four places.** It is the constant
 `liveSmokeMinorUnits` in [`lib/demo/live.dart`](lib/demo/live.dart); the charge
@@ -312,8 +322,14 @@ is no longer true.
 
 ### Getting out
 
-Settings → **Test**. It happens immediately, the credentials are dropped, and
-the banner goes. So does killing the app.
+Settings → **Test**. Normally it happens at once: the credentials are dropped
+and the banner goes. So does killing the app.
+
+**An exit can half-fail, and then you are still in Live.** If the SDK refuses
+to re-point, the credentials are dropped anyway — that half is unconditional —
+but the environment does not flip, the red bar stays up, and Settings says
+*"The credentials are forgotten, but the SDK would not switch back: … Still in
+Live — restart the app."* Restart it. A relaunch always starts in Test.
 
 ## Known limitations
 

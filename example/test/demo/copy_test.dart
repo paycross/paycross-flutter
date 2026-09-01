@@ -14,6 +14,7 @@ const List<String> retiredPromises = <String>[
   'no way to reach production',
   'no production switch',
   'no environment switch',
+  'no production endpoints',
   'Sandbox only',
 ];
 
@@ -84,16 +85,29 @@ void main() {
     // mode is not honest, it is just quiet.
     final readme = File('README.md').readAsStringSync();
 
-    // The heading, not the phrase. `Live mode` on its own is already
-    // satisfied by the deep-link bullet quoting the on-screen refusal, so a
-    // section renamed out of existence left this green -- and it is a section
-    // a tester goes looking for, and the target of the link in the opening
-    // paragraph. Break-verified: renaming the heading now fails here.
-    expect(readme, contains('## Live mode'));
-    // The four facts a tester has to know before they touch it.
-    expect(readme, contains('LIVE'));
-    expect(readme, contains('memory'));
-    expect(readme, contains('refund'));
-    expect(readme, contains('Test on every launch'));
+    // Sentences, not words. Every assertion here started as a bare word and
+    // every one of them survived a mutation that gutted the section it was
+    // supposed to be guarding, because the word turned up somewhere
+    // incidental: `Live mode` in the deep-link bullet quoting the on-screen
+    // refusal, `LIVE` in "marked LIVE in red", `memory` in the profile-strip
+    // paragraph, `refund` in a heading two sections away. A guide can lose
+    // the whole of "Getting in" and still contain all four.
+    //
+    // So each one is pinned at the length of the thing it is actually about,
+    // and the two headings are pinned with their surrounding newlines --
+    // `'## Live mode'` is a substring of `'### Live mode'`, so without the
+    // newlines a section could be demoted into a subsection of the one above
+    // it and nothing here would notice.
+    expect(readme, contains('\n## Live mode\n'));
+    // The gate, not the word: this lives in "Getting in" and nowhere else.
+    expect(readme, contains('Type `LIVE`'));
+    // The storage rule, not the noun.
+    expect(readme, contains('held in memory'));
+    // The section that tells a tester money has to be handed back, pinned by
+    // its heading because the instruction itself is a wrapped quotation of
+    // the shipped string and a line break would make a substring test lie.
+    expect(readme, contains('\n### Afterwards — refund it\n'));
+    // The one fact that makes a forgotten toggle survivable.
+    expect(readme, contains('starts in Test on every launch'));
   });
 }
