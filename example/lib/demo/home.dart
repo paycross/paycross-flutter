@@ -231,7 +231,6 @@ class HomeScreen extends StatefulWidget {
     this.store = const SecretStore(),
     this.mintWith = mintWithCredentials,
     this.liveMintWith = liveMintWithCredentials,
-    this.smokeProblem = _liveSmokeProblem,
   });
 
   final SecretStore store;
@@ -242,25 +241,6 @@ class HomeScreen extends StatefulWidget {
   /// The Live mint, which is told where to send the session.
   final Future<MintedSession> Function(Credentials, String body, Endpoints)
   liveMintWith;
-
-  /// Why the Live smoke cannot run, or null.
-  ///
-  /// A constructor argument only so a widget test can reach the dialog while
-  /// the shipped `liveSmokeIdentity` is still the placeholder it is supposed
-  /// to be. The app always passes the real predicate, and the test that the
-  /// tile refuses uses the default.
-  final String? Function() smokeProblem;
-
-  /// The default, as a static tear-off.
-  ///
-  /// A closure -- `() => liveSmokeIdentityProblem` -- is not a constant
-  /// expression, so it cannot be a default at all without dropping this
-  /// class's `const` constructor, and four existing tests build
-  /// `const MaterialApp(home: HomeScreen())`. A static method reference is
-  /// constant, which is the same trick `RunScreen` already uses for
-  /// `PayCross.presentPayment`. A function rather than a `String?` so the
-  /// predicate is read at tap time, not at build time.
-  static String? _liveSmokeProblem() => liveSmokeIdentityProblem;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -292,7 +272,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Mints and runs the one Live scenario, past four refusals.
+  /// Mints and runs the one Live scenario, past three refusals.
+  ///
+  /// Three rungs, the first holding two conditions: nothing held for this
+  /// session -- an identity or a credential, checked together because one
+  /// button holds both -- then the confirmation dialog, then `_busy`.
   ///
   /// Deliberately not routed through [runPreset]. That function exists to
   /// make "not configured routes to Settings" true of both entrances to a
@@ -308,19 +292,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final state = LiveModeScope.maybeOf(context);
     if (state == null || !state.isLive) return;
 
-    final problem = widget.smokeProblem();
-    if (problem != null) {
-      // Said on screen, naming the constant: a tile that quietly did nothing
-      // is what a broken build looks like, and the person holding the phone
-      // is the one who has to report what is missing.
-      ScaffoldMessenger.maybeOf(
-        context,
-      )?.showSnackBar(SnackBar(content: Text(problem)));
-      return;
-    }
-
+    final identity = state.liveIdentity;
     final credentials = state.liveCredentials;
-    if (credentials == null) {
+    // Together, because one button holds both: a session that has one and
+    // not the other is a state the app cannot reach, and both are fixed on
+    // the same screen. Settings rather than a message, for the same reason
+    // `runPreset` routes there in Test -- somewhere the human can act beats
+    // a refusal they can only read.
+    if (identity == null || credentials == null) {
       await Navigator.of(
         context,
       ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
@@ -371,12 +350,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (go != true || !context.mounted) return;
 
     setState(() => _busy = true);
+    final preset = liveSmokePreset(identity);
     try {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => RunScreen(
-            preset: liveSmokePreset,
-            body: liveSmokePreset.body,
+            preset: preset,
+            body: preset.body,
             live: true,
             // All three from the one instant above: the pair the person was
             // looking at when they pressed Continue. Derived from the same
@@ -456,8 +436,8 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Theme.of(context).colorScheme.errorContainer,
               child: ListTile(
                 leading: const Icon(Icons.credit_card),
-                title: Text(liveSmokePreset.name),
-                subtitle: Text(liveSmokePreset.expected),
+                title: Text(liveSmokeName),
+                subtitle: Text(liveSmokeExpectation),
                 isThreeLine: true,
                 onTap: _busy ? null : () => _runLiveSmoke(context),
               ),

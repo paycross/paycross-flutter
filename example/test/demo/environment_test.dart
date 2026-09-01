@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/endpoints.dart';
 import 'package:paycross_demo/demo/environment.dart';
+import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
@@ -45,6 +46,14 @@ const Credentials _live = Credentials(
   clientSecret: 'live-secret',
 );
 
+/// The IANA-reserved documentation domain. No test in this plan holds an
+/// address that could belong to anybody.
+const LiveIdentity _identity = LiveIdentity(
+  firstName: 'Ada',
+  lastName: 'Lovelace',
+  email: 'ada@example.org',
+);
+
 void main() {
   test('a fresh state is Test, with no credentials and Test endpoints', () {
     // The whole of "every cold start begins in Test": the state is built at
@@ -55,6 +64,7 @@ void main() {
     expect(state.environment, DemoEnvironment.test);
     expect(state.isLive, isFalse);
     expect(state.liveCredentials, isNull);
+    expect(state.liveIdentity, isNull);
     expect(state.endpoints, same(testEndpoints));
   });
 
@@ -114,6 +124,22 @@ void main() {
     expect(state.liveCredentials?.clientId, 'live-id');
   });
 
+  test('an identity is held only in Live', () async {
+    final state = fakeEnvironment();
+
+    // In Test the setter does nothing at all -- the same rule
+    // `useForThisSession` follows, and for the same reason: it is reachable
+    // only from a button that exists only in Live, so a Test-mode call is a
+    // programming mistake and holding nothing is the safe answer.
+    state.useIdentityForThisSession(_identity);
+    expect(state.liveIdentity, isNull);
+
+    await state.enterLive(liveConfirmationWord);
+    state.useIdentityForThisSession(_identity);
+    expect(state.liveIdentity?.email, 'ada@example.org');
+    expect(state.liveIdentity?.firstName, 'Ada');
+  });
+
   test('a wallet id cannot ride along with a Live credential', () async {
     final state = DemoEnvironmentState(configure: _RecordingConfigure().call);
     await state.enterLive('LIVE');
@@ -139,11 +165,13 @@ void main() {
       );
       await state.enterLive('LIVE');
       state.useForThisSession(_live);
+      state.useIdentityForThisSession(_identity);
 
       expect(await state.leaveLive(), isNull);
 
       expect(state.environment, DemoEnvironment.test);
       expect(state.liveCredentials, isNull);
+      expect(state.liveIdentity, isNull);
       expect(configure.calls.last, PayCrossEnvironment.sandbox);
       expect(configure.merchantIds.last, 'gp-launch');
     },
@@ -161,11 +189,18 @@ void main() {
       final state = DemoEnvironmentState(configure: configure.call);
       await state.enterLive('LIVE');
       state.useForThisSession(_live);
+      state.useIdentityForThisSession(_identity);
       configure.refuse = true;
 
       expect(await state.leaveLive(), isNotNull);
 
       expect(state.liveCredentials, isNull);
+      // Armed before the call, so what this pins is the drop at the top of
+      // `leaveLive` -- the one before `_switching = true`. The drop inside
+      // the `catch` is guarded by *an exit that fails still forgets what the
+      // window armed*, which is the only case that reaches it holding
+      // anything.
+      expect(state.liveIdentity, isNull);
       expect(state.environment, DemoEnvironment.live);
     },
   );
@@ -177,12 +212,14 @@ void main() {
 
     await state.enterLive('LIVE');
     state.useForThisSession(_live);
+    state.useIdentityForThisSession(_identity);
     await state.leaveLive();
 
-    // Three: the banner, the Settings surface and Home's grid all redraw
+    // Four: the banner, the Settings surface and Home's grid all redraw
     // from these, and a missed notify is a screen that says Test on
-    // production.
-    expect(heard, 3);
+    // production. Holding the identity is one of them -- the Live tile
+    // stops refusing the moment it lands.
+    expect(heard, 4);
   });
   test(
     'credentials armed while leaving Live do not survive the exit',
@@ -222,7 +259,10 @@ void main() {
     await state.enterLive('LIVE');
     // Two statements, not a cascade: `..refuse` after an arrow body binds to
     // the closure's void result rather than to `configure`.
-    configure.duringTheCall = () => state.useForThisSession(_live);
+    configure.duringTheCall = () {
+      state.useForThisSession(_live);
+      state.useIdentityForThisSession(_identity);
+    };
     configure.refuse = true;
 
     final said = await state.leaveLive();
@@ -230,6 +270,10 @@ void main() {
     expect(said, contains('Still in Live'));
     expect(state.isLive, isTrue);
     expect(state.liveCredentials, isNull);
+    // Armed inside the window, so this is the one case that reaches the
+    // `catch` holding an identity -- and therefore the one that guards the
+    // drop there.
+    expect(state.liveIdentity, isNull);
   });
 
   test('a second switch while one is in flight is refused', () async {

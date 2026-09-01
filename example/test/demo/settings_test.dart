@@ -195,6 +195,9 @@ String _message(WidgetTester tester) =>
 String _fieldText(WidgetTester tester, String key) =>
     tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
 
+String? _errorOn(WidgetTester tester, String key) =>
+    tester.widget<TextField>(find.byKey(ValueKey(key))).decoration!.errorText;
+
 void main() {
   testWidgets('stores what is typed', (tester) async {
     final backend = InMemorySecretBackend();
@@ -767,6 +770,9 @@ void main() {
   testWidgets('Live hides Save, Verify, Forget and the wallet id', (
     tester,
   ) async {
+    // Two identity fields and their spacers push `useForThisSession` below
+    // the 800x600 fold, and a ListView never builds what is under it.
+    useTallSurface(tester);
     await tester.pumpWidget(
       await _liveSettings(store: SecretStore(backend: InMemorySecretBackend())),
     );
@@ -783,11 +789,48 @@ void main() {
     // The two that stay: a credential still has to be typed somewhere.
     expect(find.byKey(const ValueKey('clientId')), findsOneWidget);
     expect(find.byKey(const ValueKey('clientSecret')), findsOneWidget);
+    // And the two Live adds. What Live hides and what Live shows instead
+    // belong in one case, so a field that stops rendering cannot hide
+    // behind a case that only ever looked for absences.
+    expect(find.byKey(const ValueKey('liveName')), findsOneWidget);
+    expect(find.byKey(const ValueKey('liveEmail')), findsOneWidget);
+  });
+
+  testWidgets('Test never asks for a name or an email', (tester) async {
+    // On a tall surface on purpose. Settings is a ListView and a ListView
+    // never builds what is below the fold, so `findsNothing` on the default
+    // 800x600 surface would be green for a field that is merely off-screen.
+    // The Live half of this case is the calibration: the same finders on the
+    // same surface do find them one environment over.
+    useTallSurface(tester);
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      _settingsIn(state, store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveName')), findsNothing);
+    expect(find.byKey(const ValueKey('liveEmail')), findsNothing);
+    // And the wallet id, which is the Test-only field, is there -- so the
+    // two above are absent because Test hides them, not because nothing
+    // rendered.
+    expect(find.byKey(const ValueKey('googlePayMerchantId')), findsOneWidget);
+
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('switchToLive')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('liveName')), findsOneWidget);
+    expect(find.byKey(const ValueKey('liveEmail')), findsOneWidget);
   });
 
   testWidgets('a Live credential reaches memory and nothing else', (
     tester,
   ) async {
+    useTallSurface(tester);
     final backend = _CountingBackend();
     final state = fakeEnvironment();
     await tester.pumpWidget(
@@ -803,11 +846,25 @@ void main() {
       find.byKey(const ValueKey('clientSecret')),
       'live-secret',
     );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada Lovelace',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada@example.org',
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('useForThisSession')));
     await tester.pumpAndSettle();
 
     expect(state.liveCredentials?.clientId, 'live-id');
     expect(state.liveCredentials?.clientSecret, 'live-secret');
+    // The identity is held by the same press, and it is a real person's
+    // name and address -- so the memory-only rule below now covers both.
+    expect(state.liveIdentity?.firstName, 'Ada');
+    expect(state.liveIdentity?.lastName, 'Lovelace');
+    expect(state.liveIdentity?.email, 'ada@example.org');
     // The whole rule, in two lines: not one byte of a production credential
     // reached a store, so there is nothing on the device to leak, to back up,
     // or to forget to forget.
@@ -817,9 +874,146 @@ void main() {
     expect(backend.entries, isEmpty);
   });
 
-  testWidgets('a Live session with half a credential is refused', (
+  testWidgets(
+    'a Live session with half a credential cannot be started at all',
+    (tester) async {
+      useTallSurface(tester);
+      final state = fakeEnvironment();
+      await tester.pumpWidget(
+        await _liveSettings(
+          state: state,
+          store: SecretStore(backend: InMemorySecretBackend()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+      await tester.pumpAndSettle();
+
+      // It used to be pressable, with the reason arriving as a message
+      // afterwards. Nothing is held either way; a dead button is the earlier
+      // and quieter refusal.
+      expect(_enabled(tester, 'Use for this session'), isFalse);
+      expect(state.liveCredentials, isNull);
+      expect(state.liveIdentity, isNull);
+    },
+  );
+
+  testWidgets('the session button is dead until all four fields are right', (
     tester,
   ) async {
+    // The button and the message line sit below the 800x600 fold once the
+    // two identity fields are on the screen, and a ListView does not build
+    // what is below it -- so without this the finders report nothing and
+    // `_enabled` throws "No element" before asserting anything.
+    useTallSurface(tester);
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await _liveSettings(
+        state: state,
+        store: SecretStore(backend: InMemorySecretBackend()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Dead on arrival, and dead after each of the first three.
+    expect(_enabled(tester, 'Use for this session'), isFalse);
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, 'Use for this session'), isFalse);
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret',
+    );
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, 'Use for this session'), isFalse);
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada Lovelace',
+    );
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, 'Use for this session'), isFalse);
+
+    // The fourth wakes it. Without this half the case is green with the
+    // button hardcoded dead, which is the failure it exists to rule out.
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada@example.org',
+    );
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, 'Use for this session'), isTrue);
+
+    // And it goes dead again, so the enablement is read from the fields on
+    // every keystroke rather than latched by the first complete set.
+    await tester.enterText(find.byKey(const ValueKey('liveEmail')), 'ada');
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, 'Use for this session'), isFalse);
+  });
+
+  testWidgets('a one-word name says so on its own field', (tester) async {
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await _liveSettings(
+        state: state,
+        store: SecretStore(backend: InMemorySecretBackend()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Nothing on an untouched field: an empty field is not a mistake yet.
+    expect(_errorOn(tester, 'liveName'), isNull);
+
+    await tester.enterText(find.byKey(const ValueKey('liveName')), 'Ada');
+    await tester.pumpAndSettle();
+
+    // Read off the field's own decoration, never with a `textContaining`:
+    // the same sentence is also the dead button's hint, so a text finder
+    // would be green with the error attached to the wrong widget entirely.
+    expect(_errorOn(tester, 'liveName'), isNotNull);
+    expect(_errorOn(tester, 'liveEmail'), isNull);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada Lovelace',
+    );
+    await tester.pumpAndSettle();
+
+    expect(_errorOn(tester, 'liveName'), isNull);
+  });
+
+  testWidgets('an address with no @ says so on its own field', (tester) async {
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await _liveSettings(
+        state: state,
+        store: SecretStore(backend: InMemorySecretBackend()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('liveEmail')), 'ada');
+    await tester.pumpAndSettle();
+
+    expect(_errorOn(tester, 'liveEmail'), isNotNull);
+    expect(_errorOn(tester, 'liveName'), isNull);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada@example.org',
+    );
+    await tester.pumpAndSettle();
+
+    expect(_errorOn(tester, 'liveEmail'), isNull);
+  });
+
+  testWidgets('a trip through Test empties the name and the email', (
+    tester,
+  ) async {
+    // The crossing rule, in the direction that matters: an identity typed in
+    // Live must not still be sitting in the fields when the next person
+    // enters Live on the same launch. Same clearing path as the credentials,
+    // and the same enter/leave asymmetry -- leaving clears unconditionally.
+    useTallSurface(tester);
     final state = fakeEnvironment();
     await tester.pumpWidget(
       await _liveSettings(
@@ -830,11 +1024,40 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada Lovelace',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada@example.org',
+    );
+    await tester.pumpAndSettle();
+    // Actually held first, which is what stops the assertion after the
+    // crossing being green against a state that never had an identity in it.
+    // All four fields, because the button is dead without them.
     await tester.tap(find.byKey(const ValueKey('useForThisSession')));
     await tester.pumpAndSettle();
+    expect(state.liveIdentity, isNotNull);
 
-    expect(state.liveCredentials, isNull);
-    expect(_message(tester), contains('client secret'));
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+    expect(state.liveIdentity, isNull);
+
+    // Back in, where the fields exist again and can be read.
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('switchToLive')));
+    await tester.pumpAndSettle();
+
+    expect(_fieldText(tester, 'liveName'), '');
+    expect(_fieldText(tester, 'liveEmail'), '');
   });
 
   testWidgets('switching to Live empties what Test had on screen', (
@@ -914,9 +1137,12 @@ void main() {
 
     // Back to Test and straight into the gate, which is where this screen is
     // longest: three fields, the wallet id, three buttons and the gate's own
-    // paragraph. Measured at 390x844 the Live branch has a maxScrollExtent of
-    // 0 -- it fits -- so a scroll assertion there would scroll nothing and
-    // pass with the call deleted. This branch overflows by ~423px.
+    // paragraph. Measured at 390x844 the Live branch used to have a
+    // maxScrollExtent of 0 -- it fitted -- so a scroll assertion there would
+    // have scrolled nothing and passed with the call deleted. Since the name
+    // and the email fields were added to it that figure is 200: it scrolls
+    // now. The gate branch is still the longer of the two by a wide margin,
+    // so the assertion stays here. This branch overflows by ~423px.
     await tester.tap(find.text('Test'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Live'));
@@ -956,6 +1182,11 @@ void main() {
     // which failure it was, and the tail says what to do about it. A refactor
     // that replaces either half with a tidier message of its own is what this
     // test exists to stop.
+    //
+    // The tall surface is not about the message: the two identity fields
+    // push `settingsMessage` below the 800x600 fold, and a ListView never
+    // builds what is under it. Nothing else in this case changed.
+    useTallSurface(tester);
     final state = _stuckInLive();
     await tester.pumpWidget(
       await _liveSettings(
@@ -1087,7 +1318,7 @@ void main() {
     },
   );
 
-  testWidgets('editing a credential retracts the claim that one is held', (
+  testWidgets('editing anything retracts the claim that a session is held', (
     tester,
   ) async {
     // A typo'd production secret is held, the human spots it and corrects the
@@ -1096,7 +1327,9 @@ void main() {
     // with the old secret, and the 401 reads as a bad production credential.
     // The Test side already solved this drift -- `_matchesStored` and the
     // "press Save to keep them" line exist for it -- and Live had no
-    // equivalent.
+    // equivalent. The name and the email are the same problem: a charge made
+    // under an address the screen has stopped showing.
+    useTallSurface(tester);
     final state = fakeEnvironment();
     await tester.pumpWidget(
       await _liveSettings(
@@ -1106,14 +1339,28 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // All four, because the button is dead without them.
+    Future<void> hold() async {
+      await tester.tap(find.byKey(const ValueKey('useForThisSession')));
+      await tester.pumpAndSettle();
+      expect(_message(tester), contains('Held for this session'));
+    }
+
     await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
     await tester.enterText(
       find.byKey(const ValueKey('clientSecret')),
       'live-secret',
     );
-    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada Lovelace',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada@example.org',
+    );
     await tester.pumpAndSettle();
-    expect(_message(tester), contains('Held for this session'));
+    await hold();
 
     await tester.enterText(
       find.byKey(const ValueKey('clientSecret')),
@@ -1127,17 +1374,32 @@ void main() {
     // about text the human has since changed is not.
     expect(state.liveCredentials?.clientSecret, 'live-secret');
 
-    // And the other field. Held again first, on purpose: with `_message`
-    // already null there is nothing to retract, so an edit here would assert
-    // findsNothing against a row that was never going to be there -- green
-    // whether or not clientId retracts anything.
-    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
-    await tester.pumpAndSettle();
-    expect(_message(tester), contains('Held for this session'));
-
+    // And each of the other three. Held again before every single edit, on
+    // purpose: with `_message` already null there is nothing to retract, so
+    // an edit would assert findsNothing against a row that was never going
+    // to be there -- green whether or not that field retracts anything.
+    await hold();
     await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id-2');
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
 
+    await hold();
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada B. Lovelace',
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
+    // The identity in memory is still the one that was confirmed, for the
+    // same reason the secret above is.
+    expect(state.liveIdentity?.firstName, 'Ada');
+
+    await hold();
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada.lovelace@example.org',
+    );
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
   });
 
@@ -1347,6 +1609,72 @@ void main() {
       tester.getSemantics(find.byKey(const ValueKey('switchToLive'))).hint,
       isEmpty,
     );
+    semantics.dispose();
+  });
+
+  testWidgets('the dead session button says why it is dead, where it is dead', (
+    tester,
+  ) async {
+    // The same dead end the gate's button had, and fixed the same way: a
+    // dimmed button with no reason attached is unreachable for a screen
+    // reader, because the line that explains it is a separate Text beside
+    // it. Both renderings are pinned here, and so is the fact that they are
+    // ONE string -- the visible line and the hint are the same constant, so
+    // a future edit cannot reword one and leave the other saying something
+    // else.
+    final semantics = tester.ensureSemantics();
+    // The button sits below the 800x600 fold once the two identity fields
+    // are on the screen, and a ListView never builds what is under it.
+    useTallSurface(tester);
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await _liveSettings(
+        state: state,
+        store: SecretStore(backend: InMemorySecretBackend()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final hint = tester
+        .getSemantics(find.byKey(const ValueKey('useForThisSession')))
+        .hint;
+    expect(hint, isNotEmpty);
+    // Named individually rather than as one sentence: what the reason has to
+    // do is say which of the four inputs is still missing something, and
+    // that survives the connective wording being changed.
+    expect(hint, contains('client ID'));
+    expect(hint, contains('client secret'));
+    expect(hint, contains('name'));
+    expect(hint, contains('email'));
+    // And it is on screen too, as the same string. A sighted human gets the
+    // reason beside the button; a screen reader gets it on the button's own
+    // node; neither is the other's fallback.
+    expect(find.text(hint), findsOneWidget);
+
+    // It stops nagging once all four are right and the button is live --
+    // both halves, because a hint that outlives the condition it describes
+    // is noise on every later swipe.
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada Lovelace',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada@example.org',
+    );
+    await tester.pumpAndSettle();
+
+    expect(_enabled(tester, 'Use for this session'), isTrue);
+    expect(
+      tester.getSemantics(find.byKey(const ValueKey('useForThisSession'))).hint,
+      isEmpty,
+    );
+    expect(find.text(hint), findsNothing);
     semantics.dispose();
   });
 
