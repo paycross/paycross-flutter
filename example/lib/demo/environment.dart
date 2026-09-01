@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
 import 'endpoints.dart';
+import 'live.dart';
 import 'secrets.dart';
 
 /// Which backend the app is pointed at right now.
@@ -99,6 +100,20 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// through this class, including ones nobody has written yet.
   Credentials? get liveCredentials => isLive ? _liveCredentials : null;
 
+  LiveIdentity? _liveIdentity;
+
+  /// Who a Live charge is made under, and only while the app is actually in
+  /// Live.
+  ///
+  /// Gated on the environment for the same reason [liveCredentials] is: the
+  /// field and the environment change at different moments, [leaveLive]
+  /// awaits the SDK between dropping one and flipping the other, and a
+  /// button is reachable across that await. Unlike a credential this is a
+  /// real person's name and address rather than a secret, which is not a
+  /// reason to hold it any longer -- it is held for one session because that
+  /// is all a charge needs.
+  LiveIdentity? get liveIdentity => isLive ? _liveIdentity : null;
+
   /// The pair a mint in this environment must use.
   ///
   /// Derived rather than stored, so the URLs a run reaches cannot drift
@@ -156,6 +171,20 @@ class DemoEnvironmentState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Holds the identity for this session and no longer.
+  ///
+  /// Its own setter rather than an argument on [useForThisSession], so a
+  /// state can be in the one condition the Live tile has to refuse: holding
+  /// a credential and no identity. In the app the same button calls both in
+  /// the same frame.
+  ///
+  /// A no-op outside Live, like [useForThisSession] and for the same reason.
+  void useIdentityForThisSession(LiveIdentity identity) {
+    if (!isLive) return;
+    _liveIdentity = identity;
+    notifyListeners();
+  }
+
   /// Returns to Test, or returns why it did not.
   ///
   /// On every exit this actually performs, the credentials go first: they
@@ -171,6 +200,7 @@ class DemoEnvironmentState extends ChangeNotifier {
     // that forgot them anyway.
     if (_switching) return switchAlreadyInProgress;
     _liveCredentials = null;
+    _liveIdentity = null;
     _switching = true;
     try {
       await configure(
@@ -185,6 +215,7 @@ class DemoEnvironmentState extends ChangeNotifier {
       // returned here promises they are gone. Before the notify, so a
       // listener reading during it sees that promise already kept.
       _liveCredentials = null;
+      _liveIdentity = null;
       notifyListeners();
       return 'The credentials are forgotten, but the SDK would not switch '
           'back: ${problem.runtimeType}. Still in Live — restart the app.';
@@ -197,6 +228,7 @@ class DemoEnvironmentState extends ChangeNotifier {
     // stops it being handed back the next time Live is entered; the getter
     // only stops it being read in Test.
     _liveCredentials = null;
+    _liveIdentity = null;
     _environment = DemoEnvironment.test;
     notifyListeners();
     return null;
