@@ -1,0 +1,36 @@
+--------- beginning of crash
+09-01 13:22:50.706 E/AndroidRuntime(11111): FATAL EXCEPTION: UiAutomation
+09-01 13:22:50.706 E/AndroidRuntime(11111): PID: 11111
+09-01 13:22:50.706 E/AndroidRuntime(11111): java.lang.RuntimeException: Bad file descriptor
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.os.BinderProxy.transactNative(Native Method)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.os.BinderProxy.transact(BinderProxy.java:586)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.accessibilityservice.IAccessibilityServiceConnection$Stub$Proxy.findAccessibilityNodeInfoByAccessibilityId(IAccessibilityServiceConnection.java:1229)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.view.accessibility.AccessibilityInteractionClient.findAccessibilityNodeInfoByAccessibilityId(AccessibilityInteractionClient.java:671)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.view.accessibility.AccessibilityNodeInfo.refresh(AccessibilityNodeInfo.java:1202)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.view.accessibility.AccessibilityCache$AccessibilityNodeRefresher.refreshNode(AccessibilityCache.java:914)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.view.accessibility.AccessibilityCache.onAccessibilityEvent(AccessibilityCache.java:296)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.view.accessibility.AccessibilityInteractionClient.onAccessibilityEvent(AccessibilityInteractionClient.java:1173)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.accessibilityservice.AccessibilityService$IAccessibilityServiceClientWrapper.lambda$onAccessibilityEvent$2(AccessibilityService.java:2980)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.accessibilityservice.AccessibilityService$IAccessibilityServiceClientWrapper.$r8$lambda$BK9U4O9uTvtOrxe1k6nU74w4nWg(Unknown Source:0)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.accessibilityservice.AccessibilityService$IAccessibilityServiceClientWrapper$$ExternalSyntheticLambda8.run(D8$$SyntheticClass:0)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.os.Handler.handleCallback(Handler.java:959)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.os.Handler.dispatchMessage(Handler.java:100)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.os.Looper.loopOnce(Looper.java:232)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.os.Looper.loop(Looper.java:317)
+09-01 13:22:50.706 E/AndroidRuntime(11111): 	at android.os.HandlerThread.run(HandlerThread.java:85)
+09-01 13:22:50.706 E/IPCThreadState(11111): Failed to get extended error: Bad file descriptor
+09-01 13:22:50.718 E/AndroidRuntime(11111): Error reporting crash
+09-01 13:22:50.718 E/AndroidRuntime(11111): java.lang.RuntimeException: Bad file descriptor
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.os.BinderProxy.transactNative(Native Method)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.os.BinderProxy.transact(BinderProxy.java:586)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.os.IServiceManager$Stub$Proxy.checkService(IServiceManager.java:441)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.os.ServiceManagerProxy.getService(ServiceManagerNative.java:63)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.os.ServiceManager.rawGetService(ServiceManager.java:428)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.os.ServiceManager.getService(ServiceManager.java:175)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.app.ActivityManager$3.create(ActivityManager.java:5692)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.app.ActivityManager$3.create(ActivityManager.java:5689)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.util.Singleton.get(Singleton.java:44)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at android.app.ActivityManager.getService(ActivityManager.java:5680)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at com.android.internal.os.RuntimeInit$KillApplicationHandler.uncaughtException(RuntimeInit.java:170)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at java.lang.ThreadGroup.uncaughtException(ThreadGroup.java:1071)
+09-01 13:22:50.718 E/AndroidRuntime(11111): 	at java.lang.ThreadGroup.uncaughtException(ThreadGroup.java:1066)

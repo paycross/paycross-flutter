@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tool.e2e import cells, evidence, runner, tree
+from tool.e2e import cells, evidence, runner, tree, verify
 from tool.e2e.cells import CellError
 from tool.e2e.drivers import android
 from tool.e2e.drivers.base import Driver, DriverError
@@ -2909,6 +2909,66 @@ def test_a_real_crash_still_fails_the_cell_that_declared_the_other_marker(tmp_pa
         "crash: 08-28 12:00:04.000 E AndroidRuntime: FATAL EXCEPTION: main"
     ]
     assert result_json(tmp_path)["tolerated_crash_lines"] == [FORCED_FINISH]
+
+
+# --- the driver's own crash does not fail the cell it interrupted ----------
+
+#: A real `uiautomator dump` crash, pids neutralised, from the 2026-09-01
+#: Android run -- cell `saved_card_3_challenge_save`, whose payment succeeded
+#: and whose transaction the merchant API confirmed. The runner failed it
+#: anyway, on this.
+UIAUTOMATION_CRASH = (
+    Path(__file__).parent / "fixtures" / "android-uiautomation-crash.log"
+).read_text()
+
+#: Enough of a cell to reach a label. The crash is what these tests vary.
+PAYS = ["paste_token", "tap_pay", "wait_result 60"]
+
+
+def test_the_drivers_own_crash_does_not_fail_a_cell_that_worked(tmp_path):
+    # The defect, end to end. Nothing about the payment changed; the dump the
+    # runner took after it died on a closed binder, and the cell wore it.
+    driver = logging(FakeDriver(labels=["result:success:txn-1"]), UIAUTOMATION_CRASH)
+
+    report = run(cell_dir_with(tmp_path, PAYS), tmp_path, driver)
+
+    assert report.results[0].passed, report.results[0].problems
+    assert report.exit_code == runner.EXIT_OK
+
+
+def test_the_drivers_own_crash_is_written_into_the_evidence_as_a_warning(tmp_path):
+    # Reclassified, never muted. A rig that crashed mid-cell is exactly what
+    # the next reader wants to know, and the reason travels with the line so
+    # "not the app's crash" is a claim they can check rather than take.
+    driver = logging(FakeDriver(labels=["result:success:txn-1"]), UIAUTOMATION_CRASH)
+
+    run(cell_dir_with(tmp_path, PAYS), tmp_path, driver)
+
+    warnings = result_json(tmp_path)["warnings"]
+    assert len(warnings) == 1
+    assert "FATAL EXCEPTION: UiAutomation" in warnings[0]
+    assert verify.DRIVER_CRASH_REASON in warnings[0]
+    assert report_json(tmp_path)["cells"][0]["warnings"] == warnings
+
+
+def test_a_real_crash_in_the_same_log_still_fails_the_cell(tmp_path):
+    # The control that matters most: attribution is per crash, not per log. A
+    # driver crash next to an app crash excuses nothing.
+    log = (
+        f"{UIAUTOMATION_CRASH}\n"
+        "09-01 13:22:51.000 E/AndroidRuntime(22222): FATAL EXCEPTION: main\n"
+        "09-01 13:22:51.000 E/AndroidRuntime(22222): Process: "
+        "com.paycross.example, PID: 22222\n"
+    )
+    driver = logging(FakeDriver(labels=["result:success:txn-1"]), log)
+
+    report = run(cell_dir_with(tmp_path, PAYS), tmp_path, driver)
+
+    assert not report.results[0].passed
+    assert [p for p in report.results[0].problems if "crash:" in p] == [
+        "crash: 09-01 13:22:51.000 E/AndroidRuntime(22222): FATAL EXCEPTION: main"
+    ]
+    assert len(result_json(tmp_path)["warnings"]) == 1
 
 
 # --- Plan B D3: a discovery cell records its id rather than hiding it -------

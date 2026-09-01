@@ -1,10 +1,12 @@
-# Tree fixtures
+# Fixtures
 
-Real dumps, checked in so the matchers in `tool/e2e/tree.py` can be tested
-without a device or a simulator. The Android files are byte-identical copies of
-artifacts from the campaign's own E2E runs; the originals are kept in the
-private campaign evidence tree, outside this repo. Every fixture here is
-token-redacted — see the last section before adding another.
+Real captures, checked in so the matchers in `tool/e2e/tree.py` and the crash
+attribution in `tool/e2e/verify.py` can be tested without a device or a
+simulator. The Android files are copies of artifacts from the campaign's own
+E2E runs, byte-identical but for the neutralised pids noted below; the
+originals are kept in the private campaign evidence tree, outside this repo.
+Every fixture here is token-redacted — see the last section before adding
+another.
 
 ## `android-rearmed.uix`
 
@@ -32,6 +34,28 @@ what a dump from a build made without `--dart-define=PAYCROSS_E2E` looks like.
 As a `sheet_rearmed` negative it carries neither half of the Android
 conjunction, so it cannot show that either half is required on its own. The
 test drops the banner from `android-rearmed.uix` for that.
+
+## `android-uiautomation-crash.log`
+
+The logcat block from the 2026-09-01 Android run, cell
+`saved_card_3_challenge_save` (private campaign evidence) — a payment that
+succeeded, with a confirmed transaction, that the runner failed anyway.
+
+It is the driver's own `uiautomator dump` dying on a closed binder: thread
+`UiAutomation`, `RuntimeException: Bad file descriptor`, and a stack that is
+`BinderProxy` and accessibility frames from top to bottom. Two things make it
+the fixture for `_attribute_fatal` rather than a hand-written string:
+
+- it carries **no `Process:` line**, only `PID:`, which is what sent the old
+  `_fatal_is_ours` down its conservative `return True`;
+- it keeps the runtime's follow-on `Error reporting crash` block, whose frames
+  reach `com.android.internal.os.RuntimeInit` and `java.lang.ThreadGroup`. Read
+  as part of the first stack those would defeat the "nothing outside
+  `android.`" test, so the fixture is also the proof that `_crash_block` stops
+  where it should.
+
+Pids are neutralised (`19931` → `11111`). Nothing else is changed. No token
+appears in a crash block.
 
 ## `ios-source.xml`
 

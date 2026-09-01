@@ -231,6 +231,21 @@ file calls `check_cell_dir` rather than restating them.
 2. the merchant API agrees on every key the cell asserts;
 3. no crash, ANR or uncaught exception in the device log for the cell's window.
 
+#### Whose crash it is
+
+A `FATAL EXCEPTION` header names no package — the `Process:` line under it
+does, and it decides whenever it is there. When it is missing, a frame from the
+app under test (`com.paycross`, `io.flutter`, or the configured package) still
+makes the crash ours. Only one other shape is recognised: a crash on the
+`UiAutomation` thread whose stack is framework accessibility and binder frames
+with nothing of ours in it is the driver's own `uiautomator dump` losing its
+binder, and is recorded as a **warning** — in `result.json` and `report.json`
+under `warnings`, with the reason attached to the line — rather than failing
+the cell. Anything else keeps the conservative answer and stays a fault,
+because a missed crash is the expensive direction to be wrong in. This is not
+`tolerated_crash_markers` and is not reachable from a cell file: it reads the
+crash's own stack, and no caller can widen it.
+
 #### The one line a cell may be excused
 
 `always_finish_activities 1` makes the activity manager log `Force finishing
@@ -865,7 +880,8 @@ accepts the swap and then end-anchors, so `Pay €10,000.00` no longer satisfies
   <cell>/NN-<action>-failed.uix     the tree at the moment a step failed
   <cell>/merchant.json              the session resource, scrubbed
   <cell>/logs.txt                   device log for the cell's window
-  <cell>/result.json                label, ids, timings, problems, budget, the
+  <cell>/result.json                label, ids, timings, problems, warnings,
+                                    budget, the
                                     frames the screenshot guard refused, any
                                     teardown the runner replayed for the cell,
                                     the criterion-3 lines a cell declared and
@@ -887,6 +903,11 @@ through, such as a bearer refresh that fell back to the `expires_in` the
 API-Gateway cache is known to restate (`cognito-m2m#1`). They print as `WARN`
 lines and never change the exit code: a warning that turns a green matrix red is
 a warning the next person learns to silence.
+
+Each cell carries its own `warnings` too, in both `report.json` and its
+`result.json` — today, a crash attributed to the driver rather than to the app.
+They print under the cell as `!` lines and, for the same reason, never change
+its verdict.
 
 The run id carries the platform because the two platforms are driven from two
 shells: on a bare timestamp, an Android and an iOS run started in the same
