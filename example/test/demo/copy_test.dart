@@ -27,6 +27,19 @@ const List<String> retiredPromises = <String>[
 /// true sentence in a file this plan freezes.
 const String cheatSheet = 'lib/demo/test_cards_screen.dart';
 
+/// Machinery this app had while the Live identity was a constant, and has
+/// no longer.
+///
+/// A separate list from [retiredPromises] because it is a different kind
+/// of wrong: those were promises about what the app cannot do, these are
+/// instructions pointing at a constant that is not there. A tester told to
+/// wait for the owner to edit `liveSmokeIdentity` waits forever.
+const List<String> retiredIdentityMachinery = <String>[
+  'liveSmokeIdentity',
+  'REPLACE_ME',
+  'is still a placeholder',
+];
+
 void main() {
   test('the tester guide makes no promise the app no longer keeps', () {
     final readme = File('README.md').readAsStringSync();
@@ -109,5 +122,40 @@ void main() {
     expect(readme, contains('\n### Afterwards — refund it\n'));
     // The one fact that makes a forgotten toggle survivable.
     expect(readme, contains('starts in Test on every launch'));
+    // The identity, which is typed rather than committed. Its own heading,
+    // pinned with its newlines like the two above.
+    expect(readme, contains('\n### The credentials and the identity\n'));
+    // Two rules a substring pin has to respect, both learned the hard way in
+    // this very file. The phrase must not straddle a line break -- the README
+    // is hand-wrapped at 80 and `contains` sees the newline -- so the
+    // paragraph below keeps this one whole on its line. And `contains` is
+    // case-sensitive, so the second pin starts one word after a
+    // sentence-initial capital rather than trying to match it.
+    expect(readme, contains('a first and a last name'));
+    expect(readme, contains('about the identity is saved'));
+  });
+
+  test('nothing sends the reader to a constant that no longer exists', () {
+    final readme = File('README.md').readAsStringSync();
+    final offenders = <String>[];
+    var scanned = 0;
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      scanned++;
+      final source = entity.readAsStringSync();
+      if (retiredIdentityMachinery.any(source.contains)) {
+        offenders.add(entity.path);
+      }
+    }
+
+    expect(offenders, isEmpty);
+    for (final gone in retiredIdentityMachinery) {
+      expect(readme.contains(gone), isFalse, reason: gone);
+    }
+    // The sweep reached something. Without this the case goes quietly
+    // vacuous the day the directory name or the extension filter changes:
+    // nothing scanned, no offender found, and an empty list looks the same
+    // either way.
+    expect(scanned, greaterThan(10));
   });
 }
