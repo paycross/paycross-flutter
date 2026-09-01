@@ -68,17 +68,34 @@ class _SlowBackend implements SecretBackend {
   Future<void> delete(String key) async => entries.remove(key);
 }
 
-/// A Live state that is already holding a session credential.
+/// The identity every Live case in this file charges under.
 ///
-/// The order is the whole reason this is a helper. `useForThisSession` is a
-/// no-op outside Live -- deliberately, so a Test credential can never be held
-/// as a production one -- so a pair armed before the switch is silently
-/// dropped and every tile tap lands on the no-credentials refusal instead of
-/// the one the test is about.
-Future<DemoEnvironmentState> liveHolding(Credentials credentials) async {
+/// The IANA-reserved documentation domain. No test in this plan holds an
+/// address that could belong to anybody.
+const LiveIdentity _liveIdentity = LiveIdentity(
+  firstName: 'Ada',
+  lastName: 'Lovelace',
+  email: 'ada@example.org',
+);
+
+/// A Live state already holding what a smoke needs, or holding half of it.
+///
+/// The order is the whole reason this is a helper. Both setters are no-ops
+/// outside Live -- deliberately, so a Test credential can never be held as
+/// a production one -- so anything armed before the switch is silently
+/// dropped and every tile tap lands on a refusal the test is not about.
+///
+/// Either argument may be null, which is the point: the tile refuses when
+/// either half is missing, and a state that cannot be half-armed cannot
+/// prove that.
+Future<DemoEnvironmentState> liveHolding(
+  Credentials? credentials, {
+  LiveIdentity? identity = _liveIdentity,
+}) async {
   final state = fakeEnvironment();
   await state.enterLive(liveConfirmationWord);
-  state.useForThisSession(credentials);
+  if (credentials != null) state.useForThisSession(credentials);
+  if (identity != null) state.useIdentityForThisSession(identity);
   return state;
 }
 
@@ -411,19 +428,12 @@ void main() {
     expect(find.byTooltip('Settings'), findsOneWidget);
   });
 
-  testWidgets('the tile refuses while the identity is a placeholder', (
-    tester,
-  ) async {
-    // The blocking owner input, enforced where it costs nothing to be wrong.
-    // This case passes today because the constant ships as a placeholder, and
-    // it is expected to be rewritten in the commit that supplies the real
-    // identity.
-    //
-    // No credentials are armed, and that is what pins the ORDER rather than
-    // just the refusal: with a pair in memory the second refusal cannot fire
-    // either way and the case survives the two being swapped. Without one,
-    // a swap pushes Settings and never names the constant.
-    final state = fakeEnvironment();
+  testWidgets('the tile with no identity held opens Settings', (tester) async {
+    // The credential IS armed and the identity is not, which is the whole
+    // point: a state holding neither would be refused by either check, so
+    // the assertion would survive the identity half being deleted. Half-armed
+    // is the only shape that pins this one.
+    final state = await liveHolding(_liveCredentials, identity: null);
     await tester.pumpWidget(
       await liveApp(
         state: state,
@@ -435,33 +445,24 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('liveSmokeIdentity'), findsOneWidget);
-    // Loudly, and without minting: no dialog, no run, and not the
-    // no-credentials branch either.
-    expect(find.byType(SettingsScreen), findsNothing);
+    // Somewhere the human can act, rather than a message they can only read:
+    // the identity is typed on the screen this pushes.
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    // And without minting: no dialog, no run.
     expect(find.byKey(const ValueKey('liveConfirmDialog')), findsNothing);
     expect(find.byType(RunScreen), findsNothing);
-
-    // Let the snack bar time itself out; a pending timer fails the test.
-    await tester.pump(const Duration(seconds: 5));
-    await tester.pumpAndSettle();
   });
 
   testWidgets('with no Live credentials the tile opens Settings', (
     tester,
   ) async {
-    final state = fakeEnvironment();
+    // The mirror of the case above: the identity is armed and the credential
+    // is not, so this one is what pins the credential half of the check.
+    final state = await liveHolding(null);
     await tester.pumpWidget(
       await liveApp(
         state: state,
-        home: HomeScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          // Past refusal 1. The shipped identity is a placeholder, and
-          // `_runLiveSmoke` returns after that snackbar -- so without this
-          // the credentials branch is never reached and no Settings screen
-          // is ever pushed.
-          smokeProblem: () => null,
-        ),
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
       ),
     );
     await tester.pumpAndSettle();
@@ -471,8 +472,7 @@ void main() {
 
     // The same rule `runPreset` applies in Test: route somewhere the human
     // can act, rather than mint and fail with a 401 that reads as a backend
-    // problem. Ordered after the identity check because a placeholder is
-    // wrong for everybody, and missing credentials are wrong for one session.
+    // problem.
     expect(find.byType(SettingsScreen), findsOneWidget);
   });
 
@@ -502,12 +502,7 @@ void main() {
 
     await tester.pumpWidget(
       await liveApp(
-        home: HomeScreen(
-          store: SecretStore(backend: InMemorySecretBackend()),
-          // Past refusal 1, so the tap reaches the no-credentials branch and
-          // actually pushes the screen this test is about.
-          smokeProblem: () => null,
-        ),
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
       ),
     );
     await tester.pumpAndSettle();
@@ -537,10 +532,6 @@ void main() {
             minted++;
             return const MintedSession(id: 'x', token: 'y', sentBody: '{}');
           },
-          // Injected so this case is reachable while the shipped identity is
-          // still a placeholder; the tile's own refusal is pinned above.
-          // A function, not a bare null: the field is `String? Function()`.
-          smokeProblem: () => null,
         ),
       ),
     );
@@ -588,7 +579,6 @@ void main() {
             minted++;
             return const MintedSession(id: 'x', token: 'y', sentBody: '{}');
           },
-          smokeProblem: () => null,
         ),
       ),
     );
@@ -626,7 +616,6 @@ void main() {
               sentBody: '{}',
             );
           },
-          smokeProblem: () => null,
         ),
       ),
     );
@@ -671,6 +660,51 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('the smoke charges the identity that was typed', (tester) async {
+    // The end of the whole chain: what a tester typed in Settings is what
+    // the production merchant is asked to charge. Asserted against the
+    // literals this test typed, never against values read back out of the
+    // same state object the code read -- that would pass with the identity
+    // dropped on the floor and a constant put back in its place.
+    final state = await liveHolding(_liveCredentials);
+    String? sent;
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: HomeScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          liveMintWith: (credentials, body, endpoints) async {
+            sent = body;
+            return const MintedSession(
+              id: 'sess-live',
+              token: 'tok',
+              sentBody: '{}',
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('liveContinue')));
+    await tester.pumpAndSettle();
+
+    final customer =
+        (jsonDecode(sent!) as Map<String, Object?>)['customer']!
+            as Map<String, Object?>;
+    expect(customer['first_name'], 'Ada');
+    expect(customer['last_name'], 'Lovelace');
+    expect(customer['email'], 'ada@example.org');
+    // Not the sandbox fake, which is what a body built from `defaultBody()`
+    // would carry.
+    expect(customer['email'], isNot('john.doe@example.com'));
+
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets(
     'a run authorised in Live keeps the pair it was authorised with',
     (tester) async {
@@ -702,7 +736,6 @@ void main() {
                 sentBody: '{}',
               );
             },
-            smokeProblem: () => null,
           ),
         ),
       );
@@ -816,7 +849,7 @@ void main() {
 
       final minted = await liveMintWithCredentials(
         const Credentials(clientId: 'live-id', clientSecret: 'live-secret'),
-        liveSmokeBody,
+        liveSmokeBody(_liveIdentity),
         liveEndpoints,
         client: client,
       );

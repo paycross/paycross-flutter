@@ -210,10 +210,10 @@ relaunch.
    wakes up.
 3. Press **Switch to Live**. A red `LIVE — REAL MONEY` bar appears across
    every screen and stays there until you leave.
-4. Type the **production** client ID and secret and press **Use for this
-   session**.
+4. Type the **production** client ID and secret, and the **name and
+   email** the charge is made under, then press **Use for this session**.
 
-### The credentials
+### The credentials and the identity
 
 **They are held in memory and written nowhere.** Not to the Keychain, not to
 EncryptedSharedPreferences, not to History, not to a bug report. Closing the
@@ -229,6 +229,20 @@ while you are there. So a sandbox credential cannot appear in a Live field one
 tap from a production round trip, and a production credential you type cannot
 end up in the Keychain.
 
+**The name and the email are typed here too, and held the same way.** They
+are who the €1.00 charge is made under: PayCross's own internal person, not
+a sandbox fake. `john.doe@example.com` at a New York address is what the
+sandbox presets send and what production fraud rules are built to refuse, so
+a Live smoke never reuses them. Type a first and a last name — the create
+schema needs both, so the name is split on the last space and a single word
+is refused — and a real internal address, which is where the receipt goes.
+**Use for this session** stays dead until all four fields are filled and the
+address has an `@` in it.
+
+**Nothing about the identity is saved either.** Not to the Keychain, not to
+History, not to a bug report. The run is recorded by its ids and its
+outcome, exactly as a sandbox run is. You type it again next session.
+
 There is no **Verify credentials** in Live. The €1.00 smoke is the
 verification, and a probe would create a real production session as a side
 effect of checking a password.
@@ -239,16 +253,9 @@ Home shows one tile: **Live smoke — €1.00 charge**. No presets, no editor, n
 Custom, no saved-card scenarios, no Google Pay, and no test-card cheat sheet in
 the top bar — those PANs mean nothing on a production merchant.
 
-**On the build you have, the tile refuses.** The identity a Live charge is made
-under is still a placeholder, and that refusal fires first — before the tile
-looks at credentials or asks you anything. Read [The tile refuses on the build
-you have](#the-tile-refuses-on-the-build-you-have) before you go looking for a
-fault. The rest of this section is what happens once the owner has filled that
-constant in.
-
-After that: with no credentials armed the tile still does not ask anything, it
-takes you to Settings. So the only way to reach a dialog is to have already
-typed a production pair in this session.
+With nothing held for this session the tile does not ask you anything —
+it takes you to Settings. So the only way to reach the dialog is to have
+already typed a production pair, a name and an email in this session.
 
 Once it can run, tapping it asks *"This will charge a real card €1.00.
 Continue?"* Cancel is the default and holds the focus, and dismissing the
@@ -300,25 +307,6 @@ same bug-report block every other run gets.
 - **Nothing but the smoke.** No decline scenarios, no saved cards, no
   wallets. Apple Pay will slot in beside the smoke tile once the native iOS
   SDK ships it; it has not.
-
-### The tile refuses on the build you have
-
-Tapping it says *"Live smoke is not configured: `liveSmokeIdentity` in
-`lib/demo/live.dart` is still a placeholder."* **That is the shipped state and
-not a bug.** That constant holds the internal name and email the Live charge is
-made under, and it ships as `REPLACE_ME`. Nobody but the owner fills it in — a
-guessed name or an invented address on a real charge is the one thing this app
-cannot take back. Ask them.
-
-Two things for whoever does supply it, both also written in that file's own doc
-comment. Putting a real identity in turns **two** cases in
-`test/demo/live_test.dart` red — *the shipped identity is a placeholder, and
-says so* and *the refusal names the constant somebody has to change* — and both
-are **meant** to go red, because their whole job is to assert the placeholder is
-still there. Invert what they expect, in the same commit. Do **not** get them
-green by forcing `liveSmokeIdentityProblem` to stay non-null: that passes the
-suite while permanently disabling the tile and leaving a refusal on screen that
-is no longer true.
 
 ### Getting out
 
