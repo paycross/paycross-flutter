@@ -1,95 +1,65 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/live.dart';
-import 'package:paycross_demo/demo/presets.dart';
 
 void main() {
-  test('the shipped identity is a placeholder, and says so', () {
-    // This test is expected to KEEP passing until the owner supplies the
-    // real identity, and to be updated in the same commit that does.
-    // Its job is to make sure the placeholder is detectable rather than
-    // merely conventional -- a constant that looked real would sail
-    // through review and reach a production charge.
-    expect(liveSmokeIdentityUnset, isTrue);
+  const identity = LiveIdentity(
+    firstName: 'Ada',
+    lastName: 'Lovelace',
+    // The IANA-reserved documentation domain, as everywhere else in this
+    // suite. No test in this plan holds an address that could belong to
+    // anybody.
+    email: 'ada@example.org',
+  );
+
+  test('a name is split on the last space', () {
+    // The schema wants first_name and last_name; a human types one name.
+    // The LAST space, not the first: a middle name or an initial belongs to
+    // the given name, and "Ada B. Lovelace" is Lovelace.
+    final one = LiveIdentity.parse(name: 'Ada Lovelace', email: 'a@b.c')!;
+    expect(one.firstName, 'Ada');
+    expect(one.lastName, 'Lovelace');
+
+    final three = LiveIdentity.parse(name: 'Ada B. Lovelace', email: 'a@b.c')!;
+    expect(three.firstName, 'Ada B.');
+    expect(three.lastName, 'Lovelace');
+
+    // Typed on a phone keyboard, where a trailing space is one thumb away.
+    final padded = LiveIdentity.parse(
+      name: '  Ada Lovelace  ',
+      email: '  ada@example.org  ',
+    )!;
+    expect(padded.firstName, 'Ada');
+    expect(padded.lastName, 'Lovelace');
+    expect(padded.email, 'ada@example.org');
   });
 
-  test('the refusal names the constant somebody has to change', () {
-    final problem = liveSmokeIdentityProblem;
-
-    expect(problem, isNotNull);
-    expect(problem, contains('liveSmokeIdentity'));
-    // The whole path, and a path that resolves. The refusal's entire job is
-    // to be believed by somebody holding a phone, so a message still naming
-    // a file that has since moved is worse than no message.
-    expect(problem, contains('lib/demo/live.dart'));
-    expect(
-      File('lib/demo/live.dart').existsSync(),
-      isTrue,
-      reason: 'the refusal names this path; it has to be real',
-    );
+  test('a single word is not a name', () {
+    // `last_name` is in the create schema's customer.required list beside
+    // the other two, so a one-word name is a body that 400s on production --
+    // the one place this app has no cheap way to find out.
+    expect(liveNameProblem('Ada'), isNotNull);
+    expect(liveNameProblem('   '), isNotNull);
+    expect(liveNameProblem(''), isNotNull);
+    expect(liveNameProblem('Ada Lovelace'), isNull);
+    // The parse and the reason are the same rule, not two that can drift.
+    expect(LiveIdentity.parse(name: 'Ada', email: 'ada@example.org'), isNull);
   });
 
-  test('one placeholder field anywhere is enough to refuse', () {
-    // Partially filled is the shape a hurried edit actually leaves behind,
-    // and every field is covered on purpose rather than one of them: the
-    // list inside `isPlaceholder` is hand-maintained, so a field added to
-    // LiveIdentity and forgotten there is a placeholder that reaches a real
-    // charge with nothing left to object.
-    const supplied = LiveIdentity(
-      firstName: 'Ada',
-      lastName: 'Lovelace',
-      email: 'ada@example.org',
-    );
-
-    expect(supplied.isPlaceholder, isFalse);
-
-    for (final half in const [
-      LiveIdentity(
-        firstName: 'REPLACE_ME',
-        lastName: 'Lovelace',
-        email: 'ada@example.org',
-      ),
-      LiveIdentity(
-        firstName: 'Ada',
-        lastName: 'REPLACE_ME',
-        email: 'ada@example.org',
-      ),
-      // An ordinary domain, deliberately: on `.invalid` this case would pass
-      // through the reserved-TLD clause and stop saying anything about
-      // whether `email` is in the list at all.
-      LiveIdentity(
-        firstName: 'Ada',
-        lastName: 'Lovelace',
-        email: 'REPLACE_ME@example.org',
-      ),
-    ]) {
-      expect(
-        half.isPlaceholder,
-        isTrue,
-        reason: '${half.firstName}/${half.lastName}/${half.email}',
-      );
-    }
-  });
-
-  test('a half-edited email that keeps the reserved domain still refuses', () {
-    // The shape of an edit that replaced the local part of
-    // REPLACE_ME@paycross.invalid and left the domain alone. `.invalid` is a
-    // reserved TLD that can never resolve, so this is an address no receipt
-    // will ever reach -- on a charge whose whole point is being refunded by a
-    // human who was told about it.
-    const halfEdited = LiveIdentity(
-      firstName: 'Ada',
-      lastName: 'Lovelace',
-      email: 'smoke@paycross.invalid',
-    );
-
-    expect(halfEdited.isPlaceholder, isTrue);
+  test('an address with no @ is not an email', () {
+    // The whole rule, deliberately. A stricter pattern refuses addresses
+    // that are real, and the person typing this one is the person who knows
+    // what it is.
+    expect(liveEmailProblem('ada'), isNotNull);
+    expect(liveEmailProblem(''), isNotNull);
+    expect(liveEmailProblem('   '), isNotNull);
+    expect(liveEmailProblem('ada@example.org'), isNull);
+    expect(LiveIdentity.parse(name: 'Ada Lovelace', email: 'ada'), isNull);
   });
 
   test('the smoke charges one euro, and says so in its reference', () {
-    final body = jsonDecode(liveSmokeBody) as Map<String, Object?>;
+    final body = jsonDecode(liveSmokeBody(identity)) as Map<String, Object?>;
 
     expect(body['amount'], 100);
     expect(body['currency'], 'EUR');
@@ -100,29 +70,28 @@ void main() {
   });
 
   test('the smoke body carries the identity, not the sandbox customer', () {
-    final body = jsonDecode(liveSmokeBody) as Map<String, Object?>;
+    final body = jsonDecode(liveSmokeBody(identity)) as Map<String, Object?>;
     final customer = body['customer']! as Map<String, Object?>;
 
     // The fake the sandbox presets use. A New York billing address and a
     // john.doe address are what production AVS and fraud rules are for.
     expect(customer['email'], isNot('john.doe@example.com'));
     expect(jsonEncode(body), isNot(contains('123 Main Street')));
-    expect(customer['email'], liveSmokeIdentity.email);
-    expect(customer['first_name'], liveSmokeIdentity.firstName);
+    expect(customer['email'], identity.email);
+    expect(customer['first_name'], identity.firstName);
     // `last_name` is in the create schema's `customer.required` list beside
     // the other two, so a body that loses it is a €1.00 smoke that 400s on
     // production -- the one place this app has no cheap way to find out.
-    expect(customer['last_name'], liveSmokeIdentity.lastName);
+    expect(customer['last_name'], identity.lastName);
     // Omitted outright, not replaced with a plausible one. The sandbox
     // default is `+12025551234` -- the reserved fictional Washington-DC 555
     // range -- and on a real EUR charge from a European device that is the
     // same fabricated-contact-detail risk the billing address is omitted
     // for, plus a wrong number written onto a real person's production
     // customer record. `phone` is not in the create schema's
-    // `customer.required` list, so leaving it out costs nothing. If the
-    // owner ever wants a real internal number sent, it belongs in
-    // `liveSmokeIdentity` under the same placeholder guard as the name and
-    // the email, never as an inherited sandbox default.
+    // `customer.required` list, so leaving it out costs nothing. If a real
+    // internal number is ever wanted it is a third typed field beside the
+    // name and the email, never an inherited sandbox default.
     expect(customer.containsKey('phone'), isFalse);
   });
 
@@ -139,33 +108,32 @@ void main() {
       'Outcome unknown',
       'Integration error',
     ]) {
-      expect(liveSmokePreset.expected.startsWith(prefix), isFalse);
+      expect(liveSmokeExpectation.startsWith(prefix), isFalse);
     }
   });
 
   test('a name the JSON template cannot hold raw still parses', () {
-    // The three owner-supplied fields are interpolated into a hand-built JSON
-    // string, so anything with a quote or a backslash in it has to be escaped
-    // rather than pasted. Nobody picks their surname to suit our template.
-    const awkward = r'Smith "Bud" O\Jones';
+    // The typed fields are interpolated into a hand-built JSON string, so
+    // anything with a quote or a backslash in it has to be escaped rather
+    // than pasted. Nobody picks their surname to suit our template.
+    //
+    // Through `parse` and `liveSmokeBody`, not `liveBody` directly: the
+    // split now sits between what a human types and what is encoded, and
+    // that is the path a real awkward surname takes.
+    const awkward = r'Ada Smith "Bud" O\Jones';
 
-    final body = liveBody(
-      amount: 100,
-      email: 'ada@example.org',
-      firstName: 'Ada',
-      lastName: awkward,
-      customerReference: 'ref',
-    );
+    final typed = LiveIdentity.parse(name: awkward, email: 'ada@example.org')!;
     final customer =
-        (jsonDecode(body) as Map<String, Object?>)['customer']!
+        (jsonDecode(liveSmokeBody(typed)) as Map<String, Object?>)['customer']!
             as Map<String, Object?>;
 
-    expect(customer['last_name'], awkward);
+    expect(customer['first_name'], r'Ada Smith "Bud"');
+    expect(customer['last_name'], r'O\Jones');
   });
 
   test('the smoke body is a template until it is minted', () {
     // `{{timestamp}}` is substituted by the minter at the moment of
     // sending, like every other body in this app.
-    expect(liveSmokeBody, contains('{{timestamp}}'));
+    expect(liveSmokeBody(identity), contains('{{timestamp}}'));
   });
 }
