@@ -1,0 +1,55 @@
+# The same store, on the card that raises a 3-D Secure challenge.
+#
+# A second customer rather than a second card on the first one. Two customers
+# means each session's selector offers exactly ONE row, so "the first stored
+# card" is never ambiguous and `select_saved_card` never has to guess which
+# of two the cell meant.
+#
+# The pairing with saved_card_1_save is what makes this cell worth running:
+# storing a card is a field on the submit, and a submit that goes through an
+# authentication round trip before it is authorized is a different code path
+# from one that does not. If the box only survives the frictionless path,
+# this is the cell that says so.
+id: saved_card_3_challenge_save
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+  options:
+    save_card_config:
+      usage: card_on_file
+    customer:
+      merchant_reference: "CUST-E2E-D5-CHALLENGE"
+# `save_card` runs BEFORE `type_card`, which is not the obvious order and is
+# not negotiable. Typing ends with the CVV, which raises a numeric pad over the
+# bottom ~35% of the iOS sheet, and nothing on this build dismisses that pad
+# (measured in D0, restated in IosDriver.dismiss_keyboard). `scroll_to` drags
+# from y = height * 0.75, which is INSIDE the pad, so the swipe is swallowed
+# and the toggle -- which sits below the fold at y=840 of 874 -- can never be
+# reached. Ticking first means there is no pad to fight.
+#
+# Safe on both platforms because the control is composed from the SESSION
+# (`allowsSaving` / `canSaveCard`), not from card-entry state, so it is on
+# screen before a single digit is typed.
+actions:
+  - paste_token
+  - save_card
+  - type_card
+  - tap_pay
+  - acs:approve
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    saved_card_saved: true
+    threeds:
+      outcome: authenticated
+      flow: challenge
+      liability_shifted: true

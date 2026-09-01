@@ -39,6 +39,10 @@ ANDROID_REARM_BANNERS = (
 _BOUNDS = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 _CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
 
+#: What an XCUIElementTypeSwitch puts in `value`. A mapping rather than
+#: `value == "1"` so anything else answers None instead of False.
+_SWITCH_STATE = {"0": False, "1": True}
+
 
 @dataclass(frozen=True)
 class Node:
@@ -51,6 +55,18 @@ class Node:
     # Android: derived from the bounds area -- "has a box", not "on screen".
     # iOS: WDA's own attribute, so an absent one reads False.
     visible: bool
+    #: A two-state control's state, or None where this node is not one.
+    #:
+    #: Three-valued on purpose. uiautomator writes `checked="false"` on every
+    #: node in the tree -- frame layouts, labels, all of them -- so reading it
+    #: unconditionally would fill a dump with unticked controls that do not
+    #: exist; `checkable` is what says the attribute means anything. WDA has no
+    #: such flag and puts a switch's state in `value`, which also holds
+    #: ordinary text, so only the two literals a switch uses are read.
+    #:
+    #: Defaulted so every existing construction -- both parsers' siblings, and
+    #: the hand-built nodes in the tests -- keeps working unchanged.
+    checked: bool | None = None
 
     @property
     def centre(self) -> tuple[int, int]:
@@ -74,6 +90,13 @@ def parse_uiautomator(xml: str | bytes) -> list[Node]:
                 # uiautomator has no `visible` attribute; a degenerate box is
                 # the only thing it can mean here.
                 visible=x2 > x1 and y2 > y1,
+                # Gated on `checkable`, which is what makes `checked` mean
+                # anything: uiautomator writes both on every node.
+                checked=(
+                    element.get("checked") == "true"
+                    if element.get("checkable") == "true"
+                    else None
+                ),
             )
         )
     return nodes
@@ -100,6 +123,10 @@ def parse_wda(xml: str | bytes) -> list[Node]:
                 value=element.get("value", ""),
                 bounds=(x, y, x + width, y + height),
                 visible=element.get("visible") == "true",
+                # Only the two literals a switch uses. `value` also carries
+                # ordinary text -- an amount, a field's contents -- and "10.00
+                # EUR" is not an unticked control.
+                checked=_SWITCH_STATE.get(element.get("value")),
             )
         )
     return nodes

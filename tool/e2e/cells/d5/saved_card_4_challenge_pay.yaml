@@ -1,0 +1,48 @@
+# Pay again with the stored challenge card, re-entering the CVV.
+#
+# The pair's real question. A saved-card submit carries `card.saved_uuid`
+# rather than a PAN, and the sandbox routes its outcome on the last four
+# digits of the PAN it detokenizes to -- so the challenge is expected to come
+# back on the re-use exactly as it did on the store, and the SDK has to drive
+# a 3DS round trip from a form that never held a card number. That is the one
+# thing the frictionless pair cannot show.
+#
+# `acs:approve` and the `threeds` block therefore both assert rather than
+# discover: they were confirmed by hand on both platforms before this cell was
+# committed (see the probe record in plan-b-task08-progress.md). If a later
+# sandbox change stops challenging a stored credential, this cell fails on the
+# ACS wait and says so, which is the right way round -- a silently
+# frictionless re-use would be a liability-shift regression.
+id: saved_card_4_challenge_pay
+platforms: [android, ios]
+card:
+  pan: "4111111111153220"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+  options:
+    saved_cards:
+      show: all
+    customer:
+      merchant_reference: "CUST-E2E-D5-CHALLENGE"
+actions:
+  - paste_token
+  - expect saved_card
+  - select_saved_card
+  - type_cvv
+  - tap_pay
+  - acs:approve
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
+    saved_card_used: true
+    threeds:
+      outcome: authenticated
+      flow: challenge
+      liability_shifted: true
