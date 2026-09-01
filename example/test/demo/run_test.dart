@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/history.dart';
+import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/run.dart';
@@ -524,6 +525,51 @@ void main() {
 
     expect(sent, '{"amount":2500,"currency":"USD"}');
   });
+  testWidgets('a Live run records no identity in History or its bug report', (
+    tester,
+  ) async {
+    // The body that is minted carries a real person's name and address. The
+    // history row and the bug-report block are the two things that outlive
+    // the run -- one on the device, one on a clipboard headed for a ticket
+    // -- and neither may carry either.
+    const identity = LiveIdentity(
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      email: 'ada@example.org',
+    );
+    final preset = liveSmokePreset(identity);
+    final backend = InMemoryHistoryBackend();
+    // The precondition this case rests on: the body really does contain
+    // both, so finding neither downstream means something.
+    expect(preset.body, contains('ada@example.org'));
+    expect(preset.body, contains('Lovelace'));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RunScreen(
+          preset: preset,
+          body: preset.body,
+          live: true,
+          mintSession: (body) async => const MintedSession(
+            id: 'sess-live',
+            token: 'a-live-token',
+            sentBody: 'ignored',
+          ),
+          present: (_) async => _success('txn-1'),
+          history: HistoryStore(backend: backend),
+          readVersions: () async =>
+              (demo: '0.1.0+7', plugin: '0.1.0', nativeSdk: 'unknown'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final stored = backend.entries.join('\n');
+    expect(stored, isNotEmpty);
+    expect(stored, isNot(contains('ada@example.org')));
+    expect(stored, isNot(contains('Lovelace')));
+  });
+
   testWidgets('a Live run says to refund it, and gives the transaction id', (
     tester,
   ) async {
