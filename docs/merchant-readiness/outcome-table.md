@@ -61,7 +61,7 @@ the rig dumps, and it identifies the build precisely
 | `Sandbox` badge present | the redesigned page (`payment-sandbox` `687bf4e`) |
 | `Sandbox 3DS Challenge` **absent** from the tree | the old `<strong>` is gone; the phrase survives only in `<title>`, which no accessibility tree exposes |
 | headings `AUTHENTICATION OUTCOMES` / `ISSUER DECLINES` / `TECHNICAL / OTHER` | the three group labels `origin/main` declares, CSS-uppercased |
-| **33** outcome buttons | exactly the 33 outcome constants in `origin/main`'s `internal/challenge/render.go` |
+| **27** outcome buttons | exactly the 27 outcome constants in `origin/main`'s `internal/sandboxcore/outcome.go`, which `internal/challenge/render.go` groups 6 + 13 + 8 into the three headings above |
 
 **TEST is deployed at, or behaviourally identical to, `payment-sandbox`
 `origin/main` (1d45a9a).** The four-month gap between that redesign being
@@ -358,8 +358,10 @@ what prove the attribution logic.
 
 ## Findings and follow-ups
 
-Nothing new was filed off this run. What it produced is one reproduction, one
-open question it could not close, and one divergence that no cell can reach.
+This run produced one reproduction, one open question it could not close, and
+one divergence that no cell can reach. **The divergence was filed off this
+run** — `payment-android-sdk#31`, opened 2026-09-01. The other two added
+observations to things already on record.
 
 ### 1. `payment-android-sdk#25` — reproduced, fourth independent session
 
