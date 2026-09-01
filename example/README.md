@@ -1,13 +1,19 @@
 # PayCross Demo
 
-An internal QA app for the PayCross **TEST sandbox**. Install it, type TEST
-merchant credentials into it once, and run payment scenarios on a real phone
-without anybody minting a session token for you.
+An internal QA app for the PayCross payment SDKs. Install it, type merchant
+credentials into it once, and run payment scenarios on a real phone without
+anybody minting a session token for you.
 
-**It holds TEST M2M credentials on your phone.** It is for colleagues, never
-for merchants or anyone outside the company, and it has no way to reach
-production — the endpoints are compile-time constants and there is no
-environment switch. See [`lib/demo/endpoints.dart`](lib/demo/endpoints.dart).
+**It holds merchant credentials on your phone.** It is for colleagues, never
+for merchants or anyone outside the company.
+
+It has two environments. **Test** is the PayCross sandbox and is where
+everything in this guide happens unless it says otherwise. **Live** is
+production: real cards, real money, one scenario, and a red banner across
+every screen while you are in it. The app starts in Test on every launch and
+the choice is never remembered. See [Live mode](#live-mode). Both sets of
+endpoints are compile-time constants; they are in
+[`lib/demo/endpoints.dart`](lib/demo/endpoints.dart).
 
 ## Install
 
@@ -50,8 +56,9 @@ is no iOS build to install yet.
 
 ## First run: Settings
 
-Open the gear in the top right. The screen says "Sandbox only" and shows the
-endpoint it will use.
+Open the gear in the top right. At the top is the **environment switch** —
+Test or Live — and under it a line naming the endpoint that environment will
+use. In Test it is the sandbox, and everything below is as it always was.
 
 1. **Client ID** and **Client secret** — TEST M2M credentials. Get them from
    the team. They are not in this repo and must never be written into it.
@@ -72,9 +79,15 @@ launch will not use.
 Pay merchant id — from the secure store.
 
 Home's top strip tells you where you stand: "Sandbox — not configured", or
-"Sandbox — client " and the first six characters of the id.
+"Sandbox — client " and the first six characters of the id. In Live it is a
+different strip — "Live — no credentials this session", or "Live — client "
+and six characters — and it has no secure store in reach at all: it can only
+show what is in memory for this session.
 
 ## Home: the scenarios
+
+This is what Home looks like in Test. In Live it has one tile and none of
+what follows — see [Live mode](#live-mode).
 
 Tap a tile to run it. Each tile carries what should happen and which card to
 type. The pencil on the right opens the raw session body first, so you can
@@ -98,7 +111,9 @@ indicator; there is no spinner.
 ## Test cards
 
 Every card below: expiry **12/28**, CVV **123**, cardholder **John Doe**. The
-same list is in the app under the card icon in the top bar, and in
+same list is in the app under the card icon in the top bar — in Test; Live
+hides that icon, because none of these PANs does anything on a production
+merchant — and in
 [`lib/demo/test_cards.dart`](lib/demo/test_cards.dart).
 
 | PAN | What it does |
@@ -140,7 +155,7 @@ adb shell am start -a android.intent.action.VIEW \
 or the preset's exact name percent-encoded. `surface=sheet` is the only
 surface this app has.
 
-Three things to know:
+Four things to know:
 
 - **It only works from Home.** With Settings, History, the cheat sheet, the
   editor or a previous run open, the app says *"Link ignored — close the open
@@ -152,6 +167,8 @@ Three things to know:
 - A link carries a preset name and nothing else. It cannot carry a credential,
   a token or a body, so one left in your shell history says only which
   scenario you ran.
+- **In Live they do not work at all.** The app says *"Live mode — links are
+  disabled"* and starts nothing.
 
 ## History, and reporting a problem
 
@@ -174,6 +191,130 @@ that owns the problem:
 
 Paste the bug report block, say what you expected, and say what you saw.
 
+## Live mode
+
+Live mode runs **one** scenario against the PayCross production merchant with
+a **real card**: a €1.00 charge, which you refund by hand immediately
+afterwards. It exists so the mobile SDKs can be smoke-tested against
+production before a release. It is not a QA tool and it is not for routine
+use.
+
+**The app starts in Test on every launch.** The environment is deliberately
+never remembered, so the worst a forgotten toggle can cost you is one
+relaunch.
+
+### Getting in
+
+1. Settings → the environment switch → **Live**. Nothing happens yet.
+2. A field appears. Type `LIVE` — the word, in capitals. The switch button
+   wakes up.
+3. Press **Switch to Live**. A red `LIVE — REAL MONEY` bar appears across
+   every screen and stays there until you leave.
+4. Type the **production** client ID and secret and press **Use for this
+   session**.
+
+### The credentials
+
+**They are held in memory and written nowhere.** Not to the Keychain, not to
+EncryptedSharedPreferences, not to History, not to a bug report. Closing the
+app forgets them. Switching back to Test forgets them. There is no Save,
+there is no Forget, and there is nothing on the device to leak — which is
+also why you type them again every time.
+
+What Live does *not* claim is that it never opens the secure store. Settings
+still reads it on the way in, the same call it makes in Test, because that is
+the screen you come back to. What Live changes is the two things that matter:
+it never puts what it read on a Live screen, and it never writes to the store
+while you are there. So a sandbox credential cannot appear in a Live field one
+tap from a production round trip, and a production credential you type cannot
+end up in the Keychain.
+
+There is no **Verify credentials** in Live. The €1.00 smoke is the
+verification, and a probe would create a real production session as a side
+effect of checking a password.
+
+### Running the smoke
+
+Home shows one tile: **Live smoke — €1.00 charge**. No presets, no editor, no
+Custom, no saved-card scenarios, no Google Pay, and no test-card cheat sheet in
+the top bar — those PANs mean nothing on a production merchant.
+
+With no credentials armed the tile does not ask anything: it takes you to
+Settings, so the only way to a dialog is to have already typed a production
+pair in this session.
+
+Once it can run, tapping it asks *"This will charge a real card €1.00.
+Continue?"* Cancel is the default and holds the focus, and dismissing the
+dialog — Android back button included — counts as Cancel. Continue mints a production session and opens the
+native sheet, and from there it is an ordinary payment with an ordinary card.
+
+**If you ever change the amount, change it in four places.** It is the constant
+`liveSmokeMinorUnits` in [`lib/demo/live.dart`](lib/demo/live.dart); the charge
+body and the confirmation dialog derive from it, but three pieces of copy spell
+`€1.00` out by hand — the tile's title, the tile's subtitle and the Live
+paragraph at the top of Home. Miss one and the app quotes two different numbers
+to the person about to spend the money.
+
+### Afterwards — refund it
+
+The result screen shows a red block with **an id and a copy button**, and what
+to do about it. **This app cannot refund anything**; that is deliberate for a
+tool used this rarely.
+
+The block is on every Live run that got as far as an id, **including one the
+bank refused**. It is not a signal that money moved — it is the id you need in
+order to go and find out. Only the sentence changes:
+
+- Approved, cancelled, timed out, or any other unresolved end: *"Refund this
+  in the back office now."*
+- Refused: *"Refused, so nothing should have been captured. Check the back
+  office by this id before you assume it."*
+
+If the run ended without a transaction id — you cancelled the sheet, it timed
+out mid-poll, something threw — the block shows the **session id** instead and
+says to search the back office by it. One of the two always exists, because
+the session is minted before the sheet opens. If the *mint itself* failed
+there is no id and also no charge, so there is nothing to refund and the error
+message is the whole story.
+
+The run lands in History marked **LIVE** in red, with the same ids and the
+same bug-report block every other run gets.
+
+### What Live mode will not do
+
+- **Deep links are refused.** `paycross-flutter-demo://run` says *"Live
+  mode — links are disabled"* on screen and does nothing else. A real charge
+  goes through a confirmation dialog, and a link is exactly the shape that
+  arrives without one.
+- **The amount is fixed.** €1.00, hardcoded, no editor anywhere near it.
+- **Nothing but the smoke.** No decline scenarios, no saved cards, no
+  wallets. Apple Pay will slot in beside the smoke tile once the native iOS
+  SDK ships it; it has not.
+
+### The tile refuses on the build you have
+
+Tapping it says *"Live smoke is not configured: `liveSmokeIdentity` in
+`lib/demo/live.dart` is still a placeholder."* **That is the shipped state and
+not a bug.** That constant holds the internal name and email the Live charge is
+made under, and it ships as `REPLACE_ME`. Nobody but the owner fills it in — a
+guessed name or an invented address on a real charge is the one thing this app
+cannot take back. Ask them.
+
+Two things for whoever does supply it, both also written in that file's own doc
+comment. Putting a real identity in turns **two** cases in
+`test/demo/live_test.dart` red — *the shipped identity is a placeholder, and
+says so* and *the refusal names the constant somebody has to change* — and both
+are **meant** to go red, because their whole job is to assert the placeholder is
+still there. Invert what they expect, in the same commit. Do **not** get them
+green by forcing `liveSmokeIdentityProblem` to stay non-null: that passes the
+suite while permanently disabling the tile and leaving a refusal on screen that
+is no longer true.
+
+### Getting out
+
+Settings → **Test**. It happens immediately, the credentials are dropped, and
+the banner goes. So does killing the app.
+
 ## Known limitations
 
 - **A run that fails to mint writes no History row**, and gets no "Copy bug
@@ -183,12 +324,19 @@ Paste the bug report block, say what you expected, and say what you saw.
 - **The automation build and this build are the same app id**, so they replace
   each other. Install one at a time.
 - Tiles going dead is the only busy state. There is no progress indicator.
+- **Live credentials are typed every session.** There is nowhere to save them
+  and that is the design.
+- **Live has no refund, no receipt and no spend tracking.** The transaction
+  id and the back office are the whole workflow.
+- **A Live run that never reaches the sheet still minted a session.** No
+  charge, but a session exists on production; it expires on its own.
 
 ## The automation build
 
 Built with `--dart-define=PAYCROSS_E2E=true`, the app shows the frozen
-paste-token screen instead of Home. That build reads no stored credentials and
-registers no deep-link handler; it exists for the E2E matrix runner in
+paste-token screen instead of Home. That build reads no stored credentials,
+registers no deep-link handler, and never sees the environment switch at all —
+automation always runs Test. It exists for the E2E matrix runner in
 `tool/e2e/`, and it is **not** what a colleague installs.
 
 If you are changing this app: do not touch

@@ -485,10 +485,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ],
           // Names the environment it is configuring and the host it will
-          // reach, in both directions. The shipped line promised there was no
-          // production switch; there is one now, immediately above this, and
-          // a promise left standing after it stopped being true is worse than
-          // no promise at all.
+          // reach, in both directions. The line shipped in v0.1.0 promised
+          // this build had no way to switch; there is one now, immediately
+          // above this, and a promise left standing after it stopped being
+          // true is worse than no promise at all.
           Text(
             live
                 ? 'Live — ${liveEndpoints.sessionsUrl}. These must be '

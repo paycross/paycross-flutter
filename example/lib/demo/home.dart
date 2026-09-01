@@ -433,9 +433,9 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-            // The shipped line promised there was no way to reach production.
-            // There is one now, so the promise is replaced rather than left
-            // standing while being false.
+            // The line shipped in v0.1.0 promised this build could not
+            // reach production. It can now, so the promise is replaced
+            // rather than left standing while being false.
             child: Text(
               key: const ValueKey('homeEnvironment'),
               live
