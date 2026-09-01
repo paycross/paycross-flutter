@@ -1612,6 +1612,72 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('the dead session button says why it is dead, where it is dead', (
+    tester,
+  ) async {
+    // The same dead end the gate's button had, and fixed the same way: a
+    // dimmed button with no reason attached is unreachable for a screen
+    // reader, because the line that explains it is a separate Text beside
+    // it. Both renderings are pinned here, and so is the fact that they are
+    // ONE string -- the visible line and the hint are the same constant, so
+    // a future edit cannot reword one and leave the other saying something
+    // else.
+    final semantics = tester.ensureSemantics();
+    // The button sits below the 800x600 fold once the two identity fields
+    // are on the screen, and a ListView never builds what is under it.
+    useTallSurface(tester);
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await _liveSettings(
+        state: state,
+        store: SecretStore(backend: InMemorySecretBackend()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final hint = tester
+        .getSemantics(find.byKey(const ValueKey('useForThisSession')))
+        .hint;
+    expect(hint, isNotEmpty);
+    // Named individually rather than as one sentence: what the reason has to
+    // do is say which of the four inputs is still missing something, and
+    // that survives the connective wording being changed.
+    expect(hint, contains('client ID'));
+    expect(hint, contains('client secret'));
+    expect(hint, contains('name'));
+    expect(hint, contains('email'));
+    // And it is on screen too, as the same string. A sighted human gets the
+    // reason beside the button; a screen reader gets it on the button's own
+    // node; neither is the other's fallback.
+    expect(find.text(hint), findsOneWidget);
+
+    // It stops nagging once all four are right and the button is live --
+    // both halves, because a hint that outlives the condition it describes
+    // is noise on every later swipe.
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada Lovelace',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada@example.org',
+    );
+    await tester.pumpAndSettle();
+
+    expect(_enabled(tester, 'Use for this session'), isTrue);
+    expect(
+      tester.getSemantics(find.byKey(const ValueKey('useForThisSession'))).hint,
+      isEmpty,
+    );
+    expect(find.text(hint), findsNothing);
+    semantics.dispose();
+  });
+
   testWidgets('typing in Test does not take away the last outcome', (
     tester,
   ) async {
