@@ -949,8 +949,8 @@ pytest tool/e2e/tests -q
 parsing, the redaction, the label matching and the merchant verification — the
 places where a silent mistake would be read as an SDK finding. The shipped cell
 files are validated here too. CI runs this on Linux on every PR, in its own job,
-alongside the plugin's 18 Dart tests and the example's 274 — the label contract
-among them, since the demo app landed.
+alongside the plugin's 18 Dart tests and the example's own suite — the label
+contract among them, since the demo app landed.
 
 ## Troubleshooting
 
