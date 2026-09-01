@@ -3,7 +3,15 @@ import 'presets.dart';
 /// The amount a Live smoke charges, in minor units. One euro.
 ///
 /// Hardcoded, with no editor anywhere near it. A Live amount field is a
-/// Live typo, and the difference between €1.00 and €100.00 is one keystroke.
+/// Live typo, and the difference between one euro and a hundred is one
+/// keystroke.
+///
+/// **Changing it is four edits, not one.** The charge body and the
+/// confirmation dialog derive from this constant, but three pieces of copy
+/// spell the figure out by hand -- [liveSmokePreset]'s name and its
+/// `expected` line just below, and Home's Live paragraph. Change one and the
+/// app quotes two different numbers to the person about to spend the money.
+/// The README's Live mode section says the same thing to the same reader.
 const int liveSmokeMinorUnits = 100;
 
 /// Who a Live smoke charges.
@@ -98,11 +106,24 @@ const String liveSmokeCustomerReference = 'paycross_live_smoke';
 /// app held two, one of them omitted the customer object the create schema
 /// requires and answered 400 on the first tester's phone (PR #30).
 ///
-/// No billing address: `customer.address` is absent from the create schema's
-/// `customer.required` list, which holds only `first_name`, `last_name` and
-/// `email`, and the schema's own description calls the address a prefill. So
-/// the minimal fields are all the API asks for, and a fabricated production
-/// address is the AVS risk this whole constant exists to avoid.
+/// No billing address and no phone number. The create schema's
+/// `customer.required` list holds only `first_name`, `last_name` and
+/// `email`; `address` is additionally nullable and its own description calls
+/// it a prefill. So the minimal fields are all the API asks for.
+///
+/// Both omissions are the same decision. A fabricated production address is
+/// the AVS risk this whole constant exists to avoid, and the phone the
+/// sandbox presets carry -- `+12025551234`, the reserved fictional
+/// Washington-DC 555 range -- is a fabricated contact detail of the same
+/// class, scored by the same fraud engines, on a EUR charge from a European
+/// device. It would also write a wrong number onto a real person's
+/// production customer record. A smoke that declines for either of those
+/// teaches the tester nothing about the SDK, which is the failure this
+/// design was written to prevent.
+///
+/// If the owner wants a real internal number sent, it belongs in
+/// [liveSmokeIdentity] beside the name and the email, under the same
+/// placeholder guard -- never as an inherited sandbox default.
 final String liveSmokeBody = liveBody(
   amount: liveSmokeMinorUnits,
   email: liveSmokeIdentity.email,

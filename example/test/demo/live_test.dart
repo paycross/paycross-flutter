@@ -113,6 +113,17 @@ void main() {
     // the other two, so a body that loses it is a €1.00 smoke that 400s on
     // production -- the one place this app has no cheap way to find out.
     expect(customer['last_name'], liveSmokeIdentity.lastName);
+    // Omitted outright, not replaced with a plausible one. The sandbox
+    // default is `+12025551234` -- the reserved fictional Washington-DC 555
+    // range -- and on a real EUR charge from a European device that is the
+    // same fabricated-contact-detail risk the billing address is omitted
+    // for, plus a wrong number written onto a real person's production
+    // customer record. `phone` is not in the create schema's
+    // `customer.required` list, so leaving it out costs nothing. If the
+    // owner ever wants a real internal number sent, it belongs in
+    // `liveSmokeIdentity` under the same placeholder guard as the name and
+    // the email, never as an inherited sandbox default.
+    expect(customer.containsKey('phone'), isFalse);
   });
 
   test('the smoke preset expects nothing a runner could misread', () {

@@ -42,7 +42,7 @@ String _body({
   String email = 'john.doe@example.com',
   String firstName = 'John',
   String lastName = 'Doe',
-  String phone = '+12025551234',
+  String? phone = '+12025551234',
   String? billing = _sandboxBilling,
 }) =>
     '''
@@ -56,8 +56,7 @@ String _body({
   "customer": {
     "email": ${jsonEncode(email)},
     "first_name": ${jsonEncode(firstName)},
-    "last_name": ${jsonEncode(lastName)},
-    "phone": "$phone",
+    "last_name": ${jsonEncode(lastName)},${phone == null ? '' : '\n    "phone": ${jsonEncode(phone)},'}
     "merchant_reference": "${customer ?? 'CUST-{{timestamp}}'}"${billing == null ? '' : ',\n    "address": {\n$billing\n    }'}
   }
 }''';
@@ -117,7 +116,8 @@ String liveBody({
   email: email,
   firstName: firstName,
   lastName: lastName,
-  // Omitted, not faked. See `live.dart`.
+  // Both omitted, not faked, and for one reason. See `live.dart`.
+  phone: null,
   billing: null,
 );
 
