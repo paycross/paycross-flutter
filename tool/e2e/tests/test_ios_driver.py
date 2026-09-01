@@ -1160,6 +1160,325 @@ def test_type_card_settles_between_the_taps_and_the_keystrokes():
     assert naps == [0.5] * 9
 
 
+# -- save_card ----------------------------------------------------------------
+
+#: The real store form, dumped from the simulator on 2026-08-31. Taken after
+#: `paste_token` and BEFORE `type_card`, which is the state the cell now uses:
+#: with no keyboard up, and with the toggle at y=840 on an 874-tall screen --
+#: below the pinned Pay bar and reported `visible="false"`, which is why iOS
+#: needs a scroll where Android does not.
+SAVE_FORM_IOS = (FIXTURES / "ios-save-card-form.xml").read_text()
+
+#: The same form after one swipe has brought the toggle up into the window.
+#: BOTH switches move: SwiftUI renders the labelled row and the control inside
+#: it as separate `XCUIElementTypeSwitch` nodes, and which of the two is
+#: tappable is the whole point of the test below.
+SAVE_FORM_IOS_ONSCREEN = SAVE_FORM_IOS.replace(
+    'visible="false" accessible="true" x="20" y="840"',
+    'visible="true" accessible="true" x="20" y="440"',
+).replace(
+    'visible="false" accessible="false" x="321" y="840"',
+    'visible="true" accessible="false" x="321" y="440"',
+)
+assert SAVE_FORM_IOS_ONSCREEN.count('y="440"') == 2, "both switches must move"
+
+#: And after the tap took.
+SAVE_FORM_IOS_TICKED = SAVE_FORM_IOS_ONSCREEN.replace(
+    'value="0" name="Save this card"', 'value="1" name="Save this card"'
+)
+assert SAVE_FORM_IOS_TICKED != SAVE_FORM_IOS_ONSCREEN
+
+#: The ticked form with the sheet still scrolled -- `amount` at y=37, tucked
+#: under a navigation bar whose bottom is y=132. Exactly what the live run left
+#: behind, and what made `dismiss_keyboard`'s fallback tap dead space.
+SAVE_FORM_IOS_SCROLLED = SAVE_FORM_IOS_TICKED.replace(
+    'name="amount" label="\u20ac10,00" enabled="true" visible="true" '
+    'accessible="true" x="20" y="171"',
+    'name="amount" label="\u20ac10,00" enabled="true" visible="true" '
+    'accessible="true" x="20" y="37"',
+)
+assert SAVE_FORM_IOS_SCROLLED != SAVE_FORM_IOS_TICKED, "amount did not move"
+
+
+class SaveCardFakeSsh(FakeSsh):
+    """Serves the toggle off-screen until a drag arrives, then on-screen.
+
+    Shaped like `ScrollingFakeSsh`, because the situation is the same one: the
+    control is in the tree from the moment the sheet renders and off-screen for
+    just as long. `ticks` makes the tap flip it, so the verification has
+    something real to read rather than a fixture that was ticked all along.
+    """
+
+    def __init__(self, ticks=True):
+        super().__init__()
+        self.scrolled = False
+        self.restored = False
+        self.tapped = False
+        self.ticks = ticks
+
+    def __call__(self, command, *, stdin=None):
+        if "dragfromtoforduration" in command:
+            raw = command.split("printf %s ", 1)[1].split(" | curl", 1)[0]
+            body = json.loads(shlex.split(raw)[0])
+            # Which way the drag went is the whole difference between reaching
+            # the toggle and putting the sheet back.
+            if body["fromY"] > body["toY"]:
+                self.scrolled = True
+            else:
+                self.restored = True
+        if "/wda/tap" in command:
+            self.tapped = True
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            if self.tapped and self.ticks:
+                if self.restored:
+                    return source_response(SAVE_FORM_IOS_TICKED)
+                return source_response(SAVE_FORM_IOS_SCROLLED)
+            return source_response(
+                SAVE_FORM_IOS_ONSCREEN if self.scrolled else SAVE_FORM_IOS
+            )
+        return super().__call__(command, stdin=stdin)
+
+
+def test_save_card_scrolls_to_the_toggle_before_tapping_it():
+    # Measured: with no keyboard up the toggle is still at y=840 on an
+    # 874-tall screen and WDA reports it not visible, so a name match alone
+    # finds a node that cannot be tapped. Android needs none of this -- its
+    # checkbox sits at y=1125 of 2400.
+    ssh = SaveCardFakeSsh()
+
+    driver(ssh).save_card()
+
+    assert ssh.scrolled, "the toggle is below the fold; a bare tap would miss"
+    assert ssh.tapped
+
+
+def test_save_card_taps_the_control_and_not_the_labelled_row():
+    """Measured on the simulator 2026-08-31, and it failed first.
+
+    SwiftUI exposes `Toggle` as TWO switch nodes: the labelled row
+    (x=20 w=362, name "Save this card") and the control inside it (x=321 w=63,
+    no name at all). Tapping the row's centre is what a label match gives you,
+    and on the device it did nothing -- the probe came back with "the tap at
+    (201, 715) did not turn on 'Save this card'". Only the control toggles.
+
+    So this is the iOS twin of the Android hazard: the node you can name is not
+    the node you can tap. Both platforms need the same trick and neither can
+    use its visible label as the target.
+    """
+    ssh = SaveCardFakeSsh()
+
+    driver(ssh).save_card()
+
+    # The control's centre (321 + 63/2, 440 + 28/2), not the row's (201, 454).
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 352.0, "y": 454.0}]
+
+
+def test_save_card_verifies_the_toggle_took():
+    # The same guarantee as Android's, read off a different attribute: WDA
+    # gives a switch's state as value "0"/"1", which `tree.parse_wda`
+    # normalises into `checked`.
+    ssh = SaveCardFakeSsh(ticks=False)
+
+    with pytest.raises(DriverError) as excinfo:
+        # `_poll`'s deadline is real time while the injected sleep is not, so
+        # a test that means to reach it says zero rather than spending thirty
+        # seconds of the suite getting there.
+        driver(ssh).save_card(timeout=0)
+
+    assert "did not turn on" in str(excinfo.value)
+
+
+def test_save_card_leaves_an_already_on_toggle_alone():
+    # Tapping it again turns it OFF, and the cell would then assert a save
+    # that its own action had just undone.
+    class AlreadyOn(FakeSsh):
+        def __call__(self, command, *, stdin=None):
+            if "/source" in command:
+                self.calls.append(command)
+                self.stdins.append(stdin)
+                return source_response(SAVE_FORM_IOS_TICKED)
+            return super().__call__(command, stdin=stdin)
+
+    ssh = AlreadyOn()
+
+    driver(ssh).save_card()
+
+    assert payloads_for(ssh, "/wda/tap") == []
+
+
+def test_save_card_says_so_when_the_session_never_rendered_a_toggle():
+    # `allowsSaving` is false without `save_card_config` on the session, and
+    # the Toggle is not built at all. A cell-authoring mistake, named as one.
+    ssh = FakeSsh()  # the ordinary ACS fixture: no switch anywhere
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).save_card()
+
+    assert "Save this card" in str(excinfo.value)
+
+
+# -- select_saved_card --------------------------------------------------------
+
+#: The saved-card sheet, dumped from the simulator on 2026-08-31. The first one
+#: taken in this campaign, on either platform.
+#:
+#: What it settles: the picker's rows are `Button`s whose accessible name is
+#: SwiftUI's concatenation of the row's children -- `"Visa •••• 0000, 12/28"`,
+#: brand, four U+2022, last4, then the expiry after a comma. There is no
+#: accessibility identifier anywhere in the picker, so that label is the only
+#: handle, which is D5's iOS accessibility finding stated as a fixture.
+SAVED_SHEET_IOS = (FIXTURES / "ios-saved-card-sheet.xml").read_text()
+
+#: The same sheet once the stored card is chosen: the fresh-card fields are
+#: gone, which is what `select_saved_card` verifies against.
+SAVED_SHEET_IOS_CHOSEN = SAVED_SHEET_IOS.replace('name="cardNumber"', 'name="gone"')
+assert SAVED_SHEET_IOS_CHOSEN != SAVED_SHEET_IOS
+
+
+class SelectFakeSsh(FakeSsh):
+    """Serves the unselected sheet until a tap arrives, then the selected one."""
+
+    def __init__(self, switches=True):
+        super().__init__()
+        self.tapped = False
+        self.switches = switches
+
+    def __call__(self, command, *, stdin=None):
+        if "/wda/tap" in command:
+            self.tapped = True
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            chosen = self.tapped and self.switches
+            sheet = SAVED_SHEET_IOS_CHOSEN if chosen else SAVED_SHEET_IOS
+            return source_response(sheet)
+        return super().__call__(command, stdin=stdin)
+
+
+def test_select_saved_card_taps_the_stored_row_and_not_the_new_card_row():
+    # Both rows are Buttons of the same size in the same list. The stored one
+    # is told apart by the four U+2022 bullets in its label -- `"\(brand
+    # .displayName) •••• \(last4)"` -- which the "Use a new card" row has not.
+    ssh = SelectFakeSsh()
+
+    driver(ssh).select_saved_card()
+
+    # The stored row is at (20, 232, 382, 277); "Use a new card" is 52pt below.
+    assert payloads_for(ssh, "/wda/tap") == [{"x": 201.0, "y": 254.0}]
+
+
+def test_select_saved_card_raises_rather_than_paying_with_a_fresh_card():
+    """The failure mode worth spending code on.
+
+    A `select_saved_card` that cannot verify the switch must raise. If it
+    returned quietly the cell would type a CVV into the FRESH form, submit a
+    blank card, and report a saved-card payment -- and `saved_card_used` is the
+    only assertion that would notice, an hour into a matrix run.
+    """
+    ssh = SelectFakeSsh(switches=False)  # the tap lands, nothing changes
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).select_saved_card(timeout=0)
+
+    assert "still showing the new-card form" in str(excinfo.value)
+
+
+def test_select_saved_card_says_so_when_no_stored_card_is_offered():
+    # `saved_cards: {show: all}` missing from the session, or the customer has
+    # no cards. A cell-authoring or setup fault, named as one rather than
+    # timing out against a row that was never going to be there.
+    ssh = FakeSsh()  # the ordinary ACS fixture: no picker at all
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).select_saved_card(timeout=0)
+
+    assert "no stored-card row" in str(excinfo.value)
+
+
+def test_save_card_puts_the_scroll_back_where_it_found_it():
+    """Measured, and it cost a live cell.
+
+    `save_card` has to scroll to reach the toggle. Leaving the sheet scrolled
+    poisons everything after it: on the live run `amount` ended up at y=37,
+    tucked under the navigation bar, and `dismiss_keyboard`'s fallback -- which
+    taps `amount` -- hit dead space. The CVV pad then survived all the way onto
+    the ACS page and `acs()` refused, failing `saved_card_3_challenge_save`
+    while its interleaved control passed.
+
+    So the scroll is restored before returning. The anchor is `amount`, which
+    the SDK tags and never moves within the form.
+    """
+    ssh = SaveCardFakeSsh()
+
+    driver(ssh).save_card()
+
+    drags = payloads_for(ssh, "/wda/dragfromtoforduration")
+    assert drags, "it has to scroll down to reach the toggle"
+    # The last drag goes the other way: down the screen, not up it.
+    assert drags[-1]["fromY"] < drags[-1]["toY"], drags[-1]
+    # And the first one went up, which is what reached the toggle.
+    assert drags[0]["fromY"] > drags[0]["toY"], drags[0]
+
+
+# -- wait_saved_card ----------------------------------------------------------
+
+
+def test_wait_saved_card_answers_false_rather_than_raising_when_none_is_offered():
+    # Same contract as Android's: "no stored card was offered" is a cell
+    # verdict, and a DriverError would spend an interleaved control check on a
+    # rig that was never in doubt.
+    assert driver(FakeSsh()).wait_saved_card(timeout=0) is False
+
+
+# -- type_cvv -----------------------------------------------------------------
+
+
+def test_type_cvv_fills_the_cvv_field_and_touches_nothing_else():
+    # Literally the same view as the fresh form's: `cvvField` is declared once
+    # in CardFormView and rendered by both branches, identifier and all. So
+    # there is one matcher here, not a saved-card variant of one.
+    ssh = FakeSsh()
+    d = driver(ssh)
+    tapped = []
+    d.tap_identifier = lambda name, **kw: tapped.append(name)
+
+    d.type_cvv("123")
+
+    assert tapped == ["cvv"]
+    assert typed_strings(ssh) == ["123"]
+
+
+def test_type_cvv_tries_the_keyboard_away_without_failing_the_cell_over_it():
+    # Same bargain `type_card` strikes, and for the same measured reason: the
+    # numeric pad has no Done key and nothing on this build dismisses it, but
+    # on the form it covers nothing that matters. A cell must not die here.
+    ssh = KeyboardFakeSsh(clears_on_tap=False)
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.type_cvv("123")
+
+    keys_at = max(i for i, c in enumerate(ssh.calls) if "/wda/keys" in c)
+    dismiss_at = next(i for i, c in enumerate(ssh.calls) if "keyboard/dismiss" in c)
+    assert dismiss_at > keys_at
+
+
+def test_type_cvv_does_not_read_the_digits_back():
+    # A SecureField (CardFormView.swift:112), so WDA reports its value masked
+    # or empty whatever was typed. A read-back here would either always fail or
+    # -- worse -- pass on the bullets and prove nothing. The Pay button's own
+    # enablement is what says the field validated, and `tap_pay` finds out.
+    ssh = FakeSsh()
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: None
+
+    d.type_cvv("123")
+
+    assert not any("/wda/element" in c for c in ssh.calls)
+
+
 # -- paste_token --------------------------------------------------------------
 
 
@@ -1982,10 +2301,6 @@ NOT_LANDED_YET = [
     ("rotate", ()),
     ("kill_activity", ()),
     ("dont_keep_activities", (True,)),
-    ("type_cvv", ("123",)),
-    ("select_saved_card", ()),
-    ("save_card", ()),
-    ("wait_saved_card", (30,)),
 ]
 
 

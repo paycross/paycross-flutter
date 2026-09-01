@@ -331,10 +331,14 @@ Things worth knowing before you write an expectation:
   looking only for `succeeded` would have passed on either.
 * `failure_code` and `network_decline_code` read `transactions[-1].failure`,
   beside `failure_recovery`.
-* `saved_card_saved` / `saved_card_used` assert **presence**, never a value:
-  `evidence.scrub_resource` drops `stored_credentials.saved_token` and
-  `used_token` by name before the verifier sees them, so what is left is the
-  redaction marker for a card that was stored and `null` for one that was not.
+* `saved_card_saved` / `saved_card_used` assert **presence**, never a value.
+  Both keys are on the scrubber's list, so what the verifier sees has already
+  been through `evidence.scrub_resource` — and these work only because a
+  scrubbed token is **replaced rather than removed**: the key survives carrying
+  the redaction marker for a card that was stored, and is still `null` for one
+  that was not. Removing the key instead, which reads like the safer choice,
+  would turn every `saved_card_saved: true` into a failure; a test in
+  `test_verify` pins the pair together for that reason.
 * `threeds` accepts exactly `outcome`, `flow` and `liability_shifted`, and an
   unknown inner key is refused at load. `threeds.eci` and `threeds.version` are
   deliberately not assertable: a sandbox upgrade must not present as a finding.
@@ -359,7 +363,9 @@ Things worth knowing before you write an expectation:
 | `relaunch` | cold-starts the app mid-cell. On iOS this keeps the console window the cell has already written; `launch` would truncate it |
 | `airplane on\|off` | cuts the device's network and reads the setting back. **Android only** |
 | `tap_google_pay` | taps the wallet button, by bounds — see below. **Android only** (D4) |
-| `type_cvv`, `select_saved_card`, `save_card` | saved-card entry (D5) |
+| `type_cvv` | types the cell's CVV into the CVV field and nothing else (D5) |
+| `save_card` | makes sure the save-card box is ticked, and reads the state back to prove it (D5) |
+| `select_saved_card` | chooses the first stored card, and verifies the form switched (D5) |
 | `background <s>`, `rotate`, `kill_activity`, `dont_keep_activities on\|off` | lifecycle (D3) |
 
 Each `expect` argument has its own deadline, and a falsy answer fails the cell
@@ -399,9 +405,9 @@ the expected answer: on iOS a malformed or expired token is refused before
 `present` is ever called, so waiting for a sheet costs a 60-second timeout and
 then reports the wrong failure.
 
-The last two rows are **in the grammar but not yet executable**, and so is
-`expect saved_card`. The vocabulary is opened a dimension at a time so cell
-files can be written against a stable list; the dimension that owns a verb
+The lifecycle row is **in the grammar but not yet executable** — everything
+else in both tables now is. The vocabulary is opened a dimension at a time so
+cell files can be written against a stable list; the dimension that owns a verb
 writes the driver method, and every verb already reaches a `_perform` branch
 that calls it. Until the method lands, the declaration on `Driver` raises
 `NotImplementedError` and a cell using it fails as an **authoring mistake**
@@ -436,6 +442,51 @@ JWT `exp` is mint + 900 s while the session's own `expires_at` is mint + 1200 s
 (`session_ttl` + `session_grace_period`), so the only way to present a token
 that is expired while its session is still open is to wait out the difference.
 `cell_rules` refuses it in any cell whose id does not name an expiry.
+
+### Saved cards, which are two cells and not one
+
+Card-on-file is the only dimension whose cells are **not independent**, and
+getting that wrong is silent rather than loud. Three facts drive the shape:
+
+* `customer.merchant_reference` identifies the customer. Omit it and the
+  backend mints a random UUID, so the card is stored against a customer nothing
+  will ever look up again.
+* `saved_cards: {show: all}` is what puts the customer's cards into the session
+  at all. Omit it and the list comes back empty however many cards exist.
+* That list is snapshotted **once at session creation and never rebuilt**. So
+  the paying session has to be minted *after* the storing one has settled —
+  which, since filename order is the only ordering, means naming the pair
+  `..._1_save` / `..._2_pay`.
+
+And `save_card_config` on the request only *renders* the checkbox. The save is
+driven by `card.save` on the submit, which in the SDK is the shopper ticking it
+— hence the `save_card` action. A cell with the config and no action is an
+ordinary payment asserting a save that never happened.
+
+Two customer references rather than one, where a dimension has two pairs: each
+selector then offers exactly one row, so "the first stored card" is never
+ambiguous. Re-running a pair is safe — storing the same PAN again answers
+`save_operation: already_existing`, so the customer accumulates exactly one card
+however many times it runs, and `saved_card_saved` still passes because it reads
+presence rather than the operation.
+
+**The merchant API cannot answer "was a card offered".** `Sandbox.read` has no
+`saved_cards` key under any condition; that list lives only in the public
+checkout snapshot the SDK reads. So the question is answerable only from the
+device, which is what `expect saved_card` is for.
+
+Two platform differences the drivers hide, both measured rather than assumed:
+
+* **What is tappable is not what is nameable.** Android's save checkbox has an
+  empty `text` and an empty `content-desc`, so it is found by its `checkable`
+  state; its label is a separate node that does nothing when tapped. On iOS the
+  row carries the label but only the unnamed control inside it responds.
+* **iOS scrolls, Android does not.** The iOS toggle sits below the fold, so
+  `save_card` scrolls to it — and scrolls back, because a form left scrolled
+  puts `amount` under the navigation bar and breaks the keyboard-dismissal
+  fallback that `acs()` depends on. That is why `save_card` runs **before**
+  `type_card` in every store cell: typing raises a numeric pad nothing on this
+  build dismisses, and the scroll drag starts inside it.
 
 ### Rig guards, and putting a cell's toys away
 
@@ -731,7 +782,7 @@ trailing it means a rule ran in the wrong order.
 pytest tool/e2e/tests -q
 ```
 
-564 tests, no device needed: every driver call is faked, so this covers the
+772 tests, no device needed: every driver call is faked, so this covers the
 parsing, the redaction, the label matching and the merchant verification — the
 places where a silent mistake would be read as an SDK finding. The shipped cell
 files are validated here too. CI runs this on Linux on every PR, in its own job,

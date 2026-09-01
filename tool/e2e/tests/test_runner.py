@@ -2341,7 +2341,9 @@ def test_the_expect_table_agrees_with_the_drivers_own_defaults():
         ("AndroidDriver", "acs"),
         ("AndroidDriver", "google_pay"),
         ("AndroidDriver", "no_google_pay"),
+        ("AndroidDriver", "saved_card"),
         ("IosDriver", "acs"),
+        ("IosDriver", "saved_card"),
     }
 
 
