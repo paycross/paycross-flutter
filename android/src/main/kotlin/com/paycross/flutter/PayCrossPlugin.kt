@@ -233,6 +233,9 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
             // merchantInfo lacks it, so it is passed straight through - null
             // being "not configured", which the SDK adds only when non-blank.
             googlePayMerchantId = configuration.googlePayMerchantId
+            // applePayMerchantId is deliberately ignored: Apple Pay is iOS only,
+            // so there is no Android wallet for it to configure. iOS forwards it
+            // to the native SDK's applePayMerchantIdentifier.
         )
     }
 

@@ -153,14 +153,15 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
     private static func apply(_ configuration: PcConfiguration) {
         PayCrossAPI.configure(
             environment: configuration.environment.toNative(),
-            testCardPrefill: configuration.testCardPrefill?.toNative()
+            testCardPrefill: configuration.testCardPrefill?.toNative(),
+            applePayMerchantIdentifier: configuration.applePayMerchantId
         )
         // brandColorArgb is deliberately ignored. The iOS SDK has no brand-colour
         // hook; its only colour source is the window tint, and setting that here
         // would inherit down the hierarchy and repaint the merchant's whole app.
         //
-        // googlePayMerchantId is deliberately ignored: the iOS SDK is card-only
-        // and offers no wallet, so the parameter is reserved until one lands.
+        // googlePayMerchantId is deliberately ignored: Google Pay's in-app API is
+        // Android and web only, so there is no iOS wallet for it to configure.
     }
 }
 
