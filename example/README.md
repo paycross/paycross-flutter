@@ -123,9 +123,10 @@ tile itself runs the scenario in the native SDK sheet, exactly as it always
 has. Pressing **Open in browser** mints the very same session and opens the
 hosted checkout page in your phone's own browser instead.
 
-It exists for the wallets. **Google Pay and Apple Pay are already approved on
-the production hosted page and are not yet approved in the native sheet**, so
-this is the only way to exercise either one from the demo today — and because
+It exists for the wallets. **Google Pay is approved on the production hosted
+page and is not in the native sheet**, so the browser is the only way to reach
+it from the demo. **Apple Pay is in both** — the sheet grew its own button on
+iOS — so there the browser is a comparison rather than the only route. Because
 both buttons mint the same body, under the same credential and the same
 identity, what you see in the browser is directly comparable to what the sheet
 does on the same merchant.
