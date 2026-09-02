@@ -1,3 +1,15 @@
+## 0.2.0
+
+* Apple Pay on iOS. Pass `applePayMerchantId` to `PayCross.configure` and the
+  native SDK renders Apple's own payment button inside the payment sheet, when
+  the session allows wallets and the device has a card it can pay with. Your app
+  adds no widget and implements no delegate; the result is the same
+  `PayCrossResult` a card payment returns. The identifier must match the one
+  saved on your PayCross merchant record — the edge compares them and refuses a
+  payment whose two copies disagree. Null means not configured, and no button
+  appears. Android accepts and ignores it.
+* Requires the native iOS SDK at PayCross 0.2.0, up from 0.1.1.
+
 ## 0.1.0
 
 Initial release.
