@@ -9,6 +9,7 @@ import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
+import 'package:paycross_demo/demo/surface.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
 import '_environment.dart';
@@ -222,6 +223,51 @@ Future<void> _pickCurrency(WidgetTester tester, String code) async {
   await tester.tap(find.text(code).last);
   await tester.pumpAndSettle();
 }
+
+/// A surface backend that will not answer, so a test can look at the toggle
+/// while the read is still in flight -- which on a cold platform store is a
+/// real window, not a theoretical one.
+class _HangingSurfaceBackend implements SurfaceBackend {
+  @override
+  Future<String?> read() => Completer<String?>().future;
+
+  @override
+  Future<void> write(String value) => Completer<void>().future;
+}
+
+/// A surface backend that reads fine and refuses to write, which is what a
+/// full or unwritable `SharedPreferences` looks like from Dart.
+class _UnwritableSurfaceBackend implements SurfaceBackend {
+  _UnwritableSurfaceBackend(this.value);
+
+  String? value;
+
+  @override
+  Future<String?> read() async => value;
+
+  @override
+  Future<void> write(String written) async => throw StateError('no store');
+}
+
+/// Settings with a surface store a test controls, and a secret store that
+/// works, so nothing above the toggle is what a case is failing on.
+Widget _settingsWithSurface(SurfaceBackend backend) => MaterialApp(
+  home: SettingsScreen(
+    store: SecretStore(backend: InMemorySecretBackend()),
+    surfaceStore: SurfaceStore(backend: backend),
+    verifyCredentials: (_) async => 'ok',
+    readVersions: () async =>
+        (demo: '0.1.4+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+  ),
+);
+
+/// Which segment the Pay-with toggle currently shows as chosen.
+PaymentSurface _chosenSurface(WidgetTester tester) => tester
+    .widget<SegmentedButton<PaymentSurface>>(
+      find.byKey(const ValueKey('surfaceToggle')),
+    )
+    .selected
+    .single;
 
 void main() {
   testWidgets('stores what is typed', (tester) async {
@@ -1890,5 +1936,170 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_message(tester), contains('client ID'));
+  });
+
+  group('the surface a tile pays on', () {
+    testWidgets('a store nobody has written offers the sheet', (tester) async {
+      useTallSurface(tester);
+
+      await tester.pumpWidget(_settingsWithSurface(InMemorySurfaceBackend()));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('surfaceHeading')), findsOneWidget);
+      expect(_chosenSurface(tester), PaymentSurface.sdkSheet);
+    });
+
+    testWidgets('what was stored on a past launch is what it opens on', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      final backend = InMemorySurfaceBackend()..value = webSurfaceName;
+
+      await tester.pumpWidget(_settingsWithSurface(backend));
+      await tester.pumpAndSettle();
+
+      expect(_chosenSurface(tester), PaymentSurface.webCheckout);
+    });
+
+    testWidgets('choosing the web checkout stores it and says what it does', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      final backend = InMemorySurfaceBackend();
+
+      await tester.pumpWidget(_settingsWithSurface(backend));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(webSurfaceLabel));
+      await tester.pumpAndSettle();
+
+      // An ordinary non-secret preference, in `SharedPreferences` beside
+      // History and deliberately not in the secure store.
+      expect(backend.value, webSurfaceName);
+      expect(_chosenSurface(tester), PaymentSurface.webCheckout);
+      expect(_message(tester), contains('browser'));
+      expect(_message(tester), contains('never learns the outcome'));
+    });
+
+    testWidgets('choosing the sheet again is stored, not erased', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      final backend = InMemorySurfaceBackend()..value = webSurfaceName;
+
+      await tester.pumpWidget(_settingsWithSurface(backend));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(sdkSurfaceLabel));
+      await tester.pumpAndSettle();
+
+      expect(backend.value, sdkSurfaceName);
+      expect(_chosenSurface(tester), PaymentSurface.sdkSheet);
+    });
+
+    testWidgets('a write that refuses moves the choice back and says so', (
+      tester,
+    ) async {
+      // Home reads this preference from the store rather than from this
+      // screen, so a toggle left showing a choice the store did not take
+      // would be a screen promising a browser while every tile opened a
+      // sheet.
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        _settingsWithSurface(_UnwritableSurfaceBackend(null)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(webSurfaceLabel));
+      await tester.pumpAndSettle();
+
+      expect(_chosenSurface(tester), PaymentSurface.sdkSheet);
+      expect(_message(tester), contains('Could not save'));
+      // The type only. A store's exception is free to quote what it held.
+      expect(_message(tester), contains('StateError'));
+      expect(_message(tester), contains(sdkSurfaceLabel));
+    });
+
+    testWidgets('the toggle is dead until the read has come back', (
+      tester,
+    ) async {
+      // Before the read lands the screen shows the sheet because nothing has
+      // answered, not because the sheet is stored. A tap on that emptiness
+      // would write it straight over a choice already made.
+      useTallSurface(tester);
+
+      await tester.pumpWidget(_settingsWithSurface(_HangingSurfaceBackend()));
+      await tester.pump();
+
+      expect(
+        tester
+            .widget<SegmentedButton<PaymentSurface>>(
+              find.byKey(const ValueKey('surfaceToggle')),
+            )
+            .onSelectionChanged,
+        isNull,
+      );
+    });
+
+    testWidgets('it is offered in Live too, and says it applies to both', (
+      tester,
+    ) async {
+      // The surface is a preference about how somebody likes to test, not a
+      // fact about one environment, so Live is not a reason to hide it.
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          home: SettingsScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            surfaceStore: SurfaceStore(backend: InMemorySurfaceBackend()),
+            verifyCredentials: (_) async => 'ok',
+            readVersions: () async =>
+                (demo: '0.1.4+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('surfaceToggle')), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('surfaceExplanation')))
+            .data!,
+        contains('Test and in Live'),
+      );
+    });
+
+    testWidgets('a trip through Test does not forget it', (tester) async {
+      // Unlike the currency beside it, which belongs to one Live session.
+      // This is durable, and crossing between environments is no reason to
+      // drop it.
+      useTallSurface(tester);
+      final backend = InMemorySurfaceBackend()..value = webSurfaceName;
+      final state = fakeEnvironment();
+
+      await tester.pumpWidget(
+        appWithEnvironment(
+          state: state,
+          home: SettingsScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            surfaceStore: SurfaceStore(backend: backend),
+            verifyCredentials: (_) async => 'ok',
+            readVersions: () async =>
+                (demo: '0.1.4+1', plugin: '0.1.0', nativeSdk: 'unknown'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await state.enterLive(liveConfirmationWord);
+      await tester.pumpAndSettle();
+      await state.leaveLive();
+      await tester.pumpAndSettle();
+
+      expect(backend.value, webSurfaceName);
+      expect(_chosenSurface(tester), PaymentSurface.webCheckout);
+    });
   });
 }

@@ -66,7 +66,10 @@ Future<bool> openInBrowser(Uri url) =>
 Uri? checkoutUri(String? raw) {
   if (raw == null || raw.isEmpty) return null;
   final uri = Uri.tryParse(raw);
-  if (uri == null || !uri.hasAuthority) return null;
+  // A host rather than merely an authority. `https:///pay` parses, and it
+  // has an authority -- an empty one -- so an authority check alone lets a
+  // hostless string through to the platform as though it were a page.
+  if (uri == null || uri.host.isEmpty) return null;
   return uri.scheme == 'https' || uri.scheme == 'http' ? uri : null;
 }
 
