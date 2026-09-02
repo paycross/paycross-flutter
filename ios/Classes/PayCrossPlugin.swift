@@ -138,7 +138,7 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
     // actor -- which is precisely what Swift 6 refuses to let us assume away.
     private static let state = PluginState()
 
-    private static let pluginVersion = "0.1.0"
+    private static let pluginVersion = "0.2.0"
 
     private static let errorNotConfigured = "paycross_not_configured"
     private static let errorBusy = "paycross_busy"
@@ -153,14 +153,15 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
     private static func apply(_ configuration: PcConfiguration) {
         PayCrossAPI.configure(
             environment: configuration.environment.toNative(),
-            testCardPrefill: configuration.testCardPrefill?.toNative()
+            testCardPrefill: configuration.testCardPrefill?.toNative(),
+            applePayMerchantIdentifier: configuration.applePayMerchantId
         )
         // brandColorArgb is deliberately ignored. The iOS SDK has no brand-colour
         // hook; its only colour source is the window tint, and setting that here
         // would inherit down the hierarchy and repaint the merchant's whole app.
         //
-        // googlePayMerchantId is deliberately ignored: the iOS SDK is card-only
-        // and offers no wallet, so the parameter is reserved until one lands.
+        // googlePayMerchantId is deliberately ignored: Google Pay's in-app API is
+        // Android and web only, so there is no iOS wallet for it to configure.
     }
 }
 

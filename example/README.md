@@ -123,9 +123,10 @@ tile itself runs the scenario in the native SDK sheet, exactly as it always
 has. Pressing **Open in browser** mints the very same session and opens the
 hosted checkout page in your phone's own browser instead.
 
-It exists for the wallets. **Google Pay and Apple Pay are already approved on
-the production hosted page and are not yet approved in the native sheet**, so
-this is the only way to exercise either one from the demo today — and because
+It exists for the wallets. **Google Pay is approved on the production hosted
+page and is not in the native sheet**, so the browser is the only way to reach
+it from the demo. **Apple Pay is in both** — the sheet grew its own button on
+iOS — so there the browser is a comparison rather than the only route. Because
 both buttons mint the same body, under the same credential and the same
 identity, what you see in the browser is directly comparable to what the sheet
 does on the same merchant.
@@ -425,9 +426,17 @@ same bug-report block every other run gets.
   arrives without one.
 - **The amount is fixed.** 1.00, hardcoded, no editor anywhere near it. The
   currency is a choice; the figure is not.
-- **Only those three.** No decline scenarios, no editor, no Custom, no
-  wallets. Apple Pay will slot in beside them once the native iOS SDK ships
-  it; it has not.
+- **Only those three.** No decline scenarios, no editor, no Custom.
+- **Apple Pay is the exception, and it is not a fourth tile.** The button
+  lives inside the SDK payment sheet, so it turns up on all three runs above
+  and you pick it there instead of typing a card. It appears only where the
+  merchant has Apple Pay switched on, the app carries the Apple Merchant ID
+  for the environment it is in, the device has a card in Wallet, the session
+  loaded at all, and the session is not an account-funding one — when any of
+  the five is missing there is no button and no error. A session that never
+  loaded is the one worth suspecting first: a timeout or a 5xx on the lookup
+  is swallowed, and from the outside it looks exactly like a lost identifier.
+  A Live run pays with the real card in Wallet.
 
 ### Getting out
 

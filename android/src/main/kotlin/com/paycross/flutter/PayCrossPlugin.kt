@@ -233,6 +233,9 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
             // merchantInfo lacks it, so it is passed straight through - null
             // being "not configured", which the SDK adds only when non-blank.
             googlePayMerchantId = configuration.googlePayMerchantId
+            // applePayMerchantId is deliberately ignored: Apple Pay is iOS only,
+            // so there is no Android wallet for it to configure. iOS forwards it
+            // to the native SDK's applePayMerchantIdentifier.
         )
     }
 
@@ -244,7 +247,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
         /** Private to the SDK's internal PaymentActivity; mirrored deliberately. */
         const val EXTRA_RESULT = "result"
 
-        const val PLUGIN_VERSION = "0.1.0"
+        const val PLUGIN_VERSION = "0.2.0"
 
         const val ERROR_NOT_CONFIGURED = "paycross_not_configured"
         const val ERROR_BUSY = "paycross_busy"

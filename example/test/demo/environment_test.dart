@@ -6,6 +6,7 @@ import 'package:paycross_demo/demo/endpoints.dart';
 import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/secrets.dart';
+import 'package:paycross_demo/demo/wallets.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
 import '_environment.dart';
@@ -16,6 +17,11 @@ import '_surface.dart';
 class _RecordingConfigure {
   final List<PayCrossEnvironment> calls = <PayCrossEnvironment>[];
   final List<String?> merchantIds = <String?>[];
+
+  /// The Apple identifier of each call, in its own list beside the Google
+  /// one so a fix that remembers one wallet and forgets the other reads as
+  /// two different lists rather than as one list that happens to be right.
+  final List<String?> appleMerchantIds = <String?>[];
   bool refuse = false;
 
   /// Runs inside the call, before the caller's `await` resumes. This is the
@@ -29,6 +35,7 @@ class _RecordingConfigure {
   Future<void> call({
     required PayCrossEnvironment environment,
     String? googlePayMerchantId,
+    String? applePayMerchantId,
   }) async {
     // Before the refusal, not after: this models a button being tapped while
     // the SDK call is in flight, and that happens whether the call goes on to
@@ -37,6 +44,7 @@ class _RecordingConfigure {
     if (refuse) throw StateError('a payment is in flight');
     calls.add(environment);
     merchantIds.add(googlePayMerchantId);
+    appleMerchantIds.add(applePayMerchantId);
     if (hold != null) await hold!.future;
   }
 }
@@ -90,9 +98,11 @@ void main() {
     expect(state.environment, DemoEnvironment.live);
     expect(state.endpoints, same(liveEndpoints));
     expect(configure.calls, [PayCrossEnvironment.production]);
-    // Null, not the launch id: there is no Google Pay tile in Live for it
-    // to serve, and a wallet id is merchant configuration for one wallet.
-    expect(configure.merchantIds, [null]);
+    // Null, and not because Live has no wallets -- it has its own Apple
+    // identifier, asserted below. Google's production merchant id is the one
+    // value the owner has still to supply, so the constant is empty and
+    // `walletIdOrNull` turns that into the null the SDK reads as "no button".
+    expect(configure.merchantIds, [walletIdOrNull(liveGooglePayMerchantId)]);
   });
 
   test('surrounding whitespace is forgiven; the word is not', () async {
@@ -212,6 +222,125 @@ void main() {
       expect(configure.merchantIds.last, 'gp-launch');
     },
   );
+
+  group('the wallet identifiers', () {
+    test('a state carries the Test identifier it was launched with', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        applePayMerchantId: testApplePayMerchantId,
+      );
+
+      expect(state.applePayMerchantId, testApplePayMerchantId);
+      // The first time this state points the SDK anywhere it points it at
+      // Test, and the identifier `main` configured at launch has to travel
+      // with it: re-pointing the SDK replaces the whole configuration, so an
+      // identifier left out of a Test configure is a button that is gone.
+      expect(await state.leaveLive(), isNull);
+
+      expect(configure.calls.single, PayCrossEnvironment.sandbox);
+      expect(configure.appleMerchantIds.single, testApplePayMerchantId);
+    });
+
+    test('entering Live sends the production Apple identifier', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        applePayMerchantId: testApplePayMerchantId,
+      );
+
+      expect(await state.enterLive(liveConfirmationWord), isNull);
+
+      // The literal on purpose. This is the string a real production payment
+      // is encrypted under, and the same assertion written as
+      // `walletIdOrNull(liveApplePayMerchantId)` would keep passing on the
+      // day somebody replaced the constant with something that is not
+      // registered with Apple.
+      expect(configure.appleMerchantIds.single, 'merchant.pay-cross.com.prod');
+    });
+
+    test('entering Live sends the production Google identifier', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(configure: configure.call);
+
+      expect(await state.enterLive(liveConfirmationWord), isNull);
+
+      // Against the constant rather than against null, so this test still
+      // says what it means on the day the owner supplies the id: what is
+      // pinned is that Live is configured from Live's own constant, not that
+      // Google's wallet happens to be unconfigured today.
+      expect(
+        configure.merchantIds.single,
+        walletIdOrNull(liveGooglePayMerchantId),
+      );
+    });
+
+    test('entering Live never sends the Test Apple identifier', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        applePayMerchantId: testApplePayMerchantId,
+      );
+
+      expect(await state.enterLive(liveConfirmationWord), isNull);
+
+      // The leak guard, and the reason the demo holds two constants rather
+      // than passing one field through: a production token minted under the
+      // TEST identifier is encrypted to the TEST key, and no vault on
+      // production can decrypt it. This is the case that would still pass if
+      // somebody "simplified" the test above into forwarding the field.
+      expect(
+        configure.appleMerchantIds,
+        isNot(contains(testApplePayMerchantId)),
+      );
+    });
+
+    test('a round trip through Live restores both identifiers', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        googlePayMerchantId: 'gp-launch',
+        applePayMerchantId: testApplePayMerchantId,
+      );
+
+      expect(await state.enterLive(liveConfirmationWord), isNull);
+      expect(await state.leaveLive(), isNull);
+
+      // The whole recording, in order, rather than the way there or the way
+      // back alone. Asserting only on entering Live passes against a
+      // `leaveLive` that forgets, and the symptom of that bug is a button
+      // that is present, then absent, and stays absent until the app is
+      // relaunched -- which nobody reads as a configuration bug.
+      expect(configure.calls, [
+        PayCrossEnvironment.production,
+        PayCrossEnvironment.sandbox,
+      ]);
+      expect(configure.appleMerchantIds, [
+        liveApplePayMerchantId,
+        testApplePayMerchantId,
+      ]);
+    });
+
+    test(
+      'the way back restores the Google identifier in the same call',
+      () async {
+        final configure = _RecordingConfigure();
+        final state = DemoEnvironmentState(
+          configure: configure.call,
+          googlePayMerchantId: 'gp-launch',
+          applePayMerchantId: testApplePayMerchantId,
+        );
+
+        await state.enterLive(liveConfirmationWord);
+        expect(await state.leaveLive(), isNull);
+
+        // One recording, both wallets, so a fix that restores one and forgets
+        // the other fails here rather than passing two tests out of three.
+        expect(configure.appleMerchantIds.last, testApplePayMerchantId);
+        expect(configure.merchantIds.last, 'gp-launch');
+      },
+    );
+  });
 
   test(
     'an exit the SDK refuses drops the credentials and stays Live',

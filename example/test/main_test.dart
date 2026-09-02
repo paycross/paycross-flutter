@@ -10,6 +10,7 @@ import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/run.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
+import 'package:paycross_demo/demo/wallets.dart';
 import 'package:paycross_demo/main.dart' as app;
 import 'package:paycross_flutter/paycross_flutter.dart';
 // The generated Pigeon client is deliberately not exported (see
@@ -141,6 +142,23 @@ void main() {
     expect(host.lastConfiguration, isNotNull);
     expect(host.lastConfiguration?.googlePayMerchantId, isNull);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the launch configure carries the Test Apple identifier', (
+    tester,
+  ) async {
+    // A build constant rather than a stored one, so there is nothing to set
+    // up: every launch of this app in Test is configured with the identifier
+    // that its entitlement lists. PassKit will not present a sheet for any
+    // other one, and it declines to by leaving the button inert rather than
+    // by raising anything anybody sees.
+    app.mainSecretStore = SecretStore(backend: InMemorySecretBackend());
+
+    await app.main();
+    await tester.pump();
+
+    expect(host.lastConfiguration?.applePayMerchantId, testApplePayMerchantId);
+    expect(host.lastConfiguration?.environment, g.PcEnvironment.sandbox);
   });
 
   testWidgets('a run link reaches a run down the same path a tile does', (
@@ -391,6 +409,108 @@ void main() {
     final home = tester.element(find.byType(HomeScreen));
     expect(LiveModeScope.maybeOf(home), isNotNull);
     expect(LiveModeScope.environmentOf(home), DemoEnvironment.test);
+  });
+
+  testWidgets('the Apple identifier reaches the scope and its state', (
+    tester,
+  ) async {
+    useTallSurface(tester);
+
+    await tester.pumpWidget(
+      const app.ExampleApp(applePayMerchantId: testApplePayMerchantId),
+    );
+    await tester.pumpAndSettle();
+
+    // Both ends of the carry. The widget field alone would pass against a
+    // scope that never handed it on, and the state alone would not say which
+    // of the two constructors dropped it.
+    expect(
+      tester
+          .widget<LiveModeScope>(find.byType(LiveModeScope))
+          .applePayMerchantId,
+      testApplePayMerchantId,
+    );
+    final home = tester.element(find.byType(HomeScreen));
+    expect(
+      LiveModeScope.maybeOf(home)?.applePayMerchantId,
+      testApplePayMerchantId,
+    );
+  });
+
+  test('launch hands both wallet identifiers on to the widget tree', () {
+    // A source pin rather than a widget test, because the widget route does
+    // not work here: a test that calls `app.main()` and then looks for
+    // `LiveModeScope` never settles, and hangs the runner instead of failing.
+    //
+    // Worth pinning anyway, because this is the one seam nothing else
+    // covers. The configure call above hands the SDK the identifier for this
+    // launch; this second copy is the one `leaveLive` reads back out of the
+    // state. The tests that call `app.main()` read only the recorded
+    // configuration, and the two widget tests above build `ExampleApp` by
+    // hand, so dropping either argument from this call left all 385 tests
+    // green -- and left Apple Pay working at launch, working in Live, and
+    // gone the moment the tester came back out.
+    //
+    // Sliced to `main`'s own body, then comments stripped and whitespace
+    // collapsed, for the three reasons the pin below gives: a later
+    // `ExampleApp(...)` elsewhere in the file must not stand in for this
+    // call, a line of prose naming an argument must not stand in for the
+    // argument, and `dart format` rewraps this call whenever an argument is
+    // added.
+    final source = File('lib/main.dart').readAsStringSync();
+    final start = source.indexOf('Future<void> main() async {');
+    expect(start, isNot(-1));
+    final body = source
+        .substring(start, source.indexOf('\n}', start))
+        .split('\n')
+        .map((line) => line.replaceAll(RegExp('//.*\$'), ''))
+        .join('\n')
+        .replaceAll(RegExp(r'\s+'), ' ');
+    final at = body.indexOf('runApp(');
+    expect(at, isNot(-1));
+    final handedOn = body.substring(at);
+
+    expect(handedOn, contains('googlePayMerchantId: merchantId'));
+    expect(handedOn, contains('applePayMerchantId: testApplePayMerchantId'));
+  });
+
+  test('the frozen build still awaits one thing and reads no storage', () {
+    // `kE2e` is a compile-time constant, so a test process cannot be the
+    // automation build and the demo build at once. What is checkable is the
+    // shape of `main` itself, and it is worth checking: an unguarded await
+    // here once took down all six D0 cells on both platforms, and the failure
+    // read as an SDK hang rather than as anything to do with this function.
+    //
+    // Whitespace is collapsed first, for the reason the source pin below
+    // collapses it: `dart format` rewraps these lines whenever an argument is
+    // added, and a test that a reformat can redden is a test about
+    // formatting.
+    final source = File('lib/main.dart').readAsStringSync();
+    final start = source.indexOf('Future<void> main() async {');
+    expect(start, isNot(-1));
+    final body = source.substring(start, source.indexOf('\n}', start));
+    // Comments go first, the way CI's own storage grep strips them before it
+    // greps: this function explains its await budget in prose, and a counter
+    // that reads the prose counts the explanation as a violation. Found by
+    // writing this test, which counted three.
+    final code = body
+        .split('\n')
+        .map((line) => line.replaceAll(RegExp('//.*\$'), ''))
+        .join('\n');
+    final collapsed = code.replaceAll(RegExp(r'\s+'), ' ');
+
+    // Two in the source, one of them behind the automation conditional, so
+    // exactly one runs in the frozen build. A third would fail here whichever
+    // arm it landed on, which is the point -- this counts rather than
+    // matching, because the await worth catching is the one nobody predicted.
+    expect('await '.allMatches(collapsed).length, 2);
+    expect(collapsed, contains('await PayCross.configure('));
+    expect(collapsed, contains(': await _storedGooglePayMerchantId();'));
+
+    // And the storage read is reached only through that guarded arm. A direct
+    // read here would be a second await, but it would also be a read on a
+    // device whose keychain the automation runner never unlocks.
+    expect(code, isNot(contains('mainSecretStore')));
   });
 
   test('the automation build installs no environment scope', () {

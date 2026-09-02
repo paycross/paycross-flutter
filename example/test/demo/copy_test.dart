@@ -69,6 +69,22 @@ const List<String> retiredSingleTileClaims = <String>[
   'The tile below',
 ];
 
+/// Claims that the native sheet has no Apple Pay, which it now has.
+///
+/// A separate list again, and the newest kind of wrong: the browser button
+/// arrived while Apple Pay in the sheet was still being built, so the guide
+/// explains that button by saying the sheet cannot do wallets. Half of that
+/// is still true -- Google Pay is browser-only -- and the Apple half is not.
+/// A tester who reads that the sheet has no Apple Pay is a tester who will
+/// press "Open in browser" for the one proof this plan exists to get, and
+/// the production payment will be made on the hosted page instead of
+/// through the SDK.
+const List<String> retiredNativeWalletClaims = <String>[
+  'not yet approved in the native sheet',
+  'the only way to exercise either one',
+  'no wallets in the sheet',
+];
+
 void main() {
   test('the tester guide makes no promise the app no longer keeps', () {
     final readme = File('README.md').readAsStringSync();
@@ -190,6 +206,32 @@ void main() {
 
     expect(offenders, isEmpty);
     for (final gone in retiredSingleTileClaims) {
+      expect(readme.contains(gone), isFalse, reason: gone);
+    }
+    // The sweep reached something, so an empty offender list means the files
+    // were read rather than that none were found.
+    expect(scanned, greaterThan(10));
+  });
+
+  test('nothing still says the native sheet has no Apple Pay', () {
+    // The same two halves as the case above: the guide, and every screen.
+    // The sheet's Apple Pay button is what task 09's production payment is
+    // made with, so a sentence sending the tester to the browser instead is
+    // a sentence that loses the proof rather than one that reads oddly.
+    final readme = File('README.md').readAsStringSync();
+    final offenders = <String>[];
+    var scanned = 0;
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      scanned++;
+      final source = entity.readAsStringSync();
+      if (retiredNativeWalletClaims.any(source.contains)) {
+        offenders.add(entity.path);
+      }
+    }
+
+    expect(offenders, isEmpty);
+    for (final gone in retiredNativeWalletClaims) {
       expect(readme.contains(gone), isFalse, reason: gone);
     }
     // The sweep reached something, so an empty offender list means the files

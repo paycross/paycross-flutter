@@ -145,6 +145,7 @@ DemoEnvironmentState _stuckInLive() => DemoEnvironmentState(
       ({
         required PayCrossEnvironment environment,
         String? googlePayMerchantId,
+        String? applePayMerchantId,
       }) async {
         if (environment == PayCrossEnvironment.sandbox) {
           throw StateError('no channel');
@@ -169,6 +170,7 @@ class _ParkedSwitch {
         ({
           required PayCrossEnvironment environment,
           String? googlePayMerchantId,
+          String? applePayMerchantId,
         }) async {
           if (environment == parkOn) await gate.future;
         },

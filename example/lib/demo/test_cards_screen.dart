@@ -23,6 +23,17 @@ class TestCardsScreen extends StatelessWidget {
             'cardholder $testCardholder work on every card below.',
           ),
         ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          child: Text(
+            'Apple Pay is not one of these cards. Its button lives inside '
+            'the payment sheet, and paying with it here needs an Apple '
+            'sandbox tester account signed in on the device, holding the '
+            'test cards Apple publishes at '
+            'developer.apple.com/apple-pay/sandbox-testing. A Live run pays '
+            'with the real card in Wallet instead.',
+          ),
+        ),
         for (final card in usableTestCards) _CardTile(card: card),
         _Heading(
           title: 'Do not use',
