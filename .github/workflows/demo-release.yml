@@ -97,8 +97,10 @@ jobs:
           {
             echo "PayCross Demo ${GITHUB_REF_NAME#demo-v}"
             echo
-            echo "Internal QA build. Sandbox only — it holds TEST merchant"
-            echo "credentials and cannot reach production."
+            echo "Internal QA build. Starts in Test on every launch, against the"
+            echo "TEST sandbox. Live mode reaches production with credentials you"
+            echo "type in; every Live run charges a real card. Read the Live mode"
+            echo "section of example/README.md before switching."
             echo
             echo "Install with \`adb install -r paycross-demo-${GITHUB_REF_NAME}.apk\`."
             echo "See example/README.md for the credentials, the scenarios and"
