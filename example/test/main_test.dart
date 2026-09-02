@@ -437,6 +437,43 @@ void main() {
     );
   });
 
+  test('launch hands both wallet identifiers on to the widget tree', () {
+    // A source pin rather than a widget test, because the widget route does
+    // not work here: a test that calls `app.main()` and then looks for
+    // `LiveModeScope` never settles, and hangs the runner instead of failing.
+    //
+    // Worth pinning anyway, because this is the one seam nothing else
+    // covers. The configure call above hands the SDK the identifier for this
+    // launch; this second copy is the one `leaveLive` reads back out of the
+    // state. The tests that call `app.main()` read only the recorded
+    // configuration, and the two widget tests above build `ExampleApp` by
+    // hand, so dropping either argument from this call left all 385 tests
+    // green -- and left Apple Pay working at launch, working in Live, and
+    // gone the moment the tester came back out.
+    //
+    // Sliced to `main`'s own body, then comments stripped and whitespace
+    // collapsed, for the three reasons the pin below gives: a later
+    // `ExampleApp(...)` elsewhere in the file must not stand in for this
+    // call, a line of prose naming an argument must not stand in for the
+    // argument, and `dart format` rewraps this call whenever an argument is
+    // added.
+    final source = File('lib/main.dart').readAsStringSync();
+    final start = source.indexOf('Future<void> main() async {');
+    expect(start, isNot(-1));
+    final body = source
+        .substring(start, source.indexOf('\n}', start))
+        .split('\n')
+        .map((line) => line.replaceAll(RegExp('//.*\$'), ''))
+        .join('\n')
+        .replaceAll(RegExp(r'\s+'), ' ');
+    final at = body.indexOf('runApp(');
+    expect(at, isNot(-1));
+    final handedOn = body.substring(at);
+
+    expect(handedOn, contains('googlePayMerchantId: merchantId'));
+    expect(handedOn, contains('applePayMerchantId: testApplePayMerchantId'));
+  });
+
   test('the frozen build still awaits one thing and reads no storage', () {
     // `kE2e` is a compile-time constant, so a test process cannot be the
     // automation build and the demo build at once. What is checkable is the

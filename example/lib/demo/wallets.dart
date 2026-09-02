@@ -50,8 +50,10 @@ const String liveApplePayMerchantId = 'merchant.pay-cross.com.prod';
 ///
 /// Empty until the owner supplies it. The empty string rather than a spelled
 /// stand-in: this app retired that convention deliberately, and
-/// `copy_test.dart` now fails any `.dart` file under `lib/` that contains the
-/// word. Empty-means-unset is the idiom the rest of the app already uses.
+/// `copy_test.dart`'s `retiredIdentityMachinery` sweep fails any `.dart` file
+/// under `lib/` that spells the stand-in token out, or that describes a value
+/// as still being one. Empty-means-unset is the idiom the rest of the app
+/// already uses.
 const String liveGooglePayMerchantId = '';
 
 /// An identifier, or null where there is not one yet.

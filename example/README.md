@@ -431,9 +431,12 @@ same bug-report block every other run gets.
   lives inside the SDK payment sheet, so it turns up on all three runs above
   and you pick it there instead of typing a card. It appears only where the
   merchant has Apple Pay switched on, the app carries the Apple Merchant ID
-  for the environment it is in, and the device has a card in Wallet — when
-  any of the three is missing there is no button and no error. A Live run
-  pays with the real card in Wallet.
+  for the environment it is in, the device has a card in Wallet, the session
+  loaded at all, and the session is not an account-funding one — when any of
+  the five is missing there is no button and no error. A session that never
+  loaded is the one worth suspecting first: a timeout or a 5xx on the lookup
+  is swallowed, and from the outside it looks exactly like a lost identifier.
+  A Live run pays with the real card in Wallet.
 
 ### Getting out
 
