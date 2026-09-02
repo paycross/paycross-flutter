@@ -96,6 +96,23 @@ class _HistoryScreenState extends State<HistoryScreen> {
               title: Row(
                 children: [
                   Expanded(child: Text(entry.presetName)),
+                  // Before LIVE rather than after it, so the red word stays
+                  // the last thing on the row: it is the one somebody scans
+                  // a list of forty for.
+                  //
+                  // Not red, and deliberately quiet. A web run is not
+                  // dangerous, it is merely a run whose outcome the app did
+                  // not witness -- and a second loud marker beside LIVE would
+                  // cost the first one the attention it is there to get.
+                  if (entry.isWeb)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 8),
+                      child: Text(
+                        'WEB',
+                        key: ValueKey('historyWeb'),
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
                   if (entry.live)
                     const Text(
                       'LIVE',

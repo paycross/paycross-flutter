@@ -108,9 +108,16 @@ void main() {
   test('nothing an entry can hold is a token', () {
     // Structural, not textual: the type has no field for one, so no future
     // edit can add a token to a bug report without failing here first.
+    //
+    // The exhaustive set is the half that does the work, and it is meant to
+    // fail on a new field. `surface` was added deliberately in demo-v0.1.4
+    // and is a two-letter word naming a screen; the field this rule exists
+    // to keep out is `checkoutUrl`, which is `…/pay?session=<token>` and so
+    // is a token spelled a different way.
     final fields = _entry().toJson().keys.toSet();
 
     expect(fields.where((f) => f.contains('token')), isEmpty);
+    expect(fields.where((f) => f.toLowerCase().contains('url')), isEmpty);
     expect(fields, {
       'at',
       'presetName',
@@ -121,6 +128,7 @@ void main() {
       'pluginVersion',
       'nativeSdkVersion',
       'live',
+      'surface',
     });
   });
 

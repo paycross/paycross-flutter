@@ -24,6 +24,11 @@ String jwtExpiring(DateTime at) {
   return '$head.$body.notasignature';
 }
 
+/// "This key is not in the response at all", as distinct from a key whose
+/// value is null. The two are different wire shapes and the mint has to
+/// answer the same way to both, so a test needs to be able to say which.
+const Object _absent = Object();
+
 /// A client that records whether anything closed it.
 class _ClosingSpy extends http.BaseClient {
   _ClosingSpy(this._inner);
@@ -585,6 +590,78 @@ void main() {
       );
     });
   });
+
+  group('the checkout URL a mint carries back', () {
+    MockClient sessionSaying(Object? checkoutUrl) => recording((request, _) {
+      if (request.url.path.endsWith('/token')) {
+        return tokenResponse(clock.add(const Duration(hours: 1)));
+      }
+      return http.Response(
+        jsonEncode({
+          'id': 'sess-1',
+          'session_token': 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxIn0.sig',
+          if (checkoutUrl != _absent) 'checkout_url': checkoutUrl,
+        }),
+        200,
+      );
+    });
+
+    test('an open session hands its page back', () async {
+      final minter = minterOver(sessionSaying('https://pay.example.com/pay'));
+
+      final minted = await minter.mint('{"amount":1000}');
+
+      expect(minted.checkoutUrl, 'https://pay.example.com/pay');
+    });
+
+    test('a session the API says is closed hands back nothing', () async {
+      // The API sends the key with an explicit null rather than omitting it,
+      // which is its stated rule for an optional field.
+      final minter = minterOver(sessionSaying(null));
+
+      final minted = await minter.mint('{"amount":1000}');
+
+      expect(minted.checkoutUrl, isNull);
+    });
+
+    test('a backend older than the field hands back nothing', () async {
+      final minter = minterOver(sessionSaying(_absent));
+
+      final minted = await minter.mint('{"amount":1000}');
+
+      expect(minted.checkoutUrl, isNull);
+    });
+
+    test('an empty string is nothing, not a page', () async {
+      // A URL that cannot be opened must not read as one that can: the web
+      // surface refuses on null and would otherwise hand `''` to the browser.
+      final minter = minterOver(sessionSaying(''));
+
+      final minted = await minter.mint('{"amount":1000}');
+
+      expect(minted.checkoutUrl, isNull);
+    });
+
+    test('a value that is not a string is nothing', () async {
+      final minter = minterOver(sessionSaying(42));
+
+      final minted = await minter.mint('{"amount":1000}');
+
+      expect(minted.checkoutUrl, isNull);
+    });
+
+    test('a session with no page still mints', () async {
+      // The whole point of not refusing: the SDK sheet presents a session
+      // with no checkout page perfectly well, and it is the default surface.
+      final minter = minterOver(sessionSaying(null));
+
+      final minted = await minter.mint('{"amount":1000}');
+
+      expect(minted.id, 'sess-1');
+      expect(minted.token, isNotEmpty);
+    });
+  });
+
   group('the environment a minter is pointed at', () {
     MockClient happyPath() => recording((request, index) {
       if (request.url.path.endsWith('/token')) {

@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/history.dart';
 import 'package:paycross_demo/demo/history_screen.dart';
 import 'package:paycross_demo/demo/live.dart';
+import 'package:paycross_demo/demo/surface.dart';
+import 'package:paycross_demo/demo/web_run.dart';
 
 import '_surface.dart';
 
@@ -13,16 +15,22 @@ HistoryEntry _entry({
   required String session,
   required String preset,
   bool live = false,
+  String surface = sdkSurfaceName,
 }) => HistoryEntry(
   at: DateTime.utc(2026, 8, 29, 15, 4, 5),
   presetName: preset,
   sessionId: session,
-  transactionId: 'txn-$session',
-  outcome: 'Approved — 1000 EUR, transaction txn-$session',
+  // A web row has neither of these, and a helper that handed it both would
+  // be testing a row the app cannot write.
+  transactionId: surface == webSurfaceName ? null : 'txn-$session',
+  outcome: surface == webSurfaceName
+      ? webOpenedOutcome
+      : 'Approved — 1000 EUR, transaction txn-$session',
   demoVersion: '0.1.0+7',
   pluginVersion: '0.1.0',
   nativeSdkVersion: 'unknown',
   live: live,
+  surface: surface,
 );
 
 /// A backend already holding [entries], as a phone that has run before does.
@@ -111,5 +119,72 @@ void main() {
     expect(find.text('3DS challenge → approve'), findsOneWidget);
     // One marking for one live row, whatever the rest of the list holds.
     expect(find.byKey(const ValueKey('historyLive')), findsOneWidget);
+  });
+
+  group('a row from the web surface', () {
+    testWidgets('is marked, and says what the app did rather than what paid', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      final store = HistoryStore(
+        backend: _seeded([
+          _entry(
+            session: 'sess-11',
+            preset: 'Instant approve (no 3DS)',
+            surface: webSurfaceName,
+          ),
+        ]),
+      );
+
+      await tester.pumpWidget(MaterialApp(home: HistoryScreen(store: store)));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('historyWeb')), findsOneWidget);
+      expect(find.textContaining(webOpenedOutcome), findsWidgets);
+      // Never the word somebody scanning a list would read as a result.
+      expect(find.textContaining('Approved'), findsNothing);
+    });
+
+    testWidgets('a sheet row carries no marker at all', (tester) async {
+      // A screen full of rows nobody has changed reads exactly as it did.
+      useTallSurface(tester);
+      final store = HistoryStore(
+        backend: _seeded([
+          _entry(session: 'sess-10', preset: 'Instant approve (no 3DS)'),
+        ]),
+      );
+
+      await tester.pumpWidget(MaterialApp(home: HistoryScreen(store: store)));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('historyWeb')), findsNothing);
+    });
+
+    testWidgets('a Live web row keeps both marks, red one last', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      final store = HistoryStore(
+        backend: _seeded([
+          _entry(
+            session: 'sess-12',
+            preset: 'Live smoke',
+            live: true,
+            surface: webSurfaceName,
+          ),
+        ]),
+      );
+
+      await tester.pumpWidget(MaterialApp(home: HistoryScreen(store: store)));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('historyWeb')), findsOneWidget);
+      expect(find.text('LIVE'), findsOneWidget);
+      // LIVE is the word a list of forty is scanned for, so it stays last.
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('historyWeb'))).dx,
+        lessThan(tester.getTopLeft(find.text('LIVE')).dx),
+      );
+    });
   });
 }

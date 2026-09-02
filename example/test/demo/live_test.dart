@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/presets.dart';
+import 'package:paycross_demo/demo/surface.dart';
 
 /// The smoke body, to the byte, as it has been charging real cards.
 ///
@@ -457,5 +458,67 @@ void main() {
       // Nothing about a sandbox card belongs on a production tile.
       expect(preset.cardHint, isNull, reason: scenario.name);
     }
+  });
+
+  group('what the confirmation dialog says about where it happens', () {
+    test('the sheet asks exactly what it always asked', () {
+      // Every call written before the surface existed keeps its wording, and
+      // the default is what makes that true rather than a promise about it.
+      for (final scenario in LiveScenario.values) {
+        expect(
+          liveConfirmQuestion(scenario, 'EUR'),
+          liveConfirmQuestion(
+            scenario,
+            'EUR',
+            surface: PaymentSurface.sdkSheet,
+          ),
+          reason: scenario.name,
+        );
+        expect(
+          liveConfirmQuestion(scenario, 'EUR'),
+          isNot(contains('browser')),
+          reason: scenario.name,
+        );
+      }
+    });
+
+    test('the web surface adds where the card will be typed', () {
+      // Somebody who taps Continue expecting a sheet and gets a browser will
+      // wonder whether they tapped the wrong thing. This is the one sentence
+      // that stops that, and it sits before the money moves.
+      for (final scenario in LiveScenario.values) {
+        final asked = liveConfirmQuestion(
+          scenario,
+          'EUR',
+          surface: PaymentSurface.webCheckout,
+        );
+
+        expect(
+          asked,
+          contains('It opens in your browser instead of the app.'),
+          reason: scenario.name,
+        );
+        // Added to the question, not instead of it: the amount and the
+        // saved-card sentence are what the tap is actually authorising.
+        expect(asked, contains('charge a real card'), reason: scenario.name);
+        expect(asked, endsWith('Continue?'), reason: scenario.name);
+      }
+    });
+
+    test('a saved-card tile on the web says both things, in order', () {
+      expect(
+        liveConfirmQuestion(
+          LiveScenario.storeCard,
+          'EUR',
+          surface: PaymentSurface.webCheckout,
+        ),
+        stringContainsInOrder([
+          'charge a real card',
+          'stores the card',
+          'opens in your browser',
+          'Continue?',
+        ]),
+      );
+    });
   });
 }

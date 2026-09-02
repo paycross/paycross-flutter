@@ -4,7 +4,7 @@ description: "PayCross Demo: mint sandbox sessions and run payment scenarios aga
 # own release train, and both release scripts pass --build-name/--build-number
 # derived from the demo-vX.Y.Z tag. Without a version: line here every build
 # is 1.0.0+1, which App Store Connect rejects on the second upload.
-version: 0.1.3+1
+version: 0.1.4+1
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -57,6 +57,11 @@ dependencies:
   # and it implements the FlutterSceneLifeCycleDelegate callbacks this
   # Runner needs, because the Runner uses FlutterSceneDelegate.
   app_links: ^7.2.1
+
+  # Hands a checkout URL to the phone's own browser, for the Web checkout
+  # surface. Only ever given an `https` URL the merchant API minted, and only
+  # from a human's tap -- the deep-link runner never reaches it.
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

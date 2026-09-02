@@ -55,5 +55,16 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+
+        <!-- The Web checkout surface hands a checkout URL to the phone's own
+             browser. On API 30 and up a package the manifest does not declare
+             here is invisible to the app, so `canLaunchUrl` answers false and
+             `launchUrl` fails, on a phone where a browser is plainly
+             installed. `https` only: this app never opens any other scheme,
+             and a wildcard would let it query every app on the device. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
     </queries>
 </manifest>

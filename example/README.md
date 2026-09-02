@@ -78,6 +78,10 @@ launch will not use.
 **Forget credentials** wipes all three — client ID, client secret and Google
 Pay merchant id — from the secure store.
 
+Nothing here decides how a scenario is presented. Tapping a tile runs it in
+the native SDK sheet; every tile also carries an **Open in browser** button.
+See [Open in browser](#open-in-browser).
+
 Home's top strip tells you where you stand: "Sandbox — not configured", or
 "Sandbox — client " and the first six characters of the id. In Live it is a
 different strip — "Live — no credentials this session", or "Live — client "
@@ -105,8 +109,72 @@ change an amount or a field and run that instead.
 | Google Pay (Android) | Whether the TEST merchant has the wallet enabled. Eligibility is merchant configuration, not a per-session setting, so the button's absence is not a bug. |
 | Custom | Opens the editor on the ordinary body. Whatever you make it do. |
 
-While a run is being set up the tiles go dead. That is the only busy
-indicator; there is no spinner.
+Under each tile is an **Open in browser** button, which mints the same session
+and opens the hosted checkout page instead of the sheet. See [Open in
+browser](#open-in-browser).
+
+While a run is being set up every tile goes dead, both of its buttons with it.
+That is the only busy indicator; there is no spinner.
+
+## Open in browser
+
+Every tile carries a second button under it: **Open in browser**. Tapping the
+tile itself runs the scenario in the native SDK sheet, exactly as it always
+has. Pressing **Open in browser** mints the very same session and opens the
+hosted checkout page in your phone's own browser instead.
+
+It exists for the wallets. **Google Pay and Apple Pay are already approved on
+the production hosted page and are not yet approved in the native sheet**, so
+this is the only way to exercise either one from the demo today — and because
+both buttons mint the same body, under the same credential and the same
+identity, what you see in the browser is directly comparable to what the sheet
+does on the same merchant.
+
+There is nothing to switch on and nothing to remember: it is a button, not a
+mode. Every tile has one — the eight Test presets, Custom, and all three Live
+tiles.
+
+What the browser button does differently:
+
+- **The app stops watching.** It hands the page over and that is the end of
+  what it knows. The run screen says it opened in the browser and gives you
+  the session id; it never says approved or declined, because it has not been
+  told.
+- **Look the result up in the back office by the session id.** There is no
+  transaction id on this path — a transaction is created by the payment, and
+  the payment is happening somewhere this app cannot see. **Copy session id**
+  is on the run screen.
+- **History marks the row `WEB`** and records the outcome as *Opened in web
+  checkout*. The bug report says the app never saw the result, so nobody
+  reads the row as a payment that succeeded.
+- **In Live it charges a real card**, exactly as the tile does. The
+  confirmation dialog comes first either way; on the browser button it adds
+  *"It opens in your browser instead of the app."* before you can continue.
+  Cancel is still the default. The red refund block is on the run screen,
+  naming the session id.
+- **While any run is being set up, both of every tile's buttons go dead** —
+  not just the one you pressed.
+
+What it will not do:
+
+- **It never applies to a deep link or to the automation build.** Those always
+  run the sheet, by construction: a link cannot name a surface, and there is
+  no stored setting for one to inherit. See [Running a scenario from the
+  command line](#running-a-scenario-from-the-command-line).
+- **A session with no hosted page is refused in the app**, with *"This session
+  has no web checkout URL."* and the session id still on screen. Nothing was
+  paid; tap the tile instead to run that scenario in the sheet.
+- **If no browser will open**, the run screen and History both say so and
+  nothing was paid.
+
+The pencil on a preset tile opens the editor and its **Run** uses the sheet —
+the pencil is the edit affordance, so its run is the ordinary one. To run a
+hand-written body in the browser, use **Open in browser** on the **Custom**
+tile: it opens the same editor, and its **Run** goes to the browser.
+
+> The checkout URL contains the session token. Treat a copied one exactly as
+> you would treat a token: it is never written to History, never in a bug
+> report, and it should not go into an issue.
 
 ## Test cards
 
@@ -153,7 +221,10 @@ adb shell am start -a android.intent.action.VIEW \
 
 `preset=` takes either the slug (lower case, everything else collapsed to `-`)
 or the preset's exact name percent-encoded. `surface=sheet` is the only
-surface this app has.
+surface a **link** can ask for, and there is no plan to add another: a linked
+run always uses the SDK sheet. There is no setting for it to inherit, and
+[Open in browser](#open-in-browser) is a button somebody has to press. That is
+what keeps the matrix runner out of the browser.
 
 Four things to know:
 
@@ -172,7 +243,8 @@ Four things to know:
 
 ## History, and reporting a problem
 
-Every run that reaches the payment sheet lands in **History** (the clock icon).
+Every run that reaches the payment sheet — or the browser — lands in
+**History** (the clock icon).
 Tap a run and its bug report is on your clipboard. The Run screen has the same
 button, **Copy bug report**, once the run has settled.
 
@@ -281,6 +353,12 @@ Everything else Home has in Test is still gone: no presets, no editor, no
 Custom, no decline scenarios, no Google Pay, and no test-card cheat sheet in
 the top bar — those PANs mean nothing on a production merchant.
 
+All three tiles carry an **Open in browser** button. It charges the same real
+card on the hosted page instead of in the sheet, the confirmation dialog comes
+first and says so, and the run screen's red block names the session id rather
+than a transaction id — because there is not one to name. See
+[Open in browser](#open-in-browser).
+
 With nothing held for this session a tile does not ask you anything —
 it takes you to Settings. So the only way to reach the dialog is to have
 already typed a production pair, a name and an email in this session. The
@@ -377,6 +455,12 @@ Live — restart the app."* Restart it. A relaunch always starts in Test.
   id and the back office are the whole workflow.
 - **A Live run that never reaches the sheet still minted a session.** No
   charge, but a session exists on production; it expires on its own.
+- **A run opened in the browser never tells the app its outcome.** History
+  records what the app did, not what the payment did, so every such run has to
+  be looked up in the back office by its session id — and a Live one has to be
+  refunded from there.
+- **A preset's pencil runs an edited body in the sheet only.** Use **Open in
+  browser** on the **Custom** tile for a hand-written body in the browser.
 
 ## The automation build
 

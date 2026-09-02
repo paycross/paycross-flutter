@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'surface.dart';
+
 /// How many runs to keep. A demo phone accumulates these forever otherwise,
 /// and nobody reads past the last few.
 const int historyCap = 50;
@@ -29,7 +31,10 @@ final Expando<Future<void>> _writeQueues = Expando<Future<void>>();
 ///
 /// There is deliberately no field for a session token: the token is handed
 /// to `presentPayment` once and dropped, and a type that cannot hold one
-/// cannot leak one into a report someone pastes into an issue.
+/// cannot leak one into a report someone pastes into an issue. There is no
+/// field for a checkout URL either, and that is the same rule rather than a
+/// second one -- the URL is `…/pay?session=<token>`, so a type that could
+/// hold it could leak the token by another name.
 class HistoryEntry {
   const HistoryEntry({
     required this.at,
@@ -41,6 +46,7 @@ class HistoryEntry {
     required this.pluginVersion,
     required this.nativeSdkVersion,
     this.live = false,
+    this.surface = sdkSurfaceName,
   });
 
   factory HistoryEntry.fromJson(Map<String, Object?> json) => HistoryEntry(
@@ -57,6 +63,10 @@ class HistoryEntry {
     // field here would make every row written by demo-v0.1.0 unreadable and
     // wipe each tester's history on upgrade.
     live: json['live'] as bool? ?? false,
+    // The same rule again, for the same reason: every row written before
+    // demo-v0.1.4 was an SDK-sheet run, and reading them back as one is both
+    // true and what keeps them readable at all.
+    surface: json['surface'] as String? ?? sdkSurfaceName,
   );
 
   final DateTime at;
@@ -76,6 +86,23 @@ class HistoryEntry {
   /// other row holds.
   final bool live;
 
+  /// Which surface the session was presented on: [sdkSurfaceName] or
+  /// [webSurfaceName].
+  ///
+  /// A stored word rather than the [PaymentSurface] enum, because this is a
+  /// row that outlives the build that wrote it and an enum's ordinal is not
+  /// a format. It matters to whoever reads the row: a web run's outcome is
+  /// what the app *did*, never what the payment did, and a report that does
+  /// not say which surface it was invites reading one as the other.
+  final String surface;
+
+  /// Whether this run handed the session to the browser instead of the sheet.
+  ///
+  /// Named once and read by both the screen and the report, so the two
+  /// cannot disagree about which rows are web runs -- and so an unrecognised
+  /// word from a newer build reads as "not web" in exactly one place.
+  bool get isWeb => surface == webSurfaceName;
+
   Map<String, Object?> toJson() => {
     'at': at.toIso8601String(),
     'presetName': presetName,
@@ -86,15 +113,22 @@ class HistoryEntry {
     'pluginVersion': pluginVersion,
     'nativeSdkVersion': nativeSdkVersion,
     'live': live,
+    'surface': surface,
   };
 }
 
 /// What a colleague pastes into an issue.
+///
+/// The two conditional lines are conditional rather than always present, and
+/// that is deliberate: a sandbox sheet run's report is the bytes it always
+/// was, so nothing that quotes one has to be re-read. What is added is added
+/// where it changes the reading -- LIVE means money moved, and web means the
+/// app never learned the outcome and the line below is only what it did.
 String bugReport(HistoryEntry entry) =>
     '''
 PayCross Demo run
   when:        ${entry.at.toIso8601String()}
-  scenario:    ${entry.presetName}${entry.live ? '\n  mode:        LIVE — real money, refund it in the back office' : ''}
+  scenario:    ${entry.presetName}${entry.live ? '\n  mode:        LIVE — real money, refund it in the back office' : ''}${entry.isWeb ? '\n  surface:     web checkout in the browser — the app never saw the result' : ''}
   session:     ${entry.sessionId}
   transaction: ${entry.transactionId ?? '(none)'}
   outcome:     ${entry.outcome}
