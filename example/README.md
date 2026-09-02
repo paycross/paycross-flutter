@@ -78,6 +78,11 @@ launch will not use.
 **Forget credentials** wipes all three — client ID, client secret and Google
 Pay merchant id — from the secure store.
 
+Below the credentials is **Pay with**, which decides whether a tile opens the
+native SDK sheet or the hosted checkout page in your browser. The sheet is the
+default and nothing below assumes otherwise. See
+[Paying in the browser instead of the sheet](#paying-in-the-browser-instead-of-the-sheet).
+
 Home's top strip tells you where you stand: "Sandbox — not configured", or
 "Sandbox — client " and the first six characters of the id. In Live it is a
 different strip — "Live — no credentials this session", or "Live — client "
@@ -107,6 +112,60 @@ change an amount or a field and run that instead.
 
 While a run is being set up the tiles go dead. That is the only busy
 indicator; there is no spinner.
+
+## Paying in the browser instead of the sheet
+
+Settings has a **Pay with** choice: **SDK sheet** or **Web checkout**. The
+sheet is the default and is what this app has always done. Web checkout mints
+exactly the same session and opens the hosted checkout page in your phone's
+own browser instead.
+
+It exists for the wallets. **Google Pay and Apple Pay are already approved on
+the production hosted page and are not yet approved in the native sheet**, so
+this is the only way to exercise either one from the demo today — and because
+both surfaces mint the same body, under the same credential and the same
+identity, what you see in the browser is directly comparable to what the sheet
+does on the same merchant.
+
+What changes when it is on:
+
+- **Every tile uses it** — the eight Test presets, the editor's **Run**, and
+  all three Live tiles. Home says so above the tiles, before you tap anything.
+- **The app stops watching.** It hands the page to the browser and that is
+  the end of what it knows. The run screen says "opened in the browser" and
+  gives you the session id; it never says approved or declined, because it
+  has not been told.
+- **Look the result up in the back office by the session id.** There is no
+  transaction id on this surface — a transaction is created by the payment,
+  and the payment is happening somewhere this app cannot see. **Copy session
+  id** is on the run screen.
+- **History marks the row `WEB`** and records the outcome as *Opened in web
+  checkout*. The bug report says the app never saw the result, so nobody
+  reads the row as a payment that succeeded.
+- **In Live it charges a real card**, exactly as the sheet does. The
+  confirmation dialog says so and adds *"It opens in your browser instead of
+  the app."* before you can continue. The red refund block is on the run
+  screen, naming the session id.
+
+What it will not do:
+
+- **It never applies to a deep link or to the automation build.** Those run
+  the sheet whatever this is set to, by construction: a link cannot name a
+  surface. See [Running a scenario from the command
+  line](#running-a-scenario-from-the-command-line).
+- **A session with no hosted page is refused in the app**, with *"This session
+  has no web checkout URL."* and the session id still on screen. Nothing was
+  paid; switch back to the sheet to run that scenario.
+- **If no browser will open**, the run screen and History both say so and
+  nothing was paid.
+
+The choice is remembered across launches, applies in Test and in Live, and is
+stored as an ordinary preference — not in the secure store, which is only for
+the client id and secret.
+
+> The checkout URL contains the session token. Treat a copied one exactly as
+> you would treat a token: it is never written to History, never in a bug
+> report, and it should not go into an issue.
 
 ## Test cards
 
@@ -153,7 +212,10 @@ adb shell am start -a android.intent.action.VIEW \
 
 `preset=` takes either the slug (lower case, everything else collapsed to `-`)
 or the preset's exact name percent-encoded. `surface=sheet` is the only
-surface this app has.
+surface a **link** can ask for, and there is no plan to add another: a linked
+run always uses the SDK sheet, whatever [Pay with](#paying-in-the-browser-instead-of-the-sheet)
+is set to in Settings. That is what keeps the matrix runner out of the
+browser.
 
 Four things to know:
 
@@ -172,7 +234,8 @@ Four things to know:
 
 ## History, and reporting a problem
 
-Every run that reaches the payment sheet lands in **History** (the clock icon).
+Every run that reaches the payment sheet — or the browser — lands in
+**History** (the clock icon).
 Tap a run and its bug report is on your clipboard. The Run screen has the same
 button, **Copy bug report**, once the run has settled.
 
@@ -281,6 +344,12 @@ Everything else Home has in Test is still gone: no presets, no editor, no
 Custom, no decline scenarios, no Google Pay, and no test-card cheat sheet in
 the top bar — those PANs mean nothing on a production merchant.
 
+All three tiles obey **Pay with**. On the web checkout surface they charge the
+same real card in the browser instead of the sheet, the confirmation dialog
+says so, and the run screen's red block names the session id rather than a
+transaction id — because there is not one to name. See
+[Paying in the browser instead of the sheet](#paying-in-the-browser-instead-of-the-sheet).
+
 With nothing held for this session a tile does not ask you anything —
 it takes you to Settings. So the only way to reach the dialog is to have
 already typed a production pair, a name and an email in this session. The
@@ -377,6 +446,10 @@ Live — restart the app."* Restart it. A relaunch always starts in Test.
   id and the back office are the whole workflow.
 - **A Live run that never reaches the sheet still minted a session.** No
   charge, but a session exists on production; it expires on its own.
+- **On the web checkout surface the app never learns the outcome.** History
+  records what the app did, not what the payment did, so every web run has to
+  be looked up in the back office by its session id — and a Live one has to be
+  refunded from there.
 
 ## The automation build
 
