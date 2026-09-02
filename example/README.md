@@ -425,9 +425,14 @@ same bug-report block every other run gets.
   arrives without one.
 - **The amount is fixed.** 1.00, hardcoded, no editor anywhere near it. The
   currency is a choice; the figure is not.
-- **Only those three.** No decline scenarios, no editor, no Custom, no
-  wallets. Apple Pay will slot in beside them once the native iOS SDK ships
-  it; it has not.
+- **Only those three.** No decline scenarios, no editor, no Custom.
+- **Apple Pay is the exception, and it is not a fourth tile.** The button
+  lives inside the SDK payment sheet, so it turns up on all three runs above
+  and you pick it there instead of typing a card. It appears only where the
+  merchant has Apple Pay switched on, the app carries the Apple Merchant ID
+  for the environment it is in, and the device has a card in Wallet — when
+  any of the three is missing there is no button and no error. A Live run
+  pays with the real card in Wallet.
 
 ### Getting out
 
