@@ -218,7 +218,7 @@ void main() {
     await store.append(
       HistoryEntry(
         at: DateTime.utc(2026, 8, 31, 12),
-        presetName: liveSmokeName(liveDefaultCurrency),
+        presetName: liveScenarioName(LiveScenario.smoke, liveDefaultCurrency),
         sessionId: 'sess-live',
         transactionId: 'txn-live',
         outcome: 'Approved.',
@@ -236,7 +236,7 @@ void main() {
     final live = bugReport(
       HistoryEntry(
         at: DateTime.utc(2026, 8, 31, 12),
-        presetName: liveSmokeName(liveDefaultCurrency),
+        presetName: liveScenarioName(LiveScenario.smoke, liveDefaultCurrency),
         sessionId: 'sess-live',
         transactionId: 'txn-live',
         outcome: 'Approved.',

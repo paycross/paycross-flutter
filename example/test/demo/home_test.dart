@@ -109,6 +109,15 @@ const Credentials _liveCredentials = Credentials(
   clientSecret: 'live-secret',
 );
 
+/// Finds the Live tile a scenario draws, by the key that scenario owns.
+///
+/// A helper rather than a literal per case, because Live has three tiles now
+/// and the cases below are all "do this to every one of them". A finder built
+/// from `liveTileKey` also cannot drift from the widget, which is built from
+/// the same function.
+Finder liveTile(LiveScenario scenario, {bool skipOffstage = true}) =>
+    find.byKey(ValueKey(liveTileKey(scenario)), skipOffstage: skipOffstage);
+
 void main() {
   // `runInFlight` is top-level, so a test that ends while a read is still in
   // flight leaves it set and the next test silently cannot start a run at
@@ -398,7 +407,7 @@ void main() {
     expect(find.byKey(const ValueKey('customPreset')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
-  testWidgets('Live replaces the whole grid with one tile', (tester) async {
+  testWidgets('Live replaces the whole grid with three tiles', (tester) async {
     useTallSurface(tester);
     await tester.pumpWidget(
       await liveApp(
@@ -407,10 +416,20 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('liveSmokeTile')), findsOneWidget);
-    // No editor, no custom preset, no stored-card pair, no decline
-    // scenarios, no Google Pay tile. Live is deliberately tiny.
+    // Three, and every one of them named by its own scenario: a screen that
+    // drew the smoke three times would satisfy a bare count.
+    for (final scenario in LiveScenario.values) {
+      expect(liveTile(scenario), findsOneWidget, reason: scenario.name);
+      expect(
+        find.text(liveScenarioName(scenario, liveDefaultCurrency)),
+        findsOneWidget,
+        reason: scenario.name,
+      );
+    }
+    // No editor, no custom preset, no decline scenarios, no Google Pay tile,
+    // and no pencil to open a body with. Live is still deliberately tiny.
     expect(find.byKey(const ValueKey('customPreset')), findsNothing);
+    expect(find.byTooltip('Edit the body'), findsNothing);
     expect(find.byType(IconButton), findsWidgets); // the app bar still exists
     for (final preset in demoPresets) {
       expect(find.text(preset.name), findsNothing, reason: preset.name);
@@ -433,52 +452,88 @@ void main() {
     expect(find.byTooltip('Settings'), findsOneWidget);
   });
 
-  testWidgets('the tile with no identity held opens Settings', (tester) async {
+  testWidgets('no tile with no identity held mints anything', (tester) async {
     // The credential IS armed and the identity is not, which is the whole
     // point: a state holding neither would be refused by either check, so
     // the assertion would survive the identity half being deleted. Half-armed
     // is the only shape that pins this one.
-    final state = await liveHolding(_liveCredentials, identity: null);
-    await tester.pumpWidget(
-      await liveApp(
-        state: state,
-        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
-      ),
-    );
-    await tester.pumpAndSettle();
+    //
+    // Every tile, because the refusal is one function that all three call and
+    // a fourth tile pasted beside them is exactly how it stops being.
+    useTallSurface(tester);
+    for (final scenario in LiveScenario.values) {
+      final state = await liveHolding(_liveCredentials, identity: null);
+      await tester.pumpWidget(
+        await liveApp(
+          state: state,
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
-    await tester.pumpAndSettle();
+      await tester.tap(liveTile(scenario));
+      await tester.pumpAndSettle();
 
-    // Somewhere the human can act, rather than a message they can only read:
-    // the identity is typed on the screen this pushes.
-    expect(find.byType(SettingsScreen), findsOneWidget);
-    // And without minting: no dialog, no run.
-    expect(find.byKey(const ValueKey('liveConfirmDialog')), findsNothing);
-    expect(find.byType(RunScreen), findsNothing);
+      // Somewhere the human can act, rather than a message they can only
+      // read: the identity is typed on the screen this pushes.
+      expect(
+        find.byType(SettingsScreen),
+        findsOneWidget,
+        reason: scenario.name,
+      );
+      // And without minting: no dialog, no run.
+      expect(find.byKey(const ValueKey('liveConfirmDialog')), findsNothing);
+      expect(find.byType(RunScreen), findsNothing, reason: scenario.name);
+
+      // Back to Home before the next tile. `pumpWidget` reuses the element
+      // tree, so a Settings left pushed here would still be on screen for
+      // the next pass -- and the assertion above would pass on it without
+      // that pass having tapped anything at all.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsNothing, reason: scenario.name);
+    }
   });
 
-  testWidgets('with no Live credentials the tile opens Settings', (
+  testWidgets('no tile with no Live credentials mints anything either', (
     tester,
   ) async {
     // The mirror of the case above: the identity is armed and the credential
     // is not, so this one is what pins the credential half of the check.
-    final state = await liveHolding(null);
-    await tester.pumpWidget(
-      await liveApp(
-        state: state,
-        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
-      ),
-    );
-    await tester.pumpAndSettle();
+    useTallSurface(tester);
+    for (final scenario in LiveScenario.values) {
+      final state = await liveHolding(null);
+      await tester.pumpWidget(
+        await liveApp(
+          state: state,
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
-    await tester.pumpAndSettle();
+      await tester.tap(liveTile(scenario));
+      await tester.pumpAndSettle();
 
-    // The same rule `runPreset` applies in Test: route somewhere the human
-    // can act, rather than mint and fail with a 401 that reads as a backend
-    // problem.
-    expect(find.byType(SettingsScreen), findsOneWidget);
+      // The same rule `runPreset` applies in Test: route somewhere the human
+      // can act, rather than mint and fail with a 401 that reads as a backend
+      // problem.
+      expect(
+        find.byType(SettingsScreen),
+        findsOneWidget,
+        reason: scenario.name,
+      );
+      expect(find.byType(RunScreen), findsNothing, reason: scenario.name);
+
+      // Back to Home before the next tile, for the reason the case above
+      // pops: a Settings left pushed would satisfy the next pass by itself.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsNothing, reason: scenario.name);
+    }
   });
 
   testWidgets('Settings pushed from the Live tile shows no stored credential', (
@@ -525,7 +580,8 @@ void main() {
     );
   });
 
-  testWidgets('the dialog defaults to not spending money', (tester) async {
+  testWidgets('every dialog defaults to not spending money', (tester) async {
+    useTallSurface(tester);
     final state = await liveHolding(_liveCredentials);
     var minted = 0;
     await tester.pumpWidget(
@@ -547,17 +603,25 @@ void main() {
     // memory rather than from any store.
     expect(find.text('Live — client live-i…'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
-    await tester.pumpAndSettle();
+    // All three tiles, and the same Cancel each time. A tile that skipped the
+    // dialog would be the one way this app spends money on a single tap.
+    for (final scenario in LiveScenario.values) {
+      await tester.tap(liveTile(scenario));
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('liveConfirmDialog')), findsOneWidget);
-    expect(find.textContaining('charge a real card'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('liveConfirmDialog')),
+        findsOneWidget,
+        reason: scenario.name,
+      );
+      expect(find.textContaining('charge a real card'), findsWidgets);
 
-    await tester.tap(find.byKey(const ValueKey('liveCancel')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('liveCancel')));
+      await tester.pumpAndSettle();
 
-    expect(minted, 0);
-    expect(find.byType(RunScreen), findsNothing);
+      expect(minted, 0, reason: scenario.name);
+      expect(find.byType(RunScreen), findsNothing, reason: scenario.name);
+    }
   });
 
   testWidgets('a dismissed dialog is a Cancel, back button included', (
@@ -604,6 +668,7 @@ void main() {
   testWidgets('Continue mints against the live endpoints and runs', (
     tester,
   ) async {
+    useTallSurface(tester);
     final state = await liveHolding(_liveCredentials);
     Endpoints? used;
     Credentials? sentWith;
@@ -641,23 +706,28 @@ void main() {
     // Live run recorded as a Test one is a charge nobody goes looking for.
     expect(tester.widget<RunScreen>(find.byType(RunScreen)).live, isTrue);
     // The fourth refusal, which is the only place it can be seen: Home is
-    // still mounted under the pushed route, and its one tile is dead for as
-    // long as the run it started is on screen. `skipOffstage: false` because
-    // that is exactly where Home now is.
-    expect(
-      tester
-          .widget<ListTile>(
-            find.descendant(
-              of: find.byKey(
-                const ValueKey('liveSmokeTile'),
-                skipOffstage: false,
+    // still mounted under the pushed route, and EVERY tile is dead for as
+    // long as the run one of them started is on screen. `skipOffstage: false`
+    // because that is exactly where Home now is.
+    //
+    // All three, because the busy flag is one flag and three tiles: a guard
+    // that only killed the tile that was tapped would leave the other two
+    // live, and a second tap would mint a second production session and
+    // stack a second Run screen on the first.
+    for (final scenario in LiveScenario.values) {
+      expect(
+        tester
+            .widget<ListTile>(
+              find.descendant(
+                of: liveTile(scenario, skipOffstage: false),
+                matching: find.byType(ListTile, skipOffstage: false),
               ),
-              matching: find.byType(ListTile, skipOffstage: false),
-            ),
-          )
-          .onTap,
-      isNull,
-    );
+            )
+            .onTap,
+        isNull,
+        reason: scenario.name,
+      );
+    }
 
     // Drain the two bookkeeping timeouts the pushed Run screen started
     // against platform stores that never answer under `flutter test`.
@@ -710,14 +780,14 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('all four places quote the same amount, in every currency', (
+  testWidgets('every place quotes the same amount, in every currency', (
     tester,
   ) async {
     // The hazard the single source was written for. The figure used to be
-    // spelled out by hand in three of these four, so an edit to one of them
+    // spelled out by hand at most of these sites, so an edit to one of them
     // left the app quoting two different numbers to the person about to
     // spend the money -- on the tile they tapped and in the dialog asking
-    // them to confirm it.
+    // them to confirm it. Three tiles multiply that hazard by three.
     //
     // Read off the rendered widgets rather than off the functions that build
     // them: `live_test` already pins what the functions return, and a screen
@@ -735,29 +805,39 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final tile = tester.widget<ListTile>(
-        find.descendant(
-          of: find.byKey(const ValueKey('liveSmokeTile')),
-          matching: find.byType(ListTile),
-        ),
-      );
-      await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
-      await tester.pumpAndSettle();
-      final dialog = tester.widget<AlertDialog>(
-        find.byKey(const ValueKey('liveConfirmDialog')),
-      );
-
       final quoted = <String>[
         tester
             .widget<Text>(find.byKey(const ValueKey('homeEnvironment')))
             .data!,
-        (tile.title! as Text).data!,
-        (tile.subtitle! as Text).data!,
-        (dialog.content! as Text).data!,
       ];
-      // Four, and named here so that a copy site quietly deleted from the
-      // screen turns into a failure rather than into a loop over three.
-      expect(quoted, hasLength(4));
+      for (final scenario in LiveScenario.values) {
+        final tile = tester.widget<ListTile>(
+          find.descendant(
+            of: liveTile(scenario),
+            matching: find.byType(ListTile),
+          ),
+        );
+        await tester.tap(liveTile(scenario));
+        await tester.pumpAndSettle();
+        final dialog = tester.widget<AlertDialog>(
+          find.byKey(const ValueKey('liveConfirmDialog')),
+        );
+
+        quoted
+          ..add((tile.title! as Text).data!)
+          ..add((tile.subtitle! as Text).data!)
+          ..add((dialog.content! as Text).data!);
+
+        // Nothing is minted here: Cancel, so the next tile is tapped on a
+        // screen with no dialog over it.
+        await tester.tap(find.byKey(const ValueKey('liveCancel')));
+        await tester.pumpAndSettle();
+      }
+
+      // Home's paragraph plus a title, a subtitle and a dialog for each of
+      // three tiles. Counted here so that a copy site quietly deleted from
+      // the screen turns into a failure rather than into a shorter loop.
+      expect(quoted, hasLength(10), reason: code);
       for (final line in quoted) {
         expect(line, contains(liveSmokeAmountLabel(code)), reason: line);
         // And nothing on screen quotes one of the other two. Without this a
@@ -771,11 +851,69 @@ void main() {
           );
         }
       }
+    }
+  });
 
-      // Nothing is minted here: Cancel, so the next pass starts on a screen
-      // with no dialog over it.
-      await tester.tap(find.byKey(const ValueKey('liveCancel')));
+  testWidgets('each tile mints its own body, not the tile above it', (
+    tester,
+  ) async {
+    // The end of the chain for the two new tiles: what a tester tapped is
+    // what the production merchant is asked for. The failure this rules out
+    // is the cheap one -- three tiles wired to one scenario, which looks
+    // right on screen and stores no card at all.
+    useTallSurface(tester);
+    for (final scenario in LiveScenario.values) {
+      final state = await liveHolding(_liveCredentials);
+      String? sent;
+      await tester.pumpWidget(
+        await liveApp(
+          state: state,
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            liveMintWith: (credentials, body, endpoints) async {
+              sent = body;
+              return const MintedSession(
+                id: 'sess-live',
+                token: 'tok',
+                sentBody: '{}',
+              );
+            },
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
+
+      await tester.tap(liveTile(scenario));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('liveContinue')));
+      await tester.pumpAndSettle();
+
+      expect(
+        sent,
+        liveScenarioBody(scenario, _liveIdentity, liveDefaultCurrency),
+        reason: scenario.name,
+      );
+      // And the run is filed under the tile that was tapped, because History
+      // records a run by its preset name and two charges under one name are
+      // two charges nobody can tell apart afterwards.
+      expect(
+        tester.widget<RunScreen>(find.byType(RunScreen)).preset.name,
+        liveScenarioName(scenario, liveDefaultCurrency),
+        reason: scenario.name,
+      );
+
+      // Drain the two bookkeeping timeouts the pushed Run screen started
+      // against platform stores that never answer under `flutter test`.
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+
+      // Back to Home before the next tile. `pumpWidget` reuses the element
+      // tree, so the run this pass started is still on top of Home and every
+      // tile under it is still dead -- which is the guard working, and is
+      // also why the next pass cannot tap anything until this pops.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(RunScreen), findsNothing, reason: scenario.name);
     }
   });
 
@@ -931,7 +1069,20 @@ void main() {
     // The banner is above the Scaffold, so this is where a double status-bar
     // inset or an overflowing tile shows up.
     expect(tester.takeException(), isNull);
-    expect(find.byKey(const ValueKey('liveSmokeTile')), findsOneWidget);
+    expect(liveTile(LiveScenario.smoke), findsOneWidget);
+
+    // And the list reaches the bottom of itself. Three tiles are taller than
+    // one, and the last of them is the one a phone is most likely to hide --
+    // a tile nobody can scroll to is a tile nobody can run.
+    await tester.scrollUntilVisible(
+      liveTile(LiveScenario.paySavedCard, skipOffstage: false),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(liveTile(LiveScenario.paySavedCard), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   test(
@@ -965,7 +1116,11 @@ void main() {
 
       final minted = await liveMintWithCredentials(
         const Credentials(clientId: 'live-id', clientSecret: 'live-secret'),
-        liveSmokeBody(_liveIdentity, liveDefaultCurrency),
+        liveScenarioBody(
+          LiveScenario.smoke,
+          _liveIdentity,
+          liveDefaultCurrency,
+        ),
         liveEndpoints,
         client: client,
       );

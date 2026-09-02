@@ -193,11 +193,12 @@ Paste the bug report block, say what you expected, and say what you saw.
 
 ## Live mode
 
-Live mode runs **one** scenario against the PayCross production merchant with
-a **real card**: a 1.00 charge, in a currency you pick, which you refund by
-hand immediately afterwards. It exists so the mobile SDKs can be
-smoke-tested against production before a release. It is not a QA tool and it
-is not for routine use.
+Live mode runs **three** scenarios against the PayCross production merchant
+with a **real card**: a plain charge, a charge that stores the card, and a
+charge against the card that was stored. Each is 1.00 in a currency you pick,
+and each is money you refund by hand immediately afterwards. It exists so the
+mobile SDKs can be smoke-tested against production before a release. It is
+not a QA tool and it is not for routine use.
 
 **The app starts in Test on every launch.** The environment is deliberately
 never remembered, so the worst a forgotten toggle can cost you is one
@@ -253,38 +254,59 @@ you switch to Test.
 History, not to a bug report. The run is recorded by its ids and its
 outcome, exactly as a sandbox run is. You type it again next session.
 
-There is no **Verify credentials** in Live. The smoke charge is the
+There is no **Verify credentials** in Live. The first charge is the
 verification, and a probe would create a real production session as a side
 effect of checking a password.
 
-### Running the smoke
+### Running the tiles
 
-Home shows one tile: **Live smoke — €1.00 charge**, with the currency you
-picked in place of the euro sign. No presets, no editor, no
-Custom, no saved-card scenarios, no Google Pay, and no test-card cheat sheet in
+Home shows three tiles, each of them a 1.00 charge on a real card, with the
+currency you picked in place of the euro sign below:
+
+1. **Live smoke — €1.00 charge.** A plain sale. Nothing is stored.
+2. **Live — store card, €1.00 charge.** The same sale, with **Save card for
+   future use** offered in the sheet. Tick it, or nothing is stored and the
+   third tile has nothing to find.
+3. **Live — pay with saved card, €1.00 charge.** The same sale, with the
+   cards already on the production customer offered in the sheet instead of a
+   keypad.
+
+**Run 2 before 3.** The list of cards is fixed when the session is created, so
+running tile 3 without **store card** first shows an empty sheet with nothing
+to pay with. All three charge the same production customer, which is what lets
+a card stored on one run be spent on the next — on another day, or another
+device.
+
+Everything else Home has in Test is still gone: no presets, no editor, no
+Custom, no decline scenarios, no Google Pay, and no test-card cheat sheet in
 the top bar — those PANs mean nothing on a production merchant.
 
-With nothing held for this session the tile does not ask you anything —
+With nothing held for this session a tile does not ask you anything —
 it takes you to Settings. So the only way to reach the dialog is to have
 already typed a production pair, a name and an email in this session. The
 currency needs no typing: there is always one selected.
 
-Once it can run, tapping it asks *"This will charge a real card €1.00.
-Continue?"* — again with the currency you picked. Cancel is the default and
-holds the focus, and dismissing the dialog — Android back button included —
-counts as Cancel. Continue mints a production session and opens the native
-sheet, and from there it is an
-ordinary payment with an ordinary card. The red bar is **not** over that
-sheet: it is a platform view this app does not draw, so at the one moment you
-are typing a real card number, nothing on screen says LIVE.
+Once it can run, tapping a tile asks *"This will charge a real card €1.00.
+Continue?"* — again with the currency you picked. Tiles 2 and 3 add one
+sentence to that question, saying that the card is also stored, or that a
+stored card is what gets charged. Cancel is the default and holds the focus,
+and dismissing the dialog — Android back button included — counts as Cancel.
+Continue mints a production session and opens the native sheet, and from there
+it is an ordinary payment with an ordinary card. The red bar is **not** over
+that sheet: it is a platform view this app does not draw, so at the one moment
+you are typing a real card number, nothing on screen says LIVE.
+
+One tile at a time. While a run is being set up all three go dead, because a
+second production session is just as unwanted when the second tap lands on a
+different tile.
 
 **If you ever change the amount, it is one edit.** The constant
 `liveSmokeMinorUnits` in [`lib/demo/live.dart`](lib/demo/live.dart) is the
 figure, and `liveSmokeAmountLabel` beside it is the only place it is written
-for a human to read. The four sites that quote it — the tile's title, the
-tile's subtitle, the Live paragraph at the top of Home and the confirmation
-dialog — all render that one function, so they cannot end up quoting two
-different numbers to the person about to spend the money. Three of them used
+for a human to read. Every site that quotes it — each tile's title, each
+tile's subtitle, the Live paragraph at the top of Home and each confirmation
+dialog — renders that one function, so they cannot end up quoting two
+different numbers to the person about to spend the money. Most of them used
 to spell it out by hand.
 
 ### Afterwards — refund it
@@ -292,6 +314,11 @@ to spell it out by hand.
 The result screen shows a red block with **an id and a copy button**, and what
 to do about it. **This app cannot refund anything**; that is deliberate for a
 tool used this rarely.
+
+**Every tile you run is its own charge.** Running all three is three charges
+and three refunds, each with its own id. The saved-card pair is not one
+charge in two halves — storing a card costs 1.00 and spending it costs
+another.
 
 The block is on every Live run that got as far as an id, **including one the
 bank refused**. It is not a signal that money moved — it is the id you need in
@@ -320,9 +347,9 @@ same bug-report block every other run gets.
   arrives without one.
 - **The amount is fixed.** 1.00, hardcoded, no editor anywhere near it. The
   currency is a choice; the figure is not.
-- **Nothing but the smoke.** No decline scenarios, no saved cards, no
-  wallets. Apple Pay will slot in beside the smoke tile once the native iOS
-  SDK ships it; it has not.
+- **Only those three.** No decline scenarios, no editor, no Custom, no
+  wallets. Apple Pay will slot in beside them once the native iOS SDK ships
+  it; it has not.
 
 ### Getting out
 

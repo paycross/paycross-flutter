@@ -272,11 +272,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Mints and runs the one Live scenario, past three refusals.
+  /// Mints and runs one Live scenario, past three refusals.
   ///
   /// Three rungs, the first holding two conditions: nothing held for this
   /// session -- an identity or a credential, checked together because one
   /// button holds both -- then the confirmation dialog, then `_busy`.
+  ///
+  /// One function for all three tiles rather than one per tile. Every rung
+  /// above is a rung a copied tile could be pasted without, and the tile that
+  /// forgot one would be the tile that spends money on a single tap.
   ///
   /// Deliberately not routed through [runPreset]. That function exists to
   /// make "not configured routes to Settings" true of both entrances to a
@@ -285,10 +289,19 @@ class _HomeScreenState extends State<HomeScreen> {
   /// would put a production branch inside the function both sandbox
   /// entrances share.
   ///
-  /// [runInFlight] is not needed here for the same reason: deep links are
-  /// rejected in Live, so this tile is the only entrance and `_busy` is the
-  /// only guard a single entrance needs.
-  Future<void> _runLiveSmoke(BuildContext context) async {
+  /// [runInFlight] is not needed here for the same reason it never was: deep
+  /// links are rejected in Live, so these tiles are the only entrance and
+  /// `_busy` is the only guard one entrance needs. `_busy` is one flag for
+  /// all three tiles, which is what makes them dead together rather than one
+  /// at a time -- a second production session is just as unwanted when the
+  /// second tap lands on a different tile.
+  Future<void> _runLiveScenario(
+    BuildContext context,
+    LiveScenario scenario,
+  ) async {
+    // Belt to the disabled tiles' braces. They are what a tester sees, and
+    // this is what holds if a tap is ever delivered to one anyway.
+    if (_busy) return;
     final state = LiveModeScope.maybeOf(context);
     if (state == null || !state.isLive) return;
 
@@ -327,10 +340,11 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => AlertDialog(
         key: const ValueKey('liveConfirmDialog'),
         title: const Text('Charge a real card?'),
-        content: Text(
-          'This will charge a real card '
-          '${liveSmokeAmountLabel(currency)}. Continue?',
-        ),
+        // The whole question, from `live.dart`: the amount, and for the
+        // saved-card tiles one sentence about what else this tap does. Built
+        // there rather than here so the dialog and the tile above it cannot
+        // end up describing different tiles.
+        content: Text(liveConfirmQuestion(scenario, currency)),
         actions: [
           // Cancel is the filled button and holds the focus: the default
           // action of this dialog is to not spend money. A dismissed barrier
@@ -355,7 +369,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (go != true || !context.mounted) return;
 
     setState(() => _busy = true);
-    final preset = liveSmokePreset(identity, currency);
+    final preset = livePreset(scenario, identity, currency);
     try {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -430,9 +444,10 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Text(
               key: const ValueKey('homeEnvironment'),
               live
-                  ? 'Live — the PayCross production environment. The tile below '
-                        'charges a real card ${liveSmokeAmountLabel(currency)}. '
-                        'Refund it in the back office as soon as it settles; '
+                  ? 'Live — the PayCross production environment. Each of the '
+                        'three tiles below charges a real card '
+                        '${liveSmokeAmountLabel(currency)}. Refund every one '
+                        'you run in the back office as soon as it settles; '
                         'this app cannot.'
                   : 'Test — this build talks to the PayCross TEST sandbox. '
                         'Switch to Live in Settings to reach production; it '
@@ -442,18 +457,28 @@ class _HomeScreenState extends State<HomeScreen> {
           live
               ? const LiveProfileStrip()
               : ActiveProfileStrip(store: widget.store),
+          // Three tiles, drawn from one list and run by one function. The
+          // order is the order they are worth running: the smoke first, then
+          // the pair, whose second half has nothing to offer until the first
+          // half has settled.
           if (live)
-            Card(
-              key: const ValueKey('liveSmokeTile'),
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: ListTile(
-                leading: const Icon(Icons.credit_card),
-                title: Text(liveSmokeName(currency)),
-                subtitle: Text(liveSmokeExpectation(currency)),
-                isThreeLine: true,
-                onTap: _busy ? null : () => _runLiveSmoke(context),
+            for (final scenario in LiveScenario.values)
+              Card(
+                key: ValueKey(liveTileKey(scenario)),
+                color: Theme.of(context).colorScheme.errorContainer,
+                child: ListTile(
+                  leading: const Icon(Icons.credit_card),
+                  title: Text(liveScenarioName(scenario, currency)),
+                  subtitle: Text(liveScenarioExpectation(scenario, currency)),
+                  isThreeLine: true,
+                  // Every tile goes dead while any run is being set up, not
+                  // just the one that was tapped: a second production session
+                  // is just as unwanted when the second tap lands elsewhere.
+                  onTap: _busy
+                      ? null
+                      : () => _runLiveScenario(context, scenario),
+                ),
               ),
-            ),
           if (!live)
             for (final preset in demoPresets)
               Card(
