@@ -12,9 +12,22 @@ PayCrossSuccess _success(String txn) => PayCrossSuccess(
 
 void main() {
   test('a success names the amount and the transaction', () {
+    // The amount is written for a person, not echoed as minor units: a
+    // tester photographed "Approved — 100 GBP" under a tile that had said
+    // "£1.00" and asked which of the two was true.
     expect(
       humanOutcome(_success('txn_1')),
-      'Approved — 1000 EUR, transaction txn_1',
+      'Approved — €10.00, transaction txn_1',
+    );
+    expect(
+      humanOutcome(
+        const PayCrossSuccess(
+          transactionId: 'txn_gbp',
+          status: 'success',
+          amount: PayCrossAmount(minorUnits: 100, currencyCode: 'GBP'),
+        ),
+      ),
+      'Approved — £1.00, transaction txn_gbp',
     );
   });
 

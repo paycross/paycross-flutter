@@ -1,3 +1,4 @@
+import 'money.dart';
 import 'presets.dart';
 
 /// The amount every Live tile charges, in minor units. One of whatever
@@ -24,17 +25,6 @@ const int liveSmokeMinorUnits = 100;
 /// something to quote.
 const String liveDefaultCurrency = 'EUR';
 
-/// How each currency the Live form offers is written.
-///
-/// Three entries rather than a package: this app shows one amount in one of
-/// three currencies, and `intl` would bring a locale question -- whose
-/// separators, whose symbol placement -- that nobody here has an answer for.
-const Map<String, String> _liveCurrencySymbols = <String, String>{
-  'EUR': '€',
-  'USD': r'$',
-  'GBP': '£',
-};
-
 /// What a Live tile costs, written the way the tester reads it.
 ///
 /// The one place the figure is spelled out. Every piece of copy quotes it --
@@ -42,15 +32,11 @@ const Map<String, String> _liveCurrencySymbols = <String, String>{
 /// confirmation dialog -- and every one of them calls this, so they cannot
 /// say two different numbers about the same charge.
 ///
-/// All three of [currencies] are two-decimal, so dividing by 100 is right
-/// for each of them. A code this map does not hold falls back to
-/// `1.00 XXX`: unlovely, and honest, which is the trade worth making when
-/// the alternative is an unknown currency printed under a euro sign.
-String liveSmokeAmountLabel(String currency) {
-  final amount = (liveSmokeMinorUnits / 100).toStringAsFixed(2);
-  final symbol = _liveCurrencySymbols[currency];
-  return symbol == null ? '$amount $currency' : '$symbol$amount';
-}
+/// Rendered by [formatMoney], the same function the result screen uses, so
+/// the figure the tester agreed to and the figure they are told was charged
+/// are written by one hand.
+String liveSmokeAmountLabel(String currency) =>
+    formatMoney(liveSmokeMinorUnits, currency);
 
 /// Who a Live charge is made under.
 ///
