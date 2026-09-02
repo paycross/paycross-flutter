@@ -72,6 +72,7 @@ class PcConfiguration {
     this.brandColorArgb,
     this.testCardPrefill,
     this.googlePayMerchantId,
+    this.applePayMerchantId,
   });
 
   PcEnvironment environment;
@@ -98,9 +99,21 @@ class PcConfiguration {
   /// native SDK adds `merchantId` to `merchantInfo` only when a non-blank id is
   /// present.
   ///
-  /// Android only. iOS is card-only — no Google Pay, and Apple Pay is not wired
-  /// through this plugin yet — so it accepts and ignores this.
+  /// Android only. Google Pay's in-app API is Android and web only, so there is
+  /// no iOS wallet for this to configure and iOS accepts and ignores it.
   String? googlePayMerchantId;
+
+  /// Apple Merchant ID, for the Apple Pay button the iOS SDK renders itself
+  /// when the session allows wallets.
+  ///
+  /// Apple's key derivation hashes this string into every payment token's
+  /// symmetric key, so it is not a display name and not optional decoration:
+  /// the same value has to be registered with Apple, listed in the app's
+  /// Apple Pay entitlement, and saved on the merchant's PayCross record. Null
+  /// is what "not configured" means, and the iOS SDK renders no button for it.
+  ///
+  /// iOS only. Android has no Apple Pay, so it accepts and ignores this.
+  String? applePayMerchantId;
 }
 
 class PcVersionInfo {

@@ -48,11 +48,17 @@ abstract final class PayCross {
   /// [brandColorArgb] currently applies on Android only; the iOS SDK exposes
   /// no brand-colour hook, so it is ignored there.
   ///
-  /// [googlePayMerchantId] is Android-only for now. It is the merchant id from
-  /// the Google Business Console, and Google **requires** it for
+  /// [googlePayMerchantId] is Android-only. It is the merchant id from the
+  /// Google Business Console, and Google **requires** it for
   /// [PayCrossEnvironment.production] Google Pay requests; sandbox works
-  /// without one. iOS ignores it: Google Pay's in-app API is Android and web
-  /// only, and Apple Pay is not wired through this plugin yet.
+  /// without one. iOS ignores it, because Google Pay's in-app API is Android
+  /// and web only.
+  ///
+  /// [applePayMerchantId] is iOS-only, and Android ignores it. It is the Apple
+  /// Merchant ID the iOS SDK renders its Apple Pay button for; null means not
+  /// configured and no button appears. It must be the same string that is saved
+  /// on the merchant's PayCross record — the edge compares the two and refuses
+  /// the payment when they differ.
   ///
   /// Throws [PayCrossIntegrationError] with
   /// [PayCrossErrorCode.testPrefillInProduction] if [testCardPrefill] is
@@ -63,6 +69,7 @@ abstract final class PayCross {
     int? brandColorArgb,
     PayCrossTestCardPrefill? testCardPrefill,
     String? googlePayMerchantId,
+    String? applePayMerchantId,
   }) async {
     if (testCardPrefill != null &&
         environment == PayCrossEnvironment.production) {
@@ -90,6 +97,7 @@ abstract final class PayCross {
                   saveCard: testCardPrefill.saveCard,
                 ),
           googlePayMerchantId: googlePayMerchantId,
+          applePayMerchantId: applePayMerchantId,
         ),
       ),
     );

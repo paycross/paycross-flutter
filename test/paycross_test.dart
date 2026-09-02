@@ -297,6 +297,91 @@ void main() {
       expect(host.lastConfiguration?.googlePayMerchantId, isNull);
     });
 
+    /// Apple's key derivation hashes this string into every payment token's
+    /// key, so losing it between Dart and the native SDK does not produce a
+    /// missing-field error anywhere: the edge reads the payment as a web
+    /// token, the vault derives the wrong key, and the shopper sees a generic
+    /// decline.
+    test('an Apple Pay merchant id reaches the platform', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        applePayMerchantId: 'merchant.pay-cross.com',
+      );
+
+      expect(
+        host.lastConfiguration?.applePayMerchantId,
+        'merchant.pay-cross.com',
+      );
+    });
+
+    /// Null is what "not configured" means, and the native SDK renders no
+    /// button at all for it.
+    test('an absent Apple Pay merchant id crosses as null', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(environment: PayCrossEnvironment.sandbox);
+
+      expect(host.lastConfiguration?.applePayMerchantId, isNull);
+    });
+
+    /// Two wallets, two platforms, one call. Setting either must not disturb
+    /// the other -- a merchant with Google Pay on Android and Apple Pay on iOS
+    /// configures both in the same place, and the demo app is one.
+    test('the two wallet ids are independent', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        applePayMerchantId: 'merchant.pay-cross.com',
+      );
+      expect(host.lastConfiguration?.googlePayMerchantId, isNull);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        googlePayMerchantId: 'BCR2DN4T2ABCDEFG',
+      );
+      expect(host.lastConfiguration?.applePayMerchantId, isNull);
+    });
+
+    /// Unchanged, not normalised. The native SDK treats an empty identifier as
+    /// unconfigured and refuses to build a token with one; a plugin that
+    /// quietly turned '' into null would be a second opinion about the same
+    /// question, in a layer that has no way to be right.
+    test('an empty Apple Pay merchant id crosses unchanged', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        applePayMerchantId: '',
+      );
+
+      expect(host.lastConfiguration?.applePayMerchantId, '');
+    });
+
+    /// The production guard is about test card prefill and nothing else. A
+    /// production Apple Pay configuration is the normal case, not an error.
+    test('a production Apple Pay configuration is allowed', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.production,
+        applePayMerchantId: 'merchant.pay-cross.com',
+      );
+
+      expect(
+        host.lastConfiguration?.applePayMerchantId,
+        'merchant.pay-cross.com',
+      );
+      expect(host.lastConfiguration?.environment, g.PcEnvironment.production);
+    });
+
     /// A PAN must not be reachable through a log line or a crash report.
     test('the prefill redacts itself', () {
       const prefill = PayCrossTestCardPrefill(

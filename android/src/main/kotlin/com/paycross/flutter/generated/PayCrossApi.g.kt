@@ -309,10 +309,23 @@ data class PcConfiguration (
    * native SDK adds `merchantId` to `merchantInfo` only when a non-blank id is
    * present.
    *
-   * Android only. iOS is card-only — no Google Pay, and Apple Pay is not wired
-   * through this plugin yet — so it accepts and ignores this.
+   * Android only. Google Pay's in-app API is Android and web only, so there is
+   * no iOS wallet for this to configure and iOS accepts and ignores it.
    */
-  val googlePayMerchantId: String? = null
+  val googlePayMerchantId: String? = null,
+  /**
+   * Apple Merchant ID, for the Apple Pay button the iOS SDK renders itself
+   * when the session allows wallets.
+   *
+   * Apple's key derivation hashes this string into every payment token's
+   * symmetric key, so it is not a display name and not optional decoration:
+   * the same value has to be registered with Apple, listed in the app's
+   * Apple Pay entitlement, and saved on the merchant's PayCross record. Null
+   * is what "not configured" means, and the iOS SDK renders no button for it.
+   *
+   * iOS only. Android has no Apple Pay, so it accepts and ignores this.
+   */
+  val applePayMerchantId: String? = null
 )
  {
   companion object {
@@ -321,7 +334,8 @@ data class PcConfiguration (
       val brandColorArgb = pigeonVar_list[1] as Long?
       val testCardPrefill = pigeonVar_list[2] as PcTestCardPrefill?
       val googlePayMerchantId = pigeonVar_list[3] as String?
-      return PcConfiguration(environment, brandColorArgb, testCardPrefill, googlePayMerchantId)
+      val applePayMerchantId = pigeonVar_list[4] as String?
+      return PcConfiguration(environment, brandColorArgb, testCardPrefill, googlePayMerchantId, applePayMerchantId)
     }
   }
   fun toList(): List<Any?> {
@@ -330,6 +344,7 @@ data class PcConfiguration (
       brandColorArgb,
       testCardPrefill,
       googlePayMerchantId,
+      applePayMerchantId,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -340,7 +355,7 @@ data class PcConfiguration (
       return true
     }
     val other = other as PcConfiguration
-    return PayCrossApiPigeonUtils.deepEquals(this.environment, other.environment) && PayCrossApiPigeonUtils.deepEquals(this.brandColorArgb, other.brandColorArgb) && PayCrossApiPigeonUtils.deepEquals(this.testCardPrefill, other.testCardPrefill) && PayCrossApiPigeonUtils.deepEquals(this.googlePayMerchantId, other.googlePayMerchantId)
+    return PayCrossApiPigeonUtils.deepEquals(this.environment, other.environment) && PayCrossApiPigeonUtils.deepEquals(this.brandColorArgb, other.brandColorArgb) && PayCrossApiPigeonUtils.deepEquals(this.testCardPrefill, other.testCardPrefill) && PayCrossApiPigeonUtils.deepEquals(this.googlePayMerchantId, other.googlePayMerchantId) && PayCrossApiPigeonUtils.deepEquals(this.applePayMerchantId, other.applePayMerchantId)
   }
 
   override fun hashCode(): Int {
@@ -349,10 +364,11 @@ data class PcConfiguration (
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.brandColorArgb)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.testCardPrefill)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.googlePayMerchantId)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.applePayMerchantId)
     return result
   }
   override fun toString(): String {
-    return "PcConfiguration(environment=$environment, brandColorArgb=$brandColorArgb, testCardPrefill=$testCardPrefill, googlePayMerchantId=$googlePayMerchantId)"
+    return "PcConfiguration(environment=$environment, brandColorArgb=$brandColorArgb, testCardPrefill=$testCardPrefill, googlePayMerchantId=$googlePayMerchantId, applePayMerchantId=$applePayMerchantId)"
   }
 }
 

@@ -291,9 +291,20 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
   /// native SDK adds `merchantId` to `merchantInfo` only when a non-blank id is
   /// present.
   ///
-  /// Android only. iOS is card-only — no Google Pay, and Apple Pay is not wired
-  /// through this plugin yet — so it accepts and ignores this.
+  /// Android only. Google Pay's in-app API is Android and web only, so there is
+  /// no iOS wallet for this to configure and iOS accepts and ignores it.
   var googlePayMerchantId: String? = nil
+  /// Apple Merchant ID, for the Apple Pay button the iOS SDK renders itself
+  /// when the session allows wallets.
+  ///
+  /// Apple's key derivation hashes this string into every payment token's
+  /// symmetric key, so it is not a display name and not optional decoration:
+  /// the same value has to be registered with Apple, listed in the app's
+  /// Apple Pay entitlement, and saved on the merchant's PayCross record. Null
+  /// is what "not configured" means, and the iOS SDK renders no button for it.
+  ///
+  /// iOS only. Android has no Apple Pay, so it accepts and ignores this.
+  var applePayMerchantId: String? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -302,12 +313,14 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
     let brandColorArgb: Int64? = nilOrValue(pigeonVar_list[1])
     let testCardPrefill: PcTestCardPrefill? = nilOrValue(pigeonVar_list[2])
     let googlePayMerchantId: String? = nilOrValue(pigeonVar_list[3])
+    let applePayMerchantId: String? = nilOrValue(pigeonVar_list[4])
 
     return PcConfiguration(
       environment: environment,
       brandColorArgb: brandColorArgb,
       testCardPrefill: testCardPrefill,
-      googlePayMerchantId: googlePayMerchantId
+      googlePayMerchantId: googlePayMerchantId,
+      applePayMerchantId: applePayMerchantId
     )
   }
   func toList() -> [Any?] {
@@ -316,13 +329,14 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
       brandColorArgb,
       testCardPrefill,
       googlePayMerchantId,
+      applePayMerchantId,
     ]
   }
   static func == (lhs: PcConfiguration, rhs: PcConfiguration) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return PayCrossApiPigeonInternal.deepEquals(lhs.environment, rhs.environment) && PayCrossApiPigeonInternal.deepEquals(lhs.brandColorArgb, rhs.brandColorArgb) && PayCrossApiPigeonInternal.deepEquals(lhs.testCardPrefill, rhs.testCardPrefill) && PayCrossApiPigeonInternal.deepEquals(lhs.googlePayMerchantId, rhs.googlePayMerchantId)
+    return PayCrossApiPigeonInternal.deepEquals(lhs.environment, rhs.environment) && PayCrossApiPigeonInternal.deepEquals(lhs.brandColorArgb, rhs.brandColorArgb) && PayCrossApiPigeonInternal.deepEquals(lhs.testCardPrefill, rhs.testCardPrefill) && PayCrossApiPigeonInternal.deepEquals(lhs.googlePayMerchantId, rhs.googlePayMerchantId) && PayCrossApiPigeonInternal.deepEquals(lhs.applePayMerchantId, rhs.applePayMerchantId)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -331,10 +345,11 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
     PayCrossApiPigeonInternal.deepHash(value: brandColorArgb, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: testCardPrefill, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: googlePayMerchantId, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: applePayMerchantId, hasher: &hasher)
   }
 
   public var description: String {
-    return "PcConfiguration(environment: \(String(describing: environment)), brandColorArgb: \(String(describing: brandColorArgb)), testCardPrefill: \(String(describing: testCardPrefill)), googlePayMerchantId: \(String(describing: googlePayMerchantId)))"
+    return "PcConfiguration(environment: \(String(describing: environment)), brandColorArgb: \(String(describing: brandColorArgb)), testCardPrefill: \(String(describing: testCardPrefill)), googlePayMerchantId: \(String(describing: googlePayMerchantId)), applePayMerchantId: \(String(describing: applePayMerchantId)))"
   }
 }
 
