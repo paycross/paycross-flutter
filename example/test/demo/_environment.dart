@@ -6,15 +6,19 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 ///
 /// `PayCross.configure` goes to a Pigeon host API that `flutter test` has
 /// nothing behind, so every state in a widget test takes this instead.
-DemoEnvironmentState fakeEnvironment({String? googlePayMerchantId}) =>
-    DemoEnvironmentState(
-      configure:
-          ({
-            required PayCrossEnvironment environment,
-            String? googlePayMerchantId,
-          }) async {},
-      googlePayMerchantId: googlePayMerchantId,
-    );
+DemoEnvironmentState fakeEnvironment({
+  String? googlePayMerchantId,
+  String? applePayMerchantId,
+}) => DemoEnvironmentState(
+  configure:
+      ({
+        required PayCrossEnvironment environment,
+        String? googlePayMerchantId,
+        String? applePayMerchantId,
+      }) async {},
+  googlePayMerchantId: googlePayMerchantId,
+  applePayMerchantId: applePayMerchantId,
+);
 
 /// A [MaterialApp] with the environment mounted where the app mounts it:
 /// in `builder`, which wraps the Navigator, so a route pushed later reads

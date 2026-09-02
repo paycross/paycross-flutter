@@ -8,6 +8,7 @@ import 'demo/home.dart';
 import 'demo/minter.dart';
 import 'demo/presets.dart';
 import 'demo/secrets.dart';
+import 'demo/wallets.dart';
 import 'e2e_mode.dart';
 
 /// Google Pay merchant id, passed straight to `PayCross.configure`.
@@ -46,8 +47,19 @@ Future<void> main() async {
   await PayCross.configure(
     environment: PayCrossEnvironment.sandbox,
     googlePayMerchantId: merchantId,
+    // A build constant rather than a stored value, and not read from
+    // anywhere: it has to be the string in the app's entitlement, and
+    // PassKit refuses -- silently, with the button still on screen -- to
+    // present a sheet for an identifier the entitlement does not list. It
+    // costs no await, so the frozen automation build below is unaffected.
+    applePayMerchantId: testApplePayMerchantId,
   );
-  runApp(ExampleApp(googlePayMerchantId: merchantId));
+  runApp(
+    ExampleApp(
+      googlePayMerchantId: merchantId,
+      applePayMerchantId: testApplePayMerchantId,
+    ),
+  );
 }
 
 /// The Google Pay merchant id a colleague saved in Settings, or null.
@@ -66,11 +78,19 @@ Future<String?> _storedGooglePayMerchantId() async {
 }
 
 class ExampleApp extends StatelessWidget {
-  const ExampleApp({super.key, this.googlePayMerchantId});
+  const ExampleApp({
+    super.key,
+    this.googlePayMerchantId,
+    this.applePayMerchantId,
+  });
 
   /// What `configure` was given at launch, carried down so that returning
   /// from Live to Test restores it rather than clearing it.
   final String? googlePayMerchantId;
+
+  /// The same, for Apple Pay. Carried rather than read from the constant at
+  /// the far end so that both wallets travel the one path.
+  final String? applePayMerchantId;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -88,6 +108,7 @@ class ExampleApp extends StatelessWidget {
         ? null
         : (context, child) => LiveModeScope(
             googlePayMerchantId: googlePayMerchantId,
+            applePayMerchantId: applePayMerchantId,
             child: child!,
           ),
     home: kE2e ? const CheckoutScreen() : const DemoHome(),

@@ -4,6 +4,7 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 import 'endpoints.dart';
 import 'live.dart';
 import 'secrets.dart';
+import 'wallets.dart';
 
 /// Which backend the app is pointed at right now.
 ///
@@ -31,15 +32,18 @@ typedef ConfigureSdk =
     Future<void> Function({
       required PayCrossEnvironment environment,
       String? googlePayMerchantId,
+      String? applePayMerchantId,
     });
 
 /// The real one.
 Future<void> configurePayCross({
   required PayCrossEnvironment environment,
   String? googlePayMerchantId,
+  String? applePayMerchantId,
 }) => PayCross.configure(
   environment: environment,
   googlePayMerchantId: googlePayMerchantId,
+  applePayMerchantId: applePayMerchantId,
 );
 
 /// Which environment the app is in, and the Live credentials while it is
@@ -58,6 +62,7 @@ class DemoEnvironmentState extends ChangeNotifier {
   DemoEnvironmentState({
     this.configure = configurePayCross,
     this.googlePayMerchantId,
+    this.applePayMerchantId,
   });
 
   final ConfigureSdk configure;
@@ -67,6 +72,16 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// configuration, so a merchant id left out of the way back is a Google
   /// Pay button that stops appearing until the app is relaunched.
   final String? googlePayMerchantId;
+
+  /// What `main` configured the SDK with at launch for Apple Pay, kept for
+  /// the same reason the Google one is: returning to Test restores it.
+  ///
+  /// Unlike the Google id this is never typed and never stored -- it is the
+  /// build constant that matches the app's entitlement -- so the value that
+  /// arrives here is always [testApplePayMerchantId]. It is carried as a
+  /// field rather than read from the constant on the way back so that the
+  /// two directions have one source between them.
+  final String? applePayMerchantId;
 
   /// True while a switch is waiting on the SDK.
   ///
@@ -155,10 +170,15 @@ class DemoEnvironmentState extends ChangeNotifier {
     try {
       await configure(
         environment: PayCrossEnvironment.production,
-        // Null on purpose: Live has no Google Pay tile for a wallet id to
-        // serve, and the id is configuration for one wallet on one
-        // merchant.
-        googlePayMerchantId: null,
+        // Live's own identifiers, read from the constants rather than from
+        // this state's fields. The fields hold what Test was configured
+        // with, and a Test Apple identifier reaching production would mint
+        // tokens encrypted to the TEST key that no production vault can
+        // decrypt. Google's is empty until the owner is granted production
+        // access in the Wallet Console, which `walletIdOrNull` turns into
+        // the null both SDKs read as "render no button".
+        googlePayMerchantId: walletIdOrNull(liveGooglePayMerchantId),
+        applePayMerchantId: walletIdOrNull(liveApplePayMerchantId),
       );
     } catch (problem) {
       // Only the type. A platform exception's message is the one thing on
@@ -242,6 +262,7 @@ class DemoEnvironmentState extends ChangeNotifier {
       await configure(
         environment: PayCrossEnvironment.sandbox,
         googlePayMerchantId: googlePayMerchantId,
+        applePayMerchantId: applePayMerchantId,
       );
     } catch (problem) {
       // The same second drop the success path makes below, and for the same
@@ -298,6 +319,7 @@ class LiveModeScope extends StatefulWidget {
     required this.child,
     this.state,
     this.googlePayMerchantId,
+    this.applePayMerchantId,
   });
 
   final Widget child;
@@ -308,6 +330,9 @@ class LiveModeScope extends StatefulWidget {
   /// Passed on to a state this widget builds itself, so returning to Test
   /// restores what `main` configured at launch.
   final String? googlePayMerchantId;
+
+  /// Passed on with the Google one, and for the same reason.
+  final String? applePayMerchantId;
 
   /// The state above [context], or null where there is none.
   ///
@@ -353,6 +378,7 @@ class _LiveModeScopeState extends State<LiveModeScope> {
     if (widget.state == null) {
       _own = DemoEnvironmentState(
         googlePayMerchantId: widget.googlePayMerchantId,
+        applePayMerchantId: widget.applePayMerchantId,
       );
     }
   }
