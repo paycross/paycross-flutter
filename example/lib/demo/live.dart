@@ -1,5 +1,6 @@
 import 'money.dart';
 import 'presets.dart';
+import 'surface.dart';
 
 /// The amount every Live tile charges, in minor units. One of whatever
 /// currency the tester picked.
@@ -232,7 +233,18 @@ String liveScenarioExpectation(LiveScenario scenario, String currency) {
 /// The smoke's question is the one that shipped, unchanged. The other two
 /// add a sentence, because "this will charge a real card 1.00" is not the
 /// whole truth about a tile that also leaves a card on file.
-String liveConfirmQuestion(LiveScenario scenario, String currency) {
+///
+/// [surface] adds one more sentence, and only for the web checkout. Where
+/// the money is about to be spent is the question this dialog asks; *which
+/// application is about to ask for the card* is part of the answer, and
+/// somebody who taps Continue expecting a sheet and gets a browser will
+/// wonder whether they tapped the wrong thing. Defaulted to the sheet, so
+/// every call written before the surface existed asks exactly what it asked.
+String liveConfirmQuestion(
+  LiveScenario scenario,
+  String currency, {
+  PaymentSurface surface = PaymentSurface.sdkSheet,
+}) {
   final extra = switch (scenario) {
     LiveScenario.smoke => '',
     LiveScenario.storeCard =>
@@ -240,8 +252,13 @@ String liveConfirmQuestion(LiveScenario scenario, String currency) {
     LiveScenario.paySavedCard =>
       ' It charges a card already stored on the production customer.',
   };
+  final where = switch (surface) {
+    PaymentSurface.sdkSheet => '',
+    PaymentSurface.webCheckout =>
+      ' It opens in your browser instead of the app.',
+  };
   return 'This will charge a real card ${liveSmokeAmountLabel(currency)}.'
-      '$extra Continue?';
+      '$extra$where Continue?';
 }
 
 /// What a tile mints, under the identity that was typed.

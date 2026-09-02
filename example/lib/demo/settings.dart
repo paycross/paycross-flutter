@@ -6,6 +6,7 @@ import 'live.dart';
 import 'minter.dart';
 import 'presets.dart';
 import 'secrets.dart';
+import 'surface.dart';
 import 'version_panel.dart';
 
 /// Mints a throwaway session to prove the credentials work, and returns a
@@ -33,11 +34,20 @@ class SettingsScreen extends StatefulWidget {
     this.store = const SecretStore(),
     this.verifyCredentials = mintThrowawaySession,
     this.readVersions = platformVersions,
+    this.surfaceStore = const SurfaceStore(),
   });
 
   final SecretStore store;
   final VerifyCredentials verifyCredentials;
   final Future<DemoVersions> Function() readVersions;
+
+  /// Where the payment-surface preference is kept.
+  ///
+  /// A separate store from [store], and that is the point rather than an
+  /// accident: which of two screens a session is shown on is not a secret,
+  /// and putting it in the secure store would make that store the place
+  /// preferences live. See `surface.dart`.
+  final SurfaceStore surfaceStore;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -78,6 +88,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _loaded = false;
   String? _message;
 
+  /// Which surface the tiles present on, in both environments.
+  ///
+  /// The sheet until the store answers, which is what the app did before
+  /// this preference existed. Not touched by [_forgetWhatWasTyped], unlike
+  /// the currency beside it: this is a durable preference about how the
+  /// person likes to test, not a fact about one Live session, and crossing
+  /// between environments is no reason to forget it.
+  PaymentSurface _surface = PaymentSurface.sdkSheet;
+
+  /// Whether the surface read has come back, whatever it found.
+  ///
+  /// The toggle is dead until it has, for the reason [_loaded] holds the
+  /// three Test buttons: before the read lands this shows the sheet because
+  /// nothing has answered, not because the sheet is stored, and a tap on
+  /// that emptiness would write it straight over a choice already made.
+  ///
+  /// Its own flag rather than [_loaded]. They are two stores, and either can
+  /// be the one that is broken.
+  bool _surfaceLoaded = false;
+
   /// What the store is believed to hold, so "Verify credentials" can say
   /// whether what was just proven is also what the next launch will use.
   ///
@@ -93,6 +123,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _load();
+    _loadSurface();
   }
 
   @override
@@ -104,6 +135,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _liveName.dispose();
     _liveEmail.dispose();
     super.dispose();
+  }
+
+  /// Reads the surface preference, on its own and beside [_load].
+  ///
+  /// Two stores, two reads, two gates, and deliberately not one. Awaiting
+  /// them together would tie each to the other's worst case: a wedged
+  /// Keychain would leave the surface toggle dead for a preference that was
+  /// sitting there readable, and a wedged `SharedPreferences` would leave
+  /// Save, Verify and Forget dead over a credential that was fine. Neither
+  /// store knows anything about the other, and this screen should not be the
+  /// place they learn.
+  Future<void> _loadSurface() async {
+    // `SurfaceStore.read` answers the sheet on anything it cannot read, so
+    // there is nothing to guard here that it does not guard.
+    final surface = await widget.surfaceStore.read();
+    if (!mounted) return;
+    setState(() {
+      _surface = surface;
+      _surfaceLoaded = true;
+    });
   }
 
   Future<void> _load() async {
@@ -247,6 +298,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _busy = false;
       _stored = null;
+      _message = said;
+    });
+  }
+
+  /// Stores which surface the tiles present on, and says what changed.
+  ///
+  /// The choice moves on screen before the write is confirmed and moves back
+  /// if the write refuses, and that pairing is the whole of it: Home reads
+  /// this preference from the store rather than from here, so a toggle left
+  /// showing a choice the store did not take would be a screen promising a
+  /// browser while every tile opened a sheet.
+  ///
+  /// No environment ceremony, unlike the switch below. This costs nothing
+  /// and spends nothing -- it is where the card is typed, not whose card --
+  /// and the Live confirmation dialog names the surface before any money
+  /// moves.
+  Future<void> _chooseSurface(PaymentSurface chosen) async {
+    // The handler, not just the widget: `onSelectionChanged: _busy ? null`
+    // takes effect on the NEXT build, so two taps inside one frame both
+    // arrive here.
+    if (_busy || chosen == _surface) return;
+    final previous = _surface;
+    setState(() {
+      _busy = true;
+      _surface = chosen;
+      _message = null;
+    });
+    String said;
+    var kept = chosen;
+    try {
+      await widget.surfaceStore.write(chosen);
+      said = switch (chosen) {
+        PaymentSurface.sdkSheet =>
+          'Every tile presents the native SDK sheet, in this app.',
+        PaymentSurface.webCheckout =>
+          'Every tile mints the same session and opens the hosted checkout '
+              'page in your browser. This app never learns the outcome — '
+              'look it up in the back office by the session id.',
+      };
+    } catch (problem) {
+      // Back to what the store still holds, because that is what the tiles
+      // will do. Only the type: a store's exception is free to quote what it
+      // was handed.
+      kept = previous;
+      said =
+          'Could not save that choice: ${problem.runtimeType}. Still using '
+          '${surfaceLabel(previous)}.';
+    }
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _surface = kept;
       _message = said;
     });
   }
@@ -756,6 +859,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Text(_message!, key: const ValueKey('settingsMessage')),
             ),
           ],
+          const SizedBox(height: 32),
+          // Below the credentials rather than above them, and that is a
+          // decision about what this screen is for. Everything above is how
+          // to get configured, in order, and a first run works straight down
+          // it; this is a preference about how somebody likes to test, which
+          // is only worth reading once the app can mint at all.
+          //
+          // Outside the `if (state != null)` block at the top, unlike the
+          // environment toggle: this choice has nothing to do with which
+          // environment the app is in, and it is offered in both.
+          //
+          // It never reaches an automated run all the same. The matrix runner
+          // drives the deep link, and `runPreset`'s surface argument defaults
+          // to the sheet for every caller that does not name one -- which the
+          // link path is, and always will be, because it names none.
+          Text(
+            'Pay with',
+            key: const ValueKey('surfaceHeading'),
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          SegmentedButton<PaymentSurface>(
+            key: const ValueKey('surfaceToggle'),
+            segments: const [
+              ButtonSegment(
+                value: PaymentSurface.sdkSheet,
+                label: Text(sdkSurfaceLabel),
+                icon: Icon(Icons.smartphone),
+              ),
+              ButtonSegment(
+                value: PaymentSurface.webCheckout,
+                label: Text(webSurfaceLabel),
+                icon: Icon(Icons.open_in_browser),
+              ),
+            ],
+            selected: {_surface},
+            onSelectionChanged: _busy || !_surfaceLoaded
+                ? null
+                : (chosen) => _chooseSurface(chosen.single),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            key: const ValueKey('surfaceExplanation'),
+            'The sheet is the native SDK, in this app. Web checkout mints the '
+            'same session and hands it to your browser — the hosted page, '
+            'where Google Pay and Apple Pay are already approved. The app '
+            'never learns what happened there; the back office does. This '
+            'applies in Test and in Live, and it is remembered across '
+            'launches.',
+          ),
           const SizedBox(height: 32),
           VersionPanel(readVersions: widget.readVersions),
         ],

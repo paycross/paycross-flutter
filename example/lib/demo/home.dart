@@ -11,7 +11,9 @@ import 'presets.dart';
 import 'run.dart';
 import 'secrets.dart';
 import 'settings.dart';
+import 'surface.dart';
 import 'test_cards_screen.dart';
+import 'web_run.dart';
 
 /// The app's real mint: one [Minter] per run, closed when that run is done.
 ///
@@ -103,6 +105,14 @@ bool runInFlight = false;
 /// A null read, a failed one, or one that never answers all mean "not
 /// configured". Routing to Settings is what a colleague can act on; minting
 /// anyway would fail later with an HTTP 401 that reads as a backend problem.
+///
+/// [surface] decides which screen the minted session is handed to, and
+/// nothing else: the credential read, the guard, the routing to Settings and
+/// the body are one code path whichever it is. It defaults to the sheet, and
+/// that default is what keeps the deep link out of the browser -- the link
+/// path calls this without naming a surface, so it cannot select one even by
+/// accident. Only the tiles pass a surface, because only a human tapping a
+/// tile has chosen one.
 Future<void> runPreset(
   BuildContext context,
   Preset preset,
@@ -110,6 +120,8 @@ Future<void> runPreset(
   SecretStore store = const SecretStore(),
   Future<MintedSession> Function(Credentials, String body) mintWith =
       mintWithCredentials,
+  PaymentSurface surface = PaymentSurface.sdkSheet,
+  LaunchCheckout launch = openInBrowser,
 }) async {
   if (runInFlight) return;
   runInFlight = true;
@@ -128,11 +140,22 @@ Future<void> runPreset(
   }
   await Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => RunScreen(
-        preset: preset,
-        body: body,
-        mintSession: (body) => mintWith(credentials, body),
-      ),
+      // One mint closure, built once and handed to whichever screen is
+      // pushed: the two surfaces cannot end up sending different bodies,
+      // because there is only one thing here that sends anything.
+      builder: (_) => switch (surface) {
+        PaymentSurface.sdkSheet => RunScreen(
+          preset: preset,
+          body: body,
+          mintSession: (body) => mintWith(credentials, body),
+        ),
+        PaymentSurface.webCheckout => WebCheckoutRunScreen(
+          preset: preset,
+          body: body,
+          launch: launch,
+          mintSession: (body) => mintWith(credentials, body),
+        ),
+      },
     ),
   );
 }
@@ -144,9 +167,22 @@ Future<void> runPreset(
 /// of the client id -- enough to tell two merchants apart, and not a value
 /// worth putting on a screenshot in full.
 class ActiveProfileStrip extends StatefulWidget {
-  const ActiveProfileStrip({super.key, this.store = const SecretStore()});
+  const ActiveProfileStrip({
+    super.key,
+    this.store = const SecretStore(),
+    this.onReturn,
+  });
 
   final SecretStore store;
+
+  /// Called when Settings, pushed from this strip, has been left.
+  ///
+  /// This strip is one of three ways to reach Settings from Home, and
+  /// Settings is where the payment surface is chosen. Home holds that choice
+  /// to render it, so every route that could have changed it has to say when
+  /// it comes back -- otherwise Home goes on describing a surface the human
+  /// has already changed, and the tiles read as broken.
+  final Future<void> Function()? onReturn;
 
   @override
   State<ActiveProfileStrip> createState() => _ActiveProfileStripState();
@@ -186,6 +222,7 @@ class _ActiveProfileStripState extends State<ActiveProfileStrip> {
           context,
         ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
         await _load();
+        await widget.onReturn?.call();
       },
     ),
   );
@@ -198,7 +235,13 @@ class _ActiveProfileStripState extends State<ActiveProfileStrip> {
 /// here is that nothing on a screen saying LIVE came from a store. Code that
 /// cannot reach it cannot show it.
 class LiveProfileStrip extends StatelessWidget {
-  const LiveProfileStrip({super.key});
+  const LiveProfileStrip({super.key, this.onReturn});
+
+  /// Called when Settings, pushed from this strip, has been left. The Live
+  /// half of the callback [ActiveProfileStrip] carries, and for the reason
+  /// given there: the surface applies in both environments, so both strips
+  /// are routes that can change it.
+  final Future<void> Function()? onReturn;
 
   @override
   Widget build(BuildContext context) {
@@ -216,9 +259,12 @@ class LiveProfileStrip extends StatelessWidget {
               : 'Live — client ${id.length <= 6 ? id : '${id.substring(0, 6)}…'}',
         ),
         trailing: const Icon(Icons.chevron_right),
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen())),
+        onTap: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+          );
+          await onReturn?.call();
+        },
       ),
     );
   }
@@ -231,9 +277,23 @@ class HomeScreen extends StatefulWidget {
     this.store = const SecretStore(),
     this.mintWith = mintWithCredentials,
     this.liveMintWith = liveMintWithCredentials,
+    this.surfaceStore = const SurfaceStore(),
+    this.launch = openInBrowser,
   });
 
   final SecretStore store;
+
+  /// Where the payment-surface preference is read from.
+  ///
+  /// Read here rather than passed down from `main`, because Settings can
+  /// change it while this screen is alive and the store is the only thing
+  /// both screens agree about. Its read is guarded and bounded, so the
+  /// default store under `flutter test` -- where `SharedPreferences` has no
+  /// platform behind it -- answers the sheet rather than throwing.
+  final SurfaceStore surfaceStore;
+
+  /// Handed to a web run so a widget test never opens a browser.
+  final LaunchCheckout launch;
 
   /// The sandbox mint. Unchanged, and not given an environment.
   final Future<MintedSession> Function(Credentials, String body) mintWith;
@@ -256,6 +316,46 @@ class _HomeScreenState extends State<HomeScreen> {
   /// tap lands on a different scenario.
   bool _busy = false;
 
+  /// Which surface a tile presents on, as far as this screen knows.
+  ///
+  /// The sheet until the store has answered, which is both the honest
+  /// starting point and the safe one: it is what the app has always done,
+  /// and a read that never comes back leaves the tiles behaving exactly as
+  /// they did before this preference existed.
+  ///
+  /// Kept here rather than read at each tap so the screen can say which
+  /// surface is armed *before* anybody taps. That makes it a value that can
+  /// go stale, which is what [_reloadSurface] is for: Settings is the only
+  /// place it changes, and every route from this screen that reaches
+  /// Settings calls back when it is left.
+  PaymentSurface _surface = PaymentSurface.sdkSheet;
+
+  @override
+  void initState() {
+    super.initState();
+    _reloadSurface();
+  }
+
+  Future<void> _reloadSurface() async {
+    // `SurfaceStore.read` answers the sheet on a store that throws or never
+    // replies, so there is nothing to guard here that it does not guard.
+    final read = await widget.surfaceStore.read();
+    if (!mounted) return;
+    setState(() => _surface = read);
+  }
+
+  /// Opens Settings and picks up whatever surface was chosen there.
+  ///
+  /// The app-bar entrance. The two profile strips reach the same place by
+  /// their own `onReturn`, so all three ways in from this screen come back
+  /// to the same reload.
+  Future<void> _openSettings(BuildContext context) async {
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+    await _reloadSurface();
+  }
+
   Future<void> _run(BuildContext context, Preset preset, String body) async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -266,6 +366,11 @@ class _HomeScreenState extends State<HomeScreen> {
         body,
         store: widget.store,
         mintWith: widget.mintWith,
+        // Sampled from the field rather than re-read here, so the surface
+        // that runs is the one the screen was showing when the tile was
+        // tapped. A tap cannot disagree with the line above it.
+        surface: _surface,
+        launch: widget.launch,
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -334,17 +439,25 @@ class _HomeScreenState extends State<HomeScreen> {
     // reading it twice would let a currency changed across the dialog make
     // the two disagree about what the person authorised.
     final currency = state.liveCurrency;
+    // The fourth fact of a Live run, sampled with the other three. The dialog
+    // below says which application is about to ask for the card, so reading
+    // it again after the dialog would let a surface changed across it open a
+    // browser on somebody who agreed to a sheet.
+    final surface = _surface;
 
     final go = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         key: const ValueKey('liveConfirmDialog'),
         title: const Text('Charge a real card?'),
-        // The whole question, from `live.dart`: the amount, and for the
-        // saved-card tiles one sentence about what else this tap does. Built
-        // there rather than here so the dialog and the tile above it cannot
-        // end up describing different tiles.
-        content: Text(liveConfirmQuestion(scenario, currency)),
+        // The whole question, from `live.dart`: the amount, one sentence for
+        // the saved-card tiles about what else this tap does, and one more
+        // for the web surface about where it happens. Built there rather than
+        // here so the dialog and the tile above it cannot end up describing
+        // different tiles.
+        content: Text(
+          liveConfirmQuestion(scenario, currency, surface: surface),
+        ),
         actions: [
           // Cancel is the filled button and holds the focus: the default
           // action of this dialog is to not spend money. A dismissed barrier
@@ -370,20 +483,31 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() => _busy = true);
     final preset = livePreset(scenario, identity, currency);
+    // All four from the one instant above: what the person was looking at
+    // when they pressed Continue. Built once and handed to whichever screen
+    // is pushed, so the two surfaces mint the same production body through
+    // the same closure -- a Live web run and a Live sheet run differ in where
+    // the card is typed and in nothing else.
+    Future<MintedSession> mint(String body) =>
+        widget.liveMintWith(credentials, body, endpoints);
     try {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => RunScreen(
-            preset: preset,
-            body: preset.body,
-            live: true,
-            // All three from the one instant above: the pair the person was
-            // looking at when they pressed Continue. Derived from the same
-            // field the banner renders, so the endpoints a run reaches cannot
-            // say one thing while the screen that authorised it said another.
-            mintSession: (body) =>
-                widget.liveMintWith(credentials, body, endpoints),
-          ),
+          builder: (_) => switch (surface) {
+            PaymentSurface.sdkSheet => RunScreen(
+              preset: preset,
+              body: preset.body,
+              live: true,
+              mintSession: mint,
+            ),
+            PaymentSurface.webCheckout => WebCheckoutRunScreen(
+              preset: preset,
+              body: preset.body,
+              live: true,
+              launch: widget.launch,
+              mintSession: mint,
+            ),
+          },
         ),
       );
     } finally {
@@ -427,9 +551,7 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             icon: const Icon(Icons.settings),
             tooltip: 'Settings',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
-            ),
+            onPressed: () => _openSettings(context),
           ),
         ],
       ),
@@ -454,9 +576,28 @@ class _HomeScreenState extends State<HomeScreen> {
                         'starts in Test on every launch.',
             ),
           ),
+          // Only when it is not the default, so a screen nobody has changed
+          // reads exactly as it always did. It is here rather than on each
+          // tile because it is true of every tile at once, and a tester who
+          // set this yesterday needs to be told before they tap, not after.
+          if (_surface == PaymentSurface.webCheckout)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Text(
+                key: const ValueKey('homeSurface'),
+                'Pay with: web checkout. Each tile here mints exactly what it '
+                'always did, then opens the hosted page in your browser '
+                'instead of the app. This app never learns the outcome — look '
+                'it up in the back office by the session id. Change this back '
+                'in Settings.',
+              ),
+            ),
           live
-              ? const LiveProfileStrip()
-              : ActiveProfileStrip(store: widget.store),
+              ? LiveProfileStrip(onReturn: _reloadSurface)
+              : ActiveProfileStrip(
+                  store: widget.store,
+                  onReturn: _reloadSurface,
+                ),
           // Three tiles, drawn from one list and run by one function. The
           // order is the order they are worth running: the smoke first, then
           // the pair, whose second half has nothing to offer until the first

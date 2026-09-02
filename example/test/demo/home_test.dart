@@ -168,6 +168,16 @@ void main() {
     // screen builds empty instead of throwing -- this is the "a null or
     // failed read means not configured" rule exercised against a genuinely
     // absent platform rather than against a fake that stands in for one.
+    //
+    // Tall, because the version panel this ends by asserting on is the last
+    // row of a screen that has since grown a surface preference under the
+    // buttons. A `ListView` never builds what is below the fold, so at the
+    // default 800x600 the panel would be missing rather than pending -- and
+    // "missing because it scrolled" is not what this case is about. The
+    // default store is left in place on purpose: reaching a genuinely absent
+    // platform is the whole point of the case, and `SurfaceStore` answers
+    // the sheet on one exactly as `SecretStore` answers null.
+    useTallSurface(tester);
     await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
     await tester.tap(find.byTooltip('Settings'));
     await tester.pumpAndSettle();

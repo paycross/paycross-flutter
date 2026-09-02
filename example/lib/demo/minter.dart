@@ -53,10 +53,25 @@ class MintedSession {
     required this.id,
     required this.token,
     required this.sentBody,
+    this.checkoutUrl,
   });
 
   final String id;
   final String token;
+
+  /// The hosted checkout page for this session, when the API offered one.
+  ///
+  /// **Treat this exactly as [token].** It is `…/pay?session=<token>`, so the
+  /// credential is not merely referenced by this string, it is spelled out in
+  /// it. It is handed to the browser once and dropped: it never reaches
+  /// History, a bug report, a log line or a test fixture as a real value, for
+  /// the same reason and with the same force as the token itself.
+  ///
+  /// Null on a session the API did not report as open, and null on a backend
+  /// older than the field. Both are the same thing to the app -- there is no
+  /// page to open -- and the Web checkout surface refuses on either without
+  /// having to tell them apart.
+  final String? checkoutUrl;
 
   /// What was actually sent, with `{{timestamp}}` and `{{uuid}}` resolved.
   ///
@@ -250,7 +265,21 @@ class Minter {
     if (id is! String || token is! String) {
       throw const MinterError('The mint returned no session_token.');
     }
-    return MintedSession(id: id, token: token, sentBody: sent);
+    // Kept only if it is a non-empty string. The API sends the key with an
+    // explicit null on a session that is not open, an older one omits it
+    // altogether, and neither is a page anything can be opened at -- so all
+    // three collapse to null here rather than being told apart by a caller.
+    // Not a reason to refuse the mint: a session with no checkout page is
+    // still a session the SDK sheet presents perfectly well.
+    final checkoutUrl = raw['checkout_url'];
+    return MintedSession(
+      id: id,
+      token: token,
+      sentBody: sent,
+      checkoutUrl: checkoutUrl is String && checkoutUrl.isNotEmpty
+          ? checkoutUrl
+          : null,
+    );
   }
 
   /// The merchant-side truth for one session, scrubbed before it is
