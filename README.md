@@ -149,15 +149,31 @@ Pay, and it has its own section below.
 ## Apple Pay
 
 On **iOS**, the native SDK renders Apple's own payment button inside the payment
-sheet, above the card form, without any extra call or widget in your app: it
-appears when the payment session allows wallets, an Apple merchant identifier is
-configured, and the device has a card it can pay with — and is simply absent
-otherwise. Tapping it presents Apple's sheet and resolves to the same
-`PayCrossResult` a card payment does.
+sheet, above the card form, without any extra call or widget in your app.
+Tapping it presents Apple's sheet and resolves to the same `PayCrossResult` a
+card payment does.
 
-Note that `canMakePayments` is false on a simulator with an empty Wallet, so the
-button does not appear there. Apple Pay can only be exercised on a real device
-with a provisioned card.
+The button appears only when all four of these hold, and is simply absent
+otherwise:
+
+- the payment session loaded;
+- the session allows wallets;
+- an Apple merchant identifier is configured;
+- the device has a card it can pay with.
+
+So there are five ways to end up with no button, and none of them is an error:
+
+- **The session did not load.** A transport failure and a 5xx look the same
+  from here, and a button that opens onto nothing is worse than no button.
+- **The session is an account-funding one.** PayCross rejects wallet payments
+  on those, so a button would buy a Face ID prompt and a rejection.
+- **No identifier is configured.** Null, empty and whitespace-only all count as
+  not configured — the SDK trims before deciding, because an empty build
+  constant and a hand-cleared text field are the two ways this goes wrong.
+- **The device has no card**, or Apple Pay is unavailable on it.
+- **You are on a simulator.** `canMakePayments` is false on a simulator with an
+  empty Wallet. Apple Pay can only be exercised on a real device with a
+  provisioned card.
 
 Going live takes six steps, and skipping them leaves the card form only —
 nothing breaks:
@@ -192,6 +208,12 @@ PayCross refuses such a payment at the edge and returns a sentence saying so.
 Null — the default — means not configured, and there is simply no button.
 
 **Android ignores `applePayMerchantId`**, as there is no Apple Pay there.
+
+**Test it on a device before you ship.** `applePayMerchantId` and
+`googlePayMerchantId` are both nullable strings, so nothing a compiler or a test
+suite can see distinguishes them once they reach iOS. Configure Apple Pay with
+`googlePayMerchantId` left null, run a payment on a real device, and confirm the
+button appears and the payment settles.
 
 ## Branding
 

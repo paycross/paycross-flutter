@@ -320,8 +320,9 @@ data class PcConfiguration (
    * Apple's key derivation hashes this string into every payment token's
    * symmetric key, so it is not a display name and not optional decoration:
    * the same value has to be registered with Apple, listed in the app's
-   * Apple Pay entitlement, and saved on the merchant's PayCross record. Null
-   * is what "not configured" means, and the iOS SDK renders no button for it.
+   * Apple Pay entitlement, and saved on the merchant's PayCross record. Null,
+   * empty and whitespace-only all mean "not configured" — the iOS SDK trims
+   * before deciding — and it renders no button for any of them.
    *
    * iOS only. Android has no Apple Pay, so it accepts and ignores this.
    */

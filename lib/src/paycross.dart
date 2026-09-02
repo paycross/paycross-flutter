@@ -55,10 +55,11 @@ abstract final class PayCross {
   /// and web only.
   ///
   /// [applePayMerchantId] is iOS-only, and Android ignores it. It is the Apple
-  /// Merchant ID the iOS SDK renders its Apple Pay button for; null means not
-  /// configured and no button appears. It must be the same string that is saved
-  /// on the merchant's PayCross record — the edge compares the two and refuses
-  /// the payment when they differ.
+  /// Merchant ID the iOS SDK renders its Apple Pay button for. Null, empty and
+  /// whitespace-only all mean not configured, and no button appears. It must
+  /// otherwise be the same string that is saved on the merchant's PayCross
+  /// record — the edge compares the two and refuses the payment when they
+  /// differ.
   ///
   /// Throws [PayCrossIntegrationError] with
   /// [PayCrossErrorCode.testPrefillInProduction] if [testCardPrefill] is
