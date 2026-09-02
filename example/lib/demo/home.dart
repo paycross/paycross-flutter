@@ -316,6 +316,11 @@ class _HomeScreenState extends State<HomeScreen> {
     // recorded as Live. Task 02 removed exactly this shape from Settings; it
     // does not belong in the function that spends money.
     final endpoints = state.endpoints;
+    // Sampled at the same instant and for the same reason: the dialog below
+    // quotes this figure and the body minted after it is built from it, so
+    // reading it twice would let a currency changed across the dialog make
+    // the two disagree about what the person authorised.
+    final currency = state.liveCurrency;
 
     final go = await showDialog<bool>(
       context: context,
@@ -324,7 +329,7 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('Charge a real card?'),
         content: Text(
           'This will charge a real card '
-          '€${(liveSmokeMinorUnits / 100).toStringAsFixed(2)}. Continue?',
+          '${liveSmokeAmountLabel(currency)}. Continue?',
         ),
         actions: [
           // Cancel is the filled button and holds the focus: the default
@@ -350,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (go != true || !context.mounted) return;
 
     setState(() => _busy = true);
-    final preset = liveSmokePreset(identity);
+    final preset = liveSmokePreset(identity, currency);
     try {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -374,7 +379,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final live = LiveModeScope.maybeOf(context)?.isLive ?? false;
+    final state = LiveModeScope.maybeOf(context);
+    final live = state?.isLive ?? false;
+    // What the two Live copy sites below quote. The tile is drawn before
+    // anything has been held for the session, so this is the default until
+    // "Use for this session" has been pressed -- and there is no scope at
+    // all in the automation build, where it is never read.
+    final currency = state?.liveCurrency ?? liveDefaultCurrency;
     return Scaffold(
       appBar: AppBar(
         title: const Text('PayCross Demo'),
@@ -420,8 +431,9 @@ class _HomeScreenState extends State<HomeScreen> {
               key: const ValueKey('homeEnvironment'),
               live
                   ? 'Live — the PayCross production environment. The tile below '
-                        'charges a real card €1.00. Refund it in the back '
-                        'office as soon as it settles; this app cannot.'
+                        'charges a real card ${liveSmokeAmountLabel(currency)}. '
+                        'Refund it in the back office as soon as it settles; '
+                        'this app cannot.'
                   : 'Test — this build talks to the PayCross TEST sandbox. '
                         'Switch to Live in Settings to reach production; it '
                         'starts in Test on every launch.',
@@ -436,8 +448,8 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Theme.of(context).colorScheme.errorContainer,
               child: ListTile(
                 leading: const Icon(Icons.credit_card),
-                title: Text(liveSmokeName),
-                subtitle: Text(liveSmokeExpectation),
+                title: Text(liveSmokeName(currency)),
+                subtitle: Text(liveSmokeExpectation(currency)),
                 isThreeLine: true,
                 onTap: _busy ? null : () => _runLiveSmoke(context),
               ),

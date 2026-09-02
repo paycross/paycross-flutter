@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/history.dart';
+import 'package:paycross_demo/demo/live.dart';
 
 HistoryEntry _entry() => HistoryEntry(
   at: DateTime.utc(2026, 8, 29, 15, 4, 5),
@@ -217,7 +218,7 @@ void main() {
     await store.append(
       HistoryEntry(
         at: DateTime.utc(2026, 8, 31, 12),
-        presetName: 'Live smoke — €1.00 charge',
+        presetName: liveSmokeName(liveDefaultCurrency),
         sessionId: 'sess-live',
         transactionId: 'txn-live',
         outcome: 'Approved.',
@@ -235,7 +236,7 @@ void main() {
     final live = bugReport(
       HistoryEntry(
         at: DateTime.utc(2026, 8, 31, 12),
-        presetName: 'Live smoke — €1.00 charge',
+        presetName: liveSmokeName(liveDefaultCurrency),
         sessionId: 'sess-live',
         transactionId: 'txn-live',
         outcome: 'Approved.',

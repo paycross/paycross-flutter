@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/live.dart';
+import 'package:paycross_demo/demo/presets.dart';
 
 void main() {
   const identity = LiveIdentity(
@@ -59,7 +60,9 @@ void main() {
   });
 
   test('the smoke charges one euro, and says so in its reference', () {
-    final body = jsonDecode(liveSmokeBody(identity)) as Map<String, Object?>;
+    final body =
+        jsonDecode(liveSmokeBody(identity, liveDefaultCurrency))
+            as Map<String, Object?>;
 
     expect(body['amount'], 100);
     expect(body['currency'], 'EUR');
@@ -69,8 +72,83 @@ void main() {
     expect(body['merchant_reference'], startsWith('LIVE-SMOKE-'));
   });
 
+  test('the chosen currency reaches the body, and the amount does not', () {
+    // The whole point of the currency choice: the production merchant may
+    // only be able to take one of the three, and until this was passed
+    // through, a smoke on a GBP-only merchant could not run at all.
+    final gbp =
+        jsonDecode(liveSmokeBody(identity, 'GBP')) as Map<String, Object?>;
+
+    expect(gbp['currency'], 'GBP');
+    // Minor units, so one pound is the same 100 one euro is. A currency
+    // choice that also moved the amount would be an amount editor, which is
+    // the one thing Live deliberately does not have.
+    expect(gbp['amount'], 100);
+  });
+
+  test('the default currency mints the body it always did', () {
+    // Byte for byte, not field by field: this is the body that has been
+    // charging real cards, and the currency argument was threaded through
+    // the helper every sandbox preset also uses. `{{timestamp}}` is still a
+    // placeholder at this point, so the two strings are comparable.
+    expect(
+      liveSmokeBody(identity, liveDefaultCurrency),
+      liveBody(
+        amount: liveSmokeMinorUnits,
+        currency: 'EUR',
+        email: identity.email,
+        firstName: identity.firstName,
+        lastName: identity.lastName,
+        customerReference: liveSmokeCustomerReference,
+      ),
+    );
+  });
+
+  test('the amount label is the one place the figure is written', () {
+    // Three currencies, one figure, three symbols. Pinned as whole strings
+    // because these are what a human reads on the tile and in the dialog
+    // before deciding to spend money.
+    expect(liveSmokeAmountLabel('EUR'), '€1.00');
+    expect(liveSmokeAmountLabel('USD'), r'$1.00');
+    expect(liveSmokeAmountLabel('GBP'), '£1.00');
+    // Every currency the Live form can offer has a symbol, so the fallback
+    // below is unreachable from the app. It is here for the day a fourth is
+    // added to the list and nobody remembers this map.
+    for (final code in currencies) {
+      expect(liveSmokeAmountLabel(code), isNot(contains(code)), reason: code);
+    }
+    // And that day: the code, not a euro sign borrowed from the default. An
+    // unknown currency printed under the wrong symbol is the one failure
+    // worth ruling out here.
+    expect(liveSmokeAmountLabel('JPY'), '1.00 JPY');
+  });
+
+  test('the tile and its subtitle quote the same amount as the body', () {
+    // The single-source rule, at the two copy sites that live in this file.
+    // The other two are on Home and are pinned there, against the widgets a
+    // tester actually reads.
+    for (final code in currencies) {
+      final label = liveSmokeAmountLabel(code);
+      expect(liveSmokeName(code), contains(label), reason: code);
+      expect(liveSmokeExpectation(code), contains(label), reason: code);
+      // And no other currency's figure is on the tile beside it.
+      for (final other in currencies.where((c) => c != code)) {
+        expect(
+          liveSmokeName(code),
+          isNot(contains(liveSmokeAmountLabel(other))),
+          reason: '$code / $other',
+        );
+      }
+      final body =
+          jsonDecode(liveSmokeBody(identity, code)) as Map<String, Object?>;
+      expect(body['currency'], code, reason: code);
+    }
+  });
+
   test('the smoke body carries the identity, not the sandbox customer', () {
-    final body = jsonDecode(liveSmokeBody(identity)) as Map<String, Object?>;
+    final body =
+        jsonDecode(liveSmokeBody(identity, liveDefaultCurrency))
+            as Map<String, Object?>;
     final customer = body['customer']! as Map<String, Object?>;
 
     // The fake the sandbox presets use. A New York billing address and a
@@ -108,7 +186,15 @@ void main() {
       'Outcome unknown',
       'Integration error',
     ]) {
-      expect(liveSmokeExpectation.startsWith(prefix), isFalse);
+      // Every currency, since the expectation is built from one now and a
+      // symbol at the front of it would be a different string each time.
+      for (final code in currencies) {
+        expect(
+          liveSmokeExpectation(code).startsWith(prefix),
+          isFalse,
+          reason: '$code / $prefix',
+        );
+      }
     }
   });
 
@@ -124,7 +210,8 @@ void main() {
 
     final typed = LiveIdentity.parse(name: awkward, email: 'ada@example.org')!;
     final customer =
-        (jsonDecode(liveSmokeBody(typed)) as Map<String, Object?>)['customer']!
+        (jsonDecode(liveSmokeBody(typed, liveDefaultCurrency))
+                as Map<String, Object?>)['customer']!
             as Map<String, Object?>;
 
     expect(customer['first_name'], r'Ada Smith "Bud"');
@@ -134,6 +221,9 @@ void main() {
   test('the smoke body is a template until it is minted', () {
     // `{{timestamp}}` is substituted by the minter at the moment of
     // sending, like every other body in this app.
-    expect(liveSmokeBody(identity), contains('{{timestamp}}'));
+    expect(
+      liveSmokeBody(identity, liveDefaultCurrency),
+      contains('{{timestamp}}'),
+    );
   });
 }

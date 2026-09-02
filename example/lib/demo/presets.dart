@@ -36,6 +36,12 @@ const String _sandboxBilling = '''
 
 String _body({
   required int amount,
+  // The sandbox default, and spelled here rather than taken from
+  // `live.dart`'s `liveDefaultCurrency`: that file imports this one, and the
+  // two defaults are one value by coincidence rather than by rule. Every
+  // sandbox preset below leaves it alone, so their bodies are the bytes they
+  // always were -- which is what the automated matrix runs against.
+  String currency = 'EUR',
   String? extraTopLevel,
   String? customer,
   String reference = 'DEMO-{{timestamp}}',
@@ -48,7 +54,7 @@ String _body({
     '''
 {
   "amount": $amount,
-  "currency": "EUR",
+  "currency": "$currency",
   "transaction_type": "sale",
   "merchant_reference": "$reference",
   "return_url": "https://merchant.example.com/payment/return",
@@ -103,14 +109,21 @@ final String verifyProbeBody = _body(
 /// they come from, because that type lives in `live.dart` and `live.dart`
 /// already imports this file -- naming it here would close a cycle that
 /// nothing needs. The call site unpacks the identity instead.
+///
+/// The currency is required rather than defaulted, unlike every other
+/// argument here: a Live body is minted from a currency the tester chose on
+/// a dropdown, and a default would let a caller that forgot to pass it
+/// charge in euros on a merchant that only takes pounds.
 String liveBody({
   required int amount,
+  required String currency,
   required String email,
   required String firstName,
   required String lastName,
   required String customerReference,
 }) => _body(
   amount: amount,
+  currency: currency,
   reference: 'LIVE-SMOKE-{{timestamp}}',
   customer: customerReference,
   email: email,

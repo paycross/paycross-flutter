@@ -194,10 +194,10 @@ Paste the bug report block, say what you expected, and say what you saw.
 ## Live mode
 
 Live mode runs **one** scenario against the PayCross production merchant with
-a **real card**: a €1.00 charge, which you refund by hand immediately
-afterwards. It exists so the mobile SDKs can be smoke-tested against
-production before a release. It is not a QA tool and it is not for routine
-use.
+a **real card**: a 1.00 charge, in a currency you pick, which you refund by
+hand immediately afterwards. It exists so the mobile SDKs can be
+smoke-tested against production before a release. It is not a QA tool and it
+is not for routine use.
 
 **The app starts in Test on every launch.** The environment is deliberately
 never remembered, so the worst a forgotten toggle can cost you is one
@@ -211,7 +211,8 @@ relaunch.
 3. Press **Switch to Live**. A red `LIVE — REAL MONEY` bar appears across
    every screen and stays there until you leave.
 4. Type the **production** client ID and secret, and the **name and
-   email** the charge is made under, then press **Use for this session**.
+   email** the charge is made under, pick the currency, then press **Use
+   for this session**.
 
 ### The credentials and the identity
 
@@ -230,7 +231,7 @@ tap from a production round trip, and a production credential you type cannot
 end up in the Keychain.
 
 **The name and the email are typed here too, and held the same way.** They
-are who the €1.00 charge is made under: PayCross's own internal person, not
+are who the charge is made under: PayCross's own internal person, not
 a sandbox fake. `john.doe@example.com` at a New York address is what the
 sandbox presets send and what production fraud rules are built to refuse, so
 a Live smoke never reuses them. Type a first and a last name — the create
@@ -239,38 +240,52 @@ is refused — and a real internal address, which is where the receipt goes.
 **Use for this session** stays dead until all four fields are filled and the
 address has an `@` in it.
 
+**The currency is picked here too, and held the same way.** A dropdown over
+EUR, USD and GBP, starting on EUR, beside the name and the email. It is what
+the smoke charges in, because a production merchant may only be able to take
+one of the three — and a smoke locked to euros on a pounds-only merchant
+fails for a reason that says nothing about the SDK. The amount is one unit
+either way: 1.00 is 100 minor units in all three. Like the identity, it is
+held in memory for this session, written nowhere, and back to EUR the moment
+you switch to Test.
+
 **Nothing about the identity is saved either.** Not to the Keychain, not to
 History, not to a bug report. The run is recorded by its ids and its
 outcome, exactly as a sandbox run is. You type it again next session.
 
-There is no **Verify credentials** in Live. The €1.00 smoke is the
+There is no **Verify credentials** in Live. The smoke charge is the
 verification, and a probe would create a real production session as a side
 effect of checking a password.
 
 ### Running the smoke
 
-Home shows one tile: **Live smoke — €1.00 charge**. No presets, no editor, no
+Home shows one tile: **Live smoke — €1.00 charge**, with the currency you
+picked in place of the euro sign. No presets, no editor, no
 Custom, no saved-card scenarios, no Google Pay, and no test-card cheat sheet in
 the top bar — those PANs mean nothing on a production merchant.
 
 With nothing held for this session the tile does not ask you anything —
 it takes you to Settings. So the only way to reach the dialog is to have
-already typed a production pair, a name and an email in this session.
+already typed a production pair, a name and an email in this session. The
+currency needs no typing: there is always one selected.
 
 Once it can run, tapping it asks *"This will charge a real card €1.00.
-Continue?"* Cancel is the default and holds the focus, and dismissing the
-dialog — Android back button included — counts as Cancel. Continue mints a
-production session and opens the native sheet, and from there it is an
+Continue?"* — again with the currency you picked. Cancel is the default and
+holds the focus, and dismissing the dialog — Android back button included —
+counts as Cancel. Continue mints a production session and opens the native
+sheet, and from there it is an
 ordinary payment with an ordinary card. The red bar is **not** over that
 sheet: it is a platform view this app does not draw, so at the one moment you
 are typing a real card number, nothing on screen says LIVE.
 
-**If you ever change the amount, change it in four places.** It is the constant
-`liveSmokeMinorUnits` in [`lib/demo/live.dart`](lib/demo/live.dart); the charge
-body and the confirmation dialog derive from it, but three pieces of copy spell
-`€1.00` out by hand — the tile's title, the tile's subtitle and the Live
-paragraph at the top of Home. Miss one and the app quotes two different numbers
-to the person about to spend the money.
+**If you ever change the amount, it is one edit.** The constant
+`liveSmokeMinorUnits` in [`lib/demo/live.dart`](lib/demo/live.dart) is the
+figure, and `liveSmokeAmountLabel` beside it is the only place it is written
+for a human to read. The four sites that quote it — the tile's title, the
+tile's subtitle, the Live paragraph at the top of Home and the confirmation
+dialog — all render that one function, so they cannot end up quoting two
+different numbers to the person about to spend the money. Three of them used
+to spell it out by hand.
 
 ### Afterwards — refund it
 
@@ -303,7 +318,8 @@ same bug-report block every other run gets.
   mode — links are disabled"* on screen and does nothing else. A real charge
   goes through a confirmation dialog, and a link is exactly the shape that
   arrives without one.
-- **The amount is fixed.** €1.00, hardcoded, no editor anywhere near it.
+- **The amount is fixed.** 1.00, hardcoded, no editor anywhere near it. The
+  currency is a choice; the figure is not.
 - **Nothing but the smoke.** No decline scenarios, no saved cards, no
   wallets. Apple Pay will slot in beside the smoke tile once the native iOS
   SDK ships it; it has not.

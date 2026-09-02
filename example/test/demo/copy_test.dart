@@ -40,6 +40,18 @@ const List<String> retiredIdentityMachinery = <String>[
   'is still a placeholder',
 ];
 
+/// The hand-spelled-amount instruction this app had while four pieces of
+/// copy each wrote the figure out, and has no longer.
+///
+/// A third list, and a third kind of wrong: somebody told to change the
+/// amount in four places will change it in four places, and three of those
+/// places are now one call to `liveSmokeAmountLabel`. The two extra edits
+/// would land on nothing, or on the function, and the second is worse.
+const List<String> retiredAmountMachinery = <String>[
+  'four places',
+  'four edits',
+];
+
 void main() {
   test('the tester guide makes no promise the app no longer keeps', () {
     final readme = File('README.md').readAsStringSync();
@@ -133,6 +145,45 @@ void main() {
     // sentence-initial capital rather than trying to match it.
     expect(readme, contains('a first and a last name'));
     expect(readme, contains('about the identity is saved'));
+    // The currency, which is chosen rather than typed and is the reason a
+    // smoke can run on a merchant that only takes one of the three. Pinned
+    // as a sentence for the reason every pin above is: the bare word turns
+    // up in the sandbox editor's paragraph as well.
+    expect(readme, contains('The currency is picked here too'));
+    // And in the steps a tester follows, where leaving it out is how
+    // somebody ends up charging euros on a pounds-only merchant. Whole on
+    // its line in the README, because `contains` sees the hand-wrapping.
+    expect(readme, contains('pick the currency'));
+  });
+
+  test('nothing tells anyone to spell the amount out four times', () {
+    // The single-source rule, guarded the way the retired identity constant
+    // is: the instruction and the machinery it describes have to go together,
+    // or a maintainer follows a document to three places that no longer
+    // exist.
+    final readme = File('README.md').readAsStringSync();
+    final offenders = <String>[];
+    var scanned = 0;
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      scanned++;
+      final source = entity.readAsStringSync();
+      if (retiredAmountMachinery.any(source.contains)) {
+        offenders.add(entity.path);
+      }
+    }
+
+    expect(offenders, isEmpty);
+    for (final gone in retiredAmountMachinery) {
+      expect(readme.contains(gone), isFalse, reason: gone);
+    }
+    // The one source, named where a maintainer will look for it. Without
+    // this the case above is satisfied by a README that says nothing about
+    // the amount at all.
+    expect(readme, contains('liveSmokeAmountLabel'));
+    // The sweep reached something, so an empty offender list means the files
+    // were read rather than that none were found.
+    expect(scanned, greaterThan(10));
   });
 
   test('nothing sends the reader to a constant that no longer exists', () {
