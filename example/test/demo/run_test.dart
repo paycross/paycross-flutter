@@ -80,7 +80,7 @@ void main() {
     await tester.pumpWidget(_run(present: (_) async => _success('txn-9')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Approved — 1000 EUR, transaction txn-9'), findsOneWidget);
+    expect(find.text('Approved — €10.00, transaction txn-9'), findsOneWidget);
     expect(find.byKey(const ValueKey('e2eLabel')), findsNothing);
   });
 
@@ -108,7 +108,7 @@ void main() {
     // startsWith, not indexOf: the human card is a Card wrapping a Column and
     // its three Text children merge into one semantics node whose label is all
     // three joined by newlines, so an exact match returns -1.
-    final human = spoken.indexWhere((s) => s.startsWith('Approved — 1000 EUR'));
+    final human = spoken.indexWhere((s) => s.startsWith('Approved — €10.00'));
     expect(label, isNonNegative);
     expect(human, isNonNegative);
     expect(label, lessThan(human));
@@ -252,7 +252,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Approved — 1000 EUR, transaction txn-9'), findsOneWidget);
+    expect(find.text('Approved — €10.00, transaction txn-9'), findsOneWidget);
     // And the report is still copyable: the entry exists in memory whether
     // or not it reached the store.
     expect(find.byKey(const ValueKey('copyBugReport')), findsOneWidget);
@@ -384,7 +384,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Approved — 1000 EUR, transaction txn-9'), findsOneWidget);
+    expect(find.text('Approved — €10.00, transaction txn-9'), findsOneWidget);
     expect(find.byKey(const ValueKey('copyBugReport')), findsNothing);
 
     // And the read is not allowed to hang for good: the timeout hands back
@@ -405,7 +405,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Approved — 1000 EUR, transaction txn-9'), findsOneWidget);
+    expect(find.text('Approved — €10.00, transaction txn-9'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 10));
 
@@ -444,7 +444,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Approved — 1000 EUR, transaction txn-9'), findsOneWidget);
+    expect(find.text('Approved — €10.00, transaction txn-9'), findsOneWidget);
     final stored = HistoryEntry.fromJson(
       jsonDecode(backend.entries.single) as Map<String, Object?>,
     );
@@ -537,7 +537,11 @@ void main() {
       lastName: 'Lovelace',
       email: 'ada@example.org',
     );
-    final preset = liveSmokePreset(identity, liveDefaultCurrency);
+    final preset = livePreset(
+      LiveScenario.smoke,
+      identity,
+      liveDefaultCurrency,
+    );
     final backend = InMemoryHistoryBackend();
     // The precondition this case rests on: the body really does contain
     // both, so finding neither downstream means something.

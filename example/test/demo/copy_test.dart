@@ -52,6 +52,23 @@ const List<String> retiredAmountMachinery = <String>[
   'four edits',
 ];
 
+/// Claims Live mode made while it offered a single tile, and cannot make
+/// now that it offers three.
+///
+/// A fourth list, and a fourth kind of wrong. These are not promises about
+/// the environment but promises about the surface: a tester who reads that
+/// Live has no saved-card scenarios will not go looking for the two tiles
+/// under the smoke, and a tester who reads that Home shows one tile will
+/// assume the other two are a bug.
+const List<String> retiredSingleTileClaims = <String>[
+  'no saved cards',
+  'no saved-card scenarios',
+  'Nothing but the smoke',
+  'Home shows one tile',
+  'shows one tile',
+  'The tile below',
+];
+
 void main() {
   test('the tester guide makes no promise the app no longer keeps', () {
     final readme = File('README.md').readAsStringSync();
@@ -154,6 +171,47 @@ void main() {
     // somebody ends up charging euros on a pounds-only merchant. Whole on
     // its line in the README, because `contains` sees the hand-wrapping.
     expect(readme, contains('pick the currency'));
+  });
+
+  test('nothing still says Live offers a single tile', () {
+    // Both halves, the way the retired-promise cases above do it: the guide
+    // a tester reads and every screen they read it on.
+    final readme = File('README.md').readAsStringSync();
+    final offenders = <String>[];
+    var scanned = 0;
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      scanned++;
+      final source = entity.readAsStringSync();
+      if (retiredSingleTileClaims.any(source.contains)) {
+        offenders.add(entity.path);
+      }
+    }
+
+    expect(offenders, isEmpty);
+    for (final gone in retiredSingleTileClaims) {
+      expect(readme.contains(gone), isFalse, reason: gone);
+    }
+    // The sweep reached something, so an empty offender list means the files
+    // were read rather than that none were found.
+    expect(scanned, greaterThan(10));
+  });
+
+  test('the guide describes all three tiles, and the order of two', () {
+    // The other half again: not merely that the single-tile claim is gone,
+    // but that something true replaced it. Sentences rather than words, for
+    // the reason every pin in this file is a sentence -- "saved card" alone
+    // turns up in the sandbox preset list two sections away.
+    final readme = File('README.md').readAsStringSync();
+
+    expect(readme, contains('\n### Running the tiles\n'));
+    expect(readme, contains('Home shows three tiles'));
+    // The pair is ordered, and a tester who runs them the other way round
+    // finds an empty list and reports it as a bug.
+    expect(readme, contains('store card** first'));
+    // Three charges are three refunds, which is the one thing this section
+    // exists to make unmissable.
+    expect(readme, contains('three charges'));
   });
 
   test('nothing tells anyone to spell the amount out four times', () {

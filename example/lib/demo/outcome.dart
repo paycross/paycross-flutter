@@ -2,6 +2,7 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 
 import '../e2e_label.dart';
 import 'minter.dart';
+import 'money.dart';
 
 /// What an ordinary user reads, for every outcome the SDK can produce.
 ///
@@ -15,8 +16,10 @@ import 'minter.dart';
 /// The recovery token comes from `e2e_label.dart` rather than from a second
 /// mapping here: one spelling of the server's vocabulary, not two.
 String humanOutcome(PayCrossResult outcome) => switch (outcome) {
+  // Written by the same formatter as the tile the person tapped, so a
+  // "£1.00" on the way in cannot come back as "100 GBP" on the way out.
   PayCrossSuccess(:final transactionId, :final amount) =>
-    'Approved — ${amount.minorUnits} ${amount.currencyCode}, '
+    'Approved — ${formatMoney(amount.minorUnits, amount.currencyCode)}, '
         'transaction $transactionId',
   PayCrossFailure(:final transactionId, :final recovery)
       when recovery.isRetryable =>
