@@ -15,7 +15,168 @@ const List<String> legacyLabelPrefixes = <String>[
   'Integration error',
 ];
 
+/// The body every sandbox preset without special needs sends, to the byte.
+///
+/// A literal rather than another call to `defaultBody()`, which would compare
+/// the helper with itself and pass however the helper changed. This is what
+/// the automated matrix has been running against; Live mode borrowing the
+/// helper's `extraTopLevel` argument must not move a comma of it.
+const String _defaultBodyAsShipped = '''
+{
+  "amount": 1000,
+  "currency": "EUR",
+  "transaction_type": "sale",
+  "merchant_reference": "DEMO-{{timestamp}}",
+  "return_url": "https://merchant.example.com/payment/return",
+  "success_url": "https://merchant.example.com/payment/success",
+  "customer": {
+    "email": "john.doe@example.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "phone": "+12025551234",
+    "merchant_reference": "CUST-{{timestamp}}",
+    "address": {
+      "billing": {
+        "line1": "123 Main Street",
+        "line2": "Apt 4B",
+        "city": "New York",
+        "state": "NY",
+        "postal_code": "10001",
+        "country": "US"
+      }
+    }
+  }
+}''';
+
+/// The store-card body, to the byte. The `save_card_config` line is the one
+/// Live's store-card tile now sends too, so a change here is a change there.
+const String _cofStoreBodyAsShipped = '''
+{
+  "amount": 1000,
+  "currency": "EUR",
+  "transaction_type": "sale",
+  "merchant_reference": "DEMO-{{timestamp}}",
+  "return_url": "https://merchant.example.com/payment/return",
+  "success_url": "https://merchant.example.com/payment/success",
+  "save_card_config": { "usage": "card_on_file" },
+  "customer": {
+    "email": "john.doe@example.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "phone": "+12025551234",
+    "merchant_reference": "harness_cof_customer",
+    "address": {
+      "billing": {
+        "line1": "123 Main Street",
+        "line2": "Apt 4B",
+        "city": "New York",
+        "state": "NY",
+        "postal_code": "10001",
+        "country": "US"
+      }
+    }
+  }
+}''';
+
+/// The pay-with-saved-card body, to the byte.
+const String _cofPaySavedBodyAsShipped = '''
+{
+  "amount": 1000,
+  "currency": "EUR",
+  "transaction_type": "sale",
+  "merchant_reference": "DEMO-{{timestamp}}",
+  "return_url": "https://merchant.example.com/payment/return",
+  "success_url": "https://merchant.example.com/payment/success",
+  "saved_cards": { "show": "all" },
+  "customer": {
+    "email": "john.doe@example.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "phone": "+12025551234",
+    "merchant_reference": "harness_cof_customer",
+    "address": {
+      "billing": {
+        "line1": "123 Main Street",
+        "line2": "Apt 4B",
+        "city": "New York",
+        "state": "NY",
+        "postal_code": "10001",
+        "country": "US"
+      }
+    }
+  }
+}''';
+
+/// The body "Verify credentials" mints and abandons, to the byte.
+const String _verifyProbeBodyAsShipped = '''
+{
+  "amount": 100,
+  "currency": "EUR",
+  "transaction_type": "sale",
+  "merchant_reference": "DEMO-VERIFY-{{timestamp}}",
+  "return_url": "https://merchant.example.com/payment/return",
+  "success_url": "https://merchant.example.com/payment/success",
+  "customer": {
+    "email": "john.doe@example.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "phone": "+12025551234",
+    "merchant_reference": "CUST-{{timestamp}}",
+    "address": {
+      "billing": {
+        "line1": "123 Main Street",
+        "line2": "Apt 4B",
+        "city": "New York",
+        "state": "NY",
+        "postal_code": "10001",
+        "country": "US"
+      }
+    }
+  }
+}''';
+
 void main() {
+  test('the sandbox bodies are the bytes the matrix has been running', () {
+    // Four literals cover every shape the sandbox side produces, because
+    // every preset but the two saved-card ones is `defaultBody()`. The case
+    // below proves that claim rather than assuming it.
+    expect(defaultBody(), _defaultBodyAsShipped);
+    expect(cofStoreBody, _cofStoreBodyAsShipped);
+    expect(cofPaySavedBody, _cofPaySavedBodyAsShipped);
+    expect(verifyProbeBody, _verifyProbeBodyAsShipped);
+  });
+
+  test('every preset on Home sends one of those four bodies, unchanged', () {
+    // The other half: a preset that stopped calling `defaultBody()` and
+    // started building its own would slip past the pins above, which only
+    // look at the helpers. `customPreset` is in here for the same reason --
+    // it is what the editor opens on.
+    const pinned = <String>[
+      _defaultBodyAsShipped,
+      _cofStoreBodyAsShipped,
+      _cofPaySavedBodyAsShipped,
+    ];
+
+    for (final preset in [...demoPresets, customPreset]) {
+      expect(pinned, contains(preset.body), reason: preset.name);
+    }
+  });
+
+  test('the saved-card keys are named once and sent from that name', () {
+    // Live mode's two saved-card tiles send these same two strings. Named
+    // constants rather than a second pair of literals over there: the Live
+    // tiles are these scenarios with a production merchant behind them, and
+    // a key that drifted between the two would fail only on the merchant
+    // nobody can retry cheaply.
+    expect(
+      saveCardConfigOption,
+      '"save_card_config": { "usage": "card_on_file" }',
+    );
+    expect(savedCardsOption, '"saved_cards": { "show": "all" }');
+    expect(cofStoreBody, contains(saveCardConfigOption));
+    expect(cofPaySavedBody, contains(savedCardsOption));
+  });
+
   test('every preset body is valid JSON with an amount and a currency', () {
     for (final preset in demoPresets) {
       final body = jsonDecode(preset.body);

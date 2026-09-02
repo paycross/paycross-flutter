@@ -18,6 +18,27 @@ const List<String> currencies = <String>['EUR', 'USD', 'GBP'];
 /// which is why the two presets are ordered and share the string.
 const String cofCustomerReference = 'harness_cof_customer';
 
+/// The top-level key that renders the "Save card for future use" checkbox.
+///
+/// Named rather than written wherever it is needed, because Live mode's
+/// store-card tile sends this exact string too. The Live tile is this
+/// scenario with a production merchant behind it, and a key that drifted
+/// between the two -- a space, a spelling, a nesting -- would fail on the one
+/// merchant nobody can retry cheaply, in a way no sandbox run reproduces.
+///
+/// A fragment of JSON rather than a map, because [_body] builds its output by
+/// hand and `extraTopLevel` is spliced in as text. Its shape is pinned in
+/// `presets_test.dart` against the bytes the automated matrix runs.
+const String saveCardConfigOption =
+    '"save_card_config": { "usage": "card_on_file" }';
+
+/// The top-level key that snapshots the customer's stored cards into the
+/// session, so the sheet can offer them.
+///
+/// Named for the same reason as [saveCardConfigOption], and shared with Live
+/// mode's pay-with-saved-card tile.
+const String savedCardsOption = '"saved_cards": { "show": "all" }';
+
 /// The fake billing address every sandbox preset sends.
 ///
 /// A default, and only a default: a Live body must not send it. Production
@@ -73,14 +94,14 @@ String defaultBody({int amount = 1000}) => _body(amount: amount);
 /// Renders the checkbox that lets the shopper store the card.
 final String cofStoreBody = _body(
   amount: 1000,
-  extraTopLevel: '"save_card_config": { "usage": "card_on_file" }',
+  extraTopLevel: saveCardConfigOption,
   customer: cofCustomerReference,
 );
 
 /// Snapshots the customer's stored cards into the session.
 final String cofPaySavedBody = _body(
   amount: 1000,
-  extraTopLevel: '"saved_cards": { "show": "all" }',
+  extraTopLevel: savedCardsOption,
   customer: cofCustomerReference,
 );
 
@@ -114,6 +135,12 @@ final String verifyProbeBody = _body(
 /// argument here: a Live body is minted from a currency the tester chose on
 /// a dropdown, and a default would let a caller that forgot to pass it
 /// charge in euros on a merchant that only takes pounds.
+/// [extraTopLevel] is the one thing Live's three tiles disagree about. Null
+/// is the plain smoke; the saved-card tiles pass [saveCardConfigOption] and
+/// [savedCardsOption], which are the same two strings the sandbox presets
+/// above send. Threaded into the same `_body` argument rather than spliced
+/// on afterwards, so the sandbox pair and the Live pair cannot end up sending
+/// differently-shaped JSON for one feature.
 String liveBody({
   required int amount,
   required String currency,
@@ -121,9 +148,11 @@ String liveBody({
   required String firstName,
   required String lastName,
   required String customerReference,
+  String? extraTopLevel,
 }) => _body(
   amount: amount,
   currency: currency,
+  extraTopLevel: extraTopLevel,
   reference: 'LIVE-SMOKE-{{timestamp}}',
   customer: customerReference,
   email: email,
