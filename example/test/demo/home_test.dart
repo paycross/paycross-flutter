@@ -91,11 +91,16 @@ const LiveIdentity _liveIdentity = LiveIdentity(
 Future<DemoEnvironmentState> liveHolding(
   Credentials? credentials, {
   LiveIdentity? identity = _liveIdentity,
+  String currency = liveDefaultCurrency,
 }) async {
   final state = fakeEnvironment();
   await state.enterLive(liveConfirmationWord);
   if (credentials != null) state.useForThisSession(credentials);
   if (identity != null) state.useIdentityForThisSession(identity);
+  // Unconditional, unlike the two above: there is no half-armed currency to
+  // reproduce, because a session always has one and the default is what a
+  // session that has chosen nothing holds.
+  state.useCurrencyForThisSession(currency);
   return state;
 }
 
@@ -705,6 +710,117 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('all four places quote the same amount, in every currency', (
+    tester,
+  ) async {
+    // The hazard the single source was written for. The figure used to be
+    // spelled out by hand in three of these four, so an edit to one of them
+    // left the app quoting two different numbers to the person about to
+    // spend the money -- on the tile they tapped and in the dialog asking
+    // them to confirm it.
+    //
+    // Read off the rendered widgets rather than off the functions that build
+    // them: `live_test` already pins what the functions return, and a screen
+    // that called the wrong one, or none, would pass that and fail this.
+    useTallSurface(tester);
+    for (final code in currencies) {
+      final state = await liveHolding(_liveCredentials, currency: code);
+      await tester.pumpWidget(
+        await liveApp(
+          state: state,
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final tile = tester.widget<ListTile>(
+        find.descendant(
+          of: find.byKey(const ValueKey('liveSmokeTile')),
+          matching: find.byType(ListTile),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+      await tester.pumpAndSettle();
+      final dialog = tester.widget<AlertDialog>(
+        find.byKey(const ValueKey('liveConfirmDialog')),
+      );
+
+      final quoted = <String>[
+        tester
+            .widget<Text>(find.byKey(const ValueKey('homeEnvironment')))
+            .data!,
+        (tile.title! as Text).data!,
+        (tile.subtitle! as Text).data!,
+        (dialog.content! as Text).data!,
+      ];
+      // Four, and named here so that a copy site quietly deleted from the
+      // screen turns into a failure rather than into a loop over three.
+      expect(quoted, hasLength(4));
+      for (final line in quoted) {
+        expect(line, contains(liveSmokeAmountLabel(code)), reason: line);
+        // And nothing on screen quotes one of the other two. Without this a
+        // screen that ignored the choice and always said €1.00 would pass
+        // the EUR pass of this loop and be caught only by the other two.
+        for (final other in currencies.where((c) => c != code)) {
+          expect(
+            line,
+            isNot(contains(liveSmokeAmountLabel(other))),
+            reason: '$code / $other: $line',
+          );
+        }
+      }
+
+      // Nothing is minted here: Cancel, so the next pass starts on a screen
+      // with no dialog over it.
+      await tester.tap(find.byKey(const ValueKey('liveCancel')));
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets('the smoke charges in the currency that was chosen', (
+    tester,
+  ) async {
+    // The other end of the same choice: not what the tester was shown, but
+    // what the production merchant is asked for. A merchant that can only
+    // take pounds is the reason this exists -- a body that said EUR would
+    // be refused for a reason that says nothing about the SDK.
+    final state = await liveHolding(_liveCredentials, currency: 'GBP');
+    String? sent;
+    await tester.pumpWidget(
+      await liveApp(
+        state: state,
+        home: HomeScreen(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          liveMintWith: (credentials, body, endpoints) async {
+            sent = body;
+            return const MintedSession(
+              id: 'sess-live',
+              token: 'tok',
+              sentBody: '{}',
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('liveContinue')));
+    await tester.pumpAndSettle();
+
+    final body = jsonDecode(sent!) as Map<String, Object?>;
+    expect(body['currency'], 'GBP');
+    // The amount is untouched by the choice: minor units, so one pound is
+    // the same 100 one euro is.
+    expect(body['amount'], liveSmokeMinorUnits);
+
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets(
     'a run authorised in Live keeps the pair it was authorised with',
     (tester) async {
@@ -849,7 +965,7 @@ void main() {
 
       final minted = await liveMintWithCredentials(
         const Credentials(clientId: 'live-id', clientSecret: 'live-secret'),
-        liveSmokeBody(_liveIdentity),
+        liveSmokeBody(_liveIdentity, liveDefaultCurrency),
         liveEndpoints,
         client: client,
       );

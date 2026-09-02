@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/history.dart';
 import 'package:paycross_demo/demo/history_screen.dart';
+import 'package:paycross_demo/demo/live.dart';
 
 import '_surface.dart';
 
@@ -91,7 +92,7 @@ void main() {
       backend: _seeded([
         _entry(
           session: 'sess-live',
-          preset: 'Live smoke — €1.00 charge',
+          preset: liveSmokeName(liveDefaultCurrency),
           live: true,
         ),
         _entry(session: 'sess-9', preset: '3DS challenge → approve'),
@@ -103,7 +104,7 @@ void main() {
 
     // Both rows are on screen, so the Test row being unmarked is a fact about
     // the row rather than about a row that never rendered.
-    expect(find.text('Live smoke — €1.00 charge'), findsOneWidget);
+    expect(find.text(liveSmokeName(liveDefaultCurrency)), findsOneWidget);
     expect(find.text('3DS challenge → approve'), findsOneWidget);
     // One marking for one live row, whatever the rest of the list holds.
     expect(find.byKey(const ValueKey('historyLive')), findsOneWidget);

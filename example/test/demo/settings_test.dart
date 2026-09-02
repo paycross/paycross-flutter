@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/endpoints.dart';
 import 'package:paycross_demo/demo/environment.dart';
+import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/minter.dart';
+import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
@@ -197,6 +199,29 @@ String _fieldText(WidgetTester tester, String key) =>
 
 String? _errorOn(WidgetTester tester, String key) =>
     tester.widget<TextField>(find.byKey(ValueKey(key))).decoration!.errorText;
+
+/// Which currency the Live dropdown is showing.
+///
+/// The field the widget is built from rather than the text it paints: this
+/// screen rebuilds it from `_liveCurrency` on every change, so this is what
+/// "Use for this session" would hand over if it were pressed now.
+String _currencyShown(WidgetTester tester) => tester
+    .widget<DropdownButtonFormField<String>>(
+      find.byKey(const ValueKey('liveCurrency')),
+    )
+    .initialValue!;
+
+/// Opens the Live currency dropdown and picks a code off it.
+///
+/// `.last`, because the field paints the selected code and the menu it
+/// opens paints all three, so the plain finder matches the code twice and
+/// the one in the menu is the later of the two in the tree.
+Future<void> _pickCurrency(WidgetTester tester, String code) async {
+  await tester.tap(find.byKey(const ValueKey('liveCurrency')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(code).last);
+  await tester.pumpAndSettle();
+}
 
 void main() {
   testWidgets('stores what is typed', (tester) async {
@@ -779,7 +804,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Save'), findsNothing);
-    // There is no Verify in Live on purpose: the €1.00 smoke is the
+    // There is no Verify in Live on purpose: the smoke charge itself is the
     // verification, and a probe would create a real production session as a
     // side effect.
     expect(find.text('Verify credentials'), findsNothing);
@@ -789,11 +814,12 @@ void main() {
     // The two that stay: a credential still has to be typed somewhere.
     expect(find.byKey(const ValueKey('clientId')), findsOneWidget);
     expect(find.byKey(const ValueKey('clientSecret')), findsOneWidget);
-    // And the two Live adds. What Live hides and what Live shows instead
+    // And the three Live adds. What Live hides and what Live shows instead
     // belong in one case, so a field that stops rendering cannot hide
     // behind a case that only ever looked for absences.
     expect(find.byKey(const ValueKey('liveName')), findsOneWidget);
     expect(find.byKey(const ValueKey('liveEmail')), findsOneWidget);
+    expect(find.byKey(const ValueKey('liveCurrency')), findsOneWidget);
   });
 
   testWidgets('Test never asks for a name or an email', (tester) async {
@@ -811,8 +837,12 @@ void main() {
 
     expect(find.byKey(const ValueKey('liveName')), findsNothing);
     expect(find.byKey(const ValueKey('liveEmail')), findsNothing);
+    // Nor for a currency: the sandbox presets carry their own, editable in
+    // the body editor, and a second way to set one in Test would be two
+    // answers to one question.
+    expect(find.byKey(const ValueKey('liveCurrency')), findsNothing);
     // And the wallet id, which is the Test-only field, is there -- so the
-    // two above are absent because Test hides them, not because nothing
+    // three above are absent because Test hides them, not because nothing
     // rendered.
     expect(find.byKey(const ValueKey('googlePayMerchantId')), findsOneWidget);
 
@@ -825,6 +855,135 @@ void main() {
 
     expect(find.byKey(const ValueKey('liveName')), findsOneWidget);
     expect(find.byKey(const ValueKey('liveEmail')), findsOneWidget);
+    expect(find.byKey(const ValueKey('liveCurrency')), findsOneWidget);
+  });
+
+  testWidgets('the currency starts on the default and offers three', (
+    tester,
+  ) async {
+    // EUR, and not because nothing has been picked yet -- a dropdown with no
+    // selection would render an empty field and a tile quoting nothing. The
+    // three are the ones the sandbox editor offers, so a currency that mints
+    // here is one that has minted before.
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      await _liveSettings(store: SecretStore(backend: InMemorySecretBackend())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(_currencyShown(tester), liveDefaultCurrency);
+    expect(_currencyShown(tester), 'EUR');
+
+    await tester.tap(find.byKey(const ValueKey('liveCurrency')));
+    await tester.pumpAndSettle();
+    for (final code in currencies) {
+      expect(find.text(code), findsWidgets, reason: code);
+    }
+    // And no fourth: the matrix runner's symbol table holds exactly these
+    // three, and a currency that is not in `currencies` has no symbol in the
+    // amount label either.
+    expect(currencies, hasLength(3));
+  });
+
+  testWidgets('the currency the tester picked is what the session holds', (
+    tester,
+  ) async {
+    // The reason this field exists: the production merchant can only take
+    // pounds, so a smoke locked to euros cannot run at all. Held by the same
+    // press as the credential and the identity, and held the same way.
+    useTallSurface(tester);
+    final backend = _CountingBackend();
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await _liveSettings(
+        state: state,
+        store: SecretStore(backend: backend),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada Lovelace',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada@example.org',
+    );
+    await _pickCurrency(tester, 'GBP');
+
+    // Picked, and not yet held: the button is what hands it over, exactly as
+    // it does for the four typed fields.
+    expect(state.liveCurrency, liveDefaultCurrency);
+
+    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
+    await tester.pumpAndSettle();
+
+    expect(state.liveCurrency, 'GBP');
+    // Nowhere else. A currency is not a secret, but this screen writes
+    // nothing at all in Live and a new field is the easiest way to break
+    // that.
+    expect(backend.writes, 0);
+    expect(backend.deletes, 0);
+    expect(backend.entries, isEmpty);
+  });
+
+  testWidgets('a trip through Test puts the currency back to the default', (
+    tester,
+  ) async {
+    // The crossing rule, for the one Live input that is chosen rather than
+    // typed. A GBP left selected from the last session is a tile quoting
+    // £1.00 to somebody who has picked nothing, on a screen whose whole job
+    // is to say what is about to be charged.
+    useTallSurface(tester);
+    final state = fakeEnvironment();
+    await tester.pumpWidget(
+      await _liveSettings(
+        state: state,
+        store: SecretStore(backend: InMemorySecretBackend()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
+    await tester.enterText(
+      find.byKey(const ValueKey('clientSecret')),
+      'live-secret',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveName')),
+      'Ada Lovelace',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('liveEmail')),
+      'ada@example.org',
+    );
+    await _pickCurrency(tester, 'USD');
+    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
+    await tester.pumpAndSettle();
+    // Actually held first, so the assertion after the crossing is not green
+    // against a state that never held anything but the default.
+    expect(state.liveCurrency, 'USD');
+
+    await tester.tap(find.text('Test'));
+    await tester.pumpAndSettle();
+
+    expect(state.liveCurrency, liveDefaultCurrency);
+
+    // Back in, where the dropdown exists again and can be read.
+    await tester.tap(find.text('Live'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('switchToLive')));
+    await tester.pumpAndSettle();
+
+    expect(_currencyShown(tester), liveDefaultCurrency);
   });
 
   testWidgets('a Live credential reaches memory and nothing else', (
@@ -1133,16 +1292,39 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+    // Scrolled to, not merely found. The currency dropdown pushed this button
+    // past the point a ListView builds at 390x844, so the bare finder started
+    // reporting zero -- which reads as "the screen has no button" rather than
+    // as "the button is further down a list that scrolls". Reaching it is the
+    // property this case is actually about.
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('useForThisSession')),
+      200,
+      // Named for the reason the call at the end of this test names it:
+      // Settings has a Scrollable per TextField as well as the ListView, and
+      // the default finder matches them all.
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.byKey(const ValueKey('useForThisSession')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // And back up, because the scroll above took the environment switch off
+    // the top of the list and the next line taps it. A negative delta, which
+    // is the same call in the other direction.
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('environmentToggle')),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
 
     // Back to Test and straight into the gate, which is where this screen is
     // longest: three fields, the wallet id, three buttons and the gate's own
     // paragraph. Measured at 390x844 the Live branch used to have a
     // maxScrollExtent of 0 -- it fitted -- so a scroll assertion there would
-    // have scrolled nothing and passed with the call deleted. Since the name
-    // and the email fields were added to it that figure is 200: it scrolls
-    // now. The gate branch is still the longer of the two by a wide margin,
-    // so the assertion stays here. This branch overflows by ~423px.
+    // have scrolled nothing and passed with the call deleted. The name, the
+    // email and now the currency have taken it well past that. The gate
+    // branch is still the longer of the two by a wide margin, so the
+    // assertion stays here. This branch overflows by ~423px.
     await tester.tap(find.text('Test'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Live'));
@@ -1401,6 +1583,15 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
+
+    // And the currency, which is the same drift in the one field nobody
+    // types: the screen would go on saying "Held for this session" about a
+    // currency the tester has since changed, and the smoke would charge the
+    // old one.
+    await hold();
+    await _pickCurrency(tester, 'GBP');
+    expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
+    expect(state.liveCurrency, liveDefaultCurrency);
   });
 
   testWidgets('the gate can be backed out of', (tester) async {

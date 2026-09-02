@@ -1,18 +1,55 @@
 import 'presets.dart';
 
-/// The amount a Live smoke charges, in minor units. One euro.
+/// The amount a Live smoke charges, in minor units. One of whatever
+/// currency the tester picked.
 ///
 /// Hardcoded, with no editor anywhere near it. A Live amount field is a
 /// Live typo, and the difference between one euro and a hundred is one
 /// keystroke.
 ///
-/// **Changing it is four edits, not one.** The charge body and the
-/// confirmation dialog derive from this constant, but three pieces of copy
-/// spell the figure out by hand -- [liveSmokeName], [liveSmokeExpectation],
-/// and Home's Live paragraph. Change one and the app quotes two different
-/// numbers to the person about to spend the money. The README's Live mode
-/// section says the same thing to the same reader.
+/// **Changing it is one edit.** It used to be four: the charge body and the
+/// confirmation dialog derived from this constant, but three pieces of copy
+/// spelled the figure out by hand, so changing one meant the app quoted two
+/// different numbers to the person about to spend the money. Every one of
+/// those four now renders [liveSmokeAmountLabel], which is the only place
+/// the figure is written for a human to read.
 const int liveSmokeMinorUnits = 100;
+
+/// The currency a Live smoke charges in until the tester picks another.
+///
+/// One of [currencies], because the dropdown that changes it is built from
+/// that list. A value rather than a null, because the tile quotes an amount
+/// before anything has been held for the session and there has to be
+/// something to quote.
+const String liveDefaultCurrency = 'EUR';
+
+/// How each currency the Live form offers is written.
+///
+/// Three entries rather than a package: this app shows one amount in one of
+/// three currencies, and `intl` would bring a locale question -- whose
+/// separators, whose symbol placement -- that nobody here has an answer for.
+const Map<String, String> _liveCurrencySymbols = <String, String>{
+  'EUR': '€',
+  'USD': r'$',
+  'GBP': '£',
+};
+
+/// What a Live smoke costs, written the way the tester reads it.
+///
+/// The one place the figure is spelled out. Four pieces of copy quote it --
+/// the tile's title, the tile's subtitle, Home's Live paragraph and the
+/// confirmation dialog -- and all four call this, so they cannot say two
+/// different numbers about the same charge.
+///
+/// All three of [currencies] are two-decimal, so dividing by 100 is right
+/// for each of them. A code this map does not hold falls back to
+/// `1.00 XXX`: unlovely, and honest, which is the trade worth making when
+/// the alternative is an unknown currency printed under a euro sign.
+String liveSmokeAmountLabel(String currency) {
+  final amount = (liveSmokeMinorUnits / 100).toStringAsFixed(2);
+  final symbol = _liveCurrencySymbols[currency];
+  return symbol == null ? '$amount $currency' : '$symbol$amount';
+}
 
 /// Who a Live smoke charges.
 ///
@@ -99,18 +136,21 @@ const String liveSmokeCustomerReference = 'paycross_live_smoke';
 
 /// The Live tile's title, and what it tells the person tapping it.
 ///
-/// Constants rather than fields of [liveSmokePreset], because the tile is
+/// Functions rather than fields of [liveSmokePreset], because the tile is
 /// drawn whether or not an identity is held and the preset cannot be built
-/// without one.
-const String liveSmokeName = 'Live smoke — €1.00 charge';
+/// without one. They take the currency for the same reason: the tile is on
+/// screen before "Use for this session" has been pressed, and there it
+/// quotes [liveDefaultCurrency].
+String liveSmokeName(String currency) =>
+    'Live smoke — ${liveSmokeAmountLabel(currency)} charge';
 
 /// Deliberately worded so that it does not begin with one of the five
 /// prefixes the matrix runner reads as "this build has no automation
 /// define". Automation never runs Live, but the two preset sets are held
 /// to one rule so they cannot diverge.
-const String liveSmokeExpectation =
-    'A real card is charged €1.00 on the production merchant. Refund it '
-    'in the back office straight afterwards.';
+String liveSmokeExpectation(String currency) =>
+    'A real card is charged ${liveSmokeAmountLabel(currency)} on the '
+    'production merchant. Refund it in the back office straight afterwards.';
 
 /// What a Live smoke mints, under the identity that was typed.
 ///
@@ -128,7 +168,7 @@ const String liveSmokeExpectation =
 /// the AVS risk this whole path exists to avoid, and the phone the sandbox
 /// presets carry -- `+12025551234`, the reserved fictional Washington-DC
 /// 555 range -- is a fabricated contact detail of the same class, scored by
-/// the same fraud engines, on a EUR charge from a European device. It would
+/// the same fraud engines, on a real charge from a European device. It would
 /// also write a wrong number onto a real person's production customer
 /// record. A smoke that declines for either of those teaches the tester
 /// nothing about the SDK, which is the failure this design was written to
@@ -137,17 +177,23 @@ const String liveSmokeExpectation =
 /// If a real internal phone number is ever wanted, it is a third typed
 /// field beside the name and the email -- never an inherited sandbox
 /// default.
-String liveSmokeBody(LiveIdentity identity) => liveBody(
+///
+/// The currency is passed in rather than defaulted here, so that the body
+/// and the copy the tester read before pressing Continue take the same
+/// value from the same caller.
+String liveSmokeBody(LiveIdentity identity, String currency) => liveBody(
   amount: liveSmokeMinorUnits,
+  currency: currency,
   email: identity.email,
   firstName: identity.firstName,
   lastName: identity.lastName,
   customerReference: liveSmokeCustomerReference,
 );
 
-/// The one tile Live mode offers, for the identity this session holds.
-Preset liveSmokePreset(LiveIdentity identity) => Preset(
-  name: liveSmokeName,
-  body: liveSmokeBody(identity),
-  expected: liveSmokeExpectation,
+/// The one tile Live mode offers, for the identity and the currency this
+/// session holds.
+Preset liveSmokePreset(LiveIdentity identity, String currency) => Preset(
+  name: liveSmokeName(currency),
+  body: liveSmokeBody(identity, currency),
+  expected: liveSmokeExpectation(currency),
 );

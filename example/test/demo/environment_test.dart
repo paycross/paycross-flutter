@@ -140,6 +140,42 @@ void main() {
     expect(state.liveIdentity?.firstName, 'Ada');
   });
 
+  test(
+    'a currency is held only in Live, and defaults everywhere else',
+    () async {
+      final state = fakeEnvironment();
+
+      // The default rather than null, unlike the credential and the identity:
+      // everything that reads this is rendering an amount, and there is no
+      // such thing as an amount in no currency.
+      expect(state.liveCurrency, liveDefaultCurrency);
+      // And the setter does nothing in Test, the rule the other two follow.
+      state.useCurrencyForThisSession('GBP');
+      expect(state.liveCurrency, liveDefaultCurrency);
+
+      await state.enterLive(liveConfirmationWord);
+      state.useCurrencyForThisSession('GBP');
+      expect(state.liveCurrency, 'GBP');
+    },
+  );
+
+  test('leaving Live puts the currency back to the default', () async {
+    // Not merely hidden by the getter's gate: the field itself is reset, so
+    // the next session in Live starts on EUR rather than inheriting a choice
+    // nobody in it made. Read back in Live for exactly that reason -- in
+    // Test the gate would answer the default whether or not the field was
+    // touched.
+    final state = fakeEnvironment();
+    await state.enterLive(liveConfirmationWord);
+    state.useCurrencyForThisSession('GBP');
+    expect(state.liveCurrency, 'GBP');
+
+    expect(await state.leaveLive(), isNull);
+    await state.enterLive(liveConfirmationWord);
+
+    expect(state.liveCurrency, liveDefaultCurrency);
+  });
+
   test('a wallet id cannot ride along with a Live credential', () async {
     final state = DemoEnvironmentState(configure: _RecordingConfigure().call);
     await state.enterLive('LIVE');
@@ -213,13 +249,15 @@ void main() {
     await state.enterLive('LIVE');
     state.useForThisSession(_live);
     state.useIdentityForThisSession(_identity);
+    state.useCurrencyForThisSession('GBP');
     await state.leaveLive();
 
-    // Four: the banner, the Settings surface and Home's grid all redraw
+    // Five: the banner, the Settings surface and Home's grid all redraw
     // from these, and a missed notify is a screen that says Test on
     // production. Holding the identity is one of them -- the Live tile
-    // stops refusing the moment it lands.
-    expect(heard, 4);
+    // stops refusing the moment it lands -- and so is holding the currency,
+    // which is the figure that tile and its dialog quote.
+    expect(heard, 5);
   });
   test(
     'credentials armed while leaving Live do not survive the exit',

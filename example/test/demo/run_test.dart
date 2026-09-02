@@ -537,7 +537,7 @@ void main() {
       lastName: 'Lovelace',
       email: 'ada@example.org',
     );
-    final preset = liveSmokePreset(identity);
+    final preset = liveSmokePreset(identity, liveDefaultCurrency);
     final backend = InMemoryHistoryBackend();
     // The precondition this case rests on: the body really does contain
     // both, so finding neither downstream means something.
