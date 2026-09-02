@@ -247,7 +247,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
         /** Private to the SDK's internal PaymentActivity; mirrored deliberately. */
         const val EXTRA_RESULT = "result"
 
-        const val PLUGIN_VERSION = "0.1.0"
+        const val PLUGIN_VERSION = "0.2.0"
 
         const val ERROR_NOT_CONFIGURED = "paycross_not_configured"
         const val ERROR_BUSY = "paycross_busy"
