@@ -34,3 +34,6 @@ key.properties
 *.jks
 *.p12
 *.keystore
+# Campaign and readiness reports; pub warned that a top-level docs/ is not the
+# package layout it expects, and none of it belongs in the published archive.
+docs/
