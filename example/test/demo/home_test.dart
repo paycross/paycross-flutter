@@ -160,11 +160,9 @@ Future<void> _drainBookkeeping(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-/// A surface store already answering [surface], as a phone whose owner chose
-/// one on a past launch does.
-SurfaceStore _surfaceStoreOn(PaymentSurface surface) => SurfaceStore(
-  backend: InMemorySurfaceBackend()..value = surfaceName(surface),
-);
+/// The finder for one tile's "Open in browser" button.
+Finder _browserButton(String tile) =>
+    find.byKey(ValueKey(browserActionKey(tile)));
 
 void main() {
   // `runInFlight` is top-level, so a test that ends while a read is still in
@@ -1193,18 +1191,85 @@ void main() {
     },
   );
 
-  group('which screen a tile opens', () {
-    testWidgets('the web surface sends a Test tile to the browser run', (
+  group('the second way to run every tile', () {
+    testWidgets('every Test tile offers it, Custom included', (tester) async {
+      // Nine tiles, one builder. A tile added later cannot quietly lack the
+      // button, because there is no per-tile copy of it to forget.
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        MaterialApp(home: HomeScreen(store: await _configuredStore())),
+      );
+      await tester.pumpAndSettle();
+
+      for (final preset in demoPresets) {
+        expect(
+          _browserButton(preset.name),
+          findsOneWidget,
+          reason: preset.name,
+        );
+      }
+      expect(_browserButton('customPreset'), findsOneWidget);
+      expect(
+        find.text(openInBrowserLabel),
+        findsNWidgets(demoPresets.length + 1),
+      );
+    });
+
+    testWidgets('every Live tile offers it too', (tester) async {
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (final scenario in LiveScenario.values) {
+        expect(
+          _browserButton(liveTileKey(scenario)),
+          findsOneWidget,
+          reason: scenario.name,
+        );
+      }
+    });
+
+    testWidgets('it is a labelled button, not a bare glyph', (tester) async {
+      // The row where the mistake costs a production charge is the last row
+      // to put an unlabelled icon on, so the words are on screen and the
+      // longer sentence hangs off it as a tooltip.
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        MaterialApp(home: HomeScreen(store: await _configuredStore())),
+      );
+      await tester.pumpAndSettle();
+
+      final button = _browserButton(demoPresets.first.name);
+      expect(
+        find.descendant(of: button, matching: find.text(openInBrowserLabel)),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(of: button, matching: find.byType(Tooltip)),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('it sends the tile to the browser, and the tap to the sheet', (
       tester,
     ) async {
       useTallSurface(tester);
       final opened = <Uri>[];
 
-      await tester.pumpWidget(
+      Future<void> pump() async => tester.pumpWidget(
         MaterialApp(
           home: HomeScreen(
             store: await _configuredStore(),
-            surfaceStore: _surfaceStoreOn(PaymentSurface.webCheckout),
             mintWith: (_, _) async => _mintedWithPage(),
             launch: (url) async {
               opened.add(url);
@@ -1213,19 +1278,90 @@ void main() {
           ),
         ),
       );
+
+      await pump();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(demoPresets.first.name));
+      await tester.pumpAndSettle();
+      expect(find.byType(RunScreen), findsOneWidget);
+      expect(find.byType(WebCheckoutRunScreen), findsNothing);
+      expect(opened, isEmpty);
+      await _drainBookkeeping(tester);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      await tester.tap(_browserButton(demoPresets.first.name));
+      await tester.pumpAndSettle();
+      expect(find.byType(WebCheckoutRunScreen), findsOneWidget);
+      expect(opened.single.toString(), _checkoutUrl);
+      await _drainBookkeeping(tester);
+    });
+
+    testWidgets('both ways mint the same body, byte for byte', (tester) async {
+      // The whole point of the feature: one mint, two surfaces. If the
+      // bodies differ the two runs are not comparable and the wallet answer
+      // means nothing.
+      useTallSurface(tester);
+      final sent = <String>[];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomeScreen(
+            store: await _configuredStore(),
+            mintWith: (_, body) async {
+              sent.add(body);
+              return _mintedWithPage();
+            },
+            launch: (_) async => true,
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(find.text(demoPresets.first.name));
       await tester.pumpAndSettle();
+      await _drainBookkeeping(tester);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      await tester.tap(_browserButton(demoPresets.first.name));
+      await tester.pumpAndSettle();
+      await _drainBookkeeping(tester);
+
+      expect(sent, hasLength(2));
+      expect(sent.first, sent.last);
+    });
+
+    testWidgets('Custom opens the editor, and its Run goes to the browser', (
+      tester,
+    ) async {
+      // The surface is decided before the body is typed and carried through,
+      // so the editor keeps its single Run button.
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomeScreen(
+            store: await _configuredStore(),
+            mintWith: (_, _) async => _mintedWithPage(),
+            launch: (_) async => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(_browserButton('customPreset'));
+      await tester.pumpAndSettle();
+      expect(find.byType(EditorScreen), findsOneWidget);
+
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
 
       expect(find.byType(WebCheckoutRunScreen), findsOneWidget);
-      expect(find.byType(RunScreen), findsNothing);
-      expect(opened.single.toString(), _checkoutUrl);
-
       await _drainBookkeeping(tester);
     });
 
-    testWidgets('the sheet surface sends the same tile to the sheet', (
+    testWidgets('the pencil still runs an edited body in the sheet', (
       tester,
     ) async {
       useTallSurface(tester);
@@ -1234,56 +1370,26 @@ void main() {
         MaterialApp(
           home: HomeScreen(
             store: await _configuredStore(),
-            surfaceStore: _surfaceStoreOn(PaymentSurface.sdkSheet),
             mintWith: (_, _) async => _mintedWithPage(),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text(demoPresets.first.name));
-      await tester.pumpAndSettle();
-
-      expect(find.byType(RunScreen), findsOneWidget);
-      expect(find.byType(WebCheckoutRunScreen), findsNothing);
-
-      await _drainBookkeeping(tester);
-    });
-
-    testWidgets('the Custom editor obeys the same choice', (tester) async {
-      // The editor is a second entrance to the same run, and a surface that
-      // applied to eight tiles but not the ninth would be a surface nobody
-      // could trust.
-      useTallSurface(tester);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: HomeScreen(
-            store: await _configuredStore(),
-            surfaceStore: _surfaceStoreOn(PaymentSurface.webCheckout),
-            mintWith: (_, _) async => _mintedWithPage(),
-            launch: (_) async => true,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const ValueKey('customPreset')));
+      await tester.tap(find.byTooltip('Edit the body').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Run'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(WebCheckoutRunScreen), findsOneWidget);
-
+      expect(find.byType(RunScreen), findsOneWidget);
+      expect(find.byType(WebCheckoutRunScreen), findsNothing);
       await _drainBookkeeping(tester);
     });
 
-    testWidgets('a run that names no surface is a sheet run, whatever is '
-        'stored', (tester) async {
+    testWidgets('a run that names no surface is a sheet run', (tester) async {
       // The deep link's path. `main.dart` calls `runPreset` without naming a
       // surface, so this default is the whole of what keeps an automated run
-      // out of the browser: there is no branch anywhere that could get it
-      // wrong, because the link cannot express the question.
+      // out of the browser: the link cannot express the question.
       late BuildContext held;
 
       await tester.pumpWidget(
@@ -1310,142 +1416,54 @@ void main() {
 
       expect(find.byType(RunScreen), findsOneWidget);
       expect(find.byType(WebCheckoutRunScreen), findsNothing);
-
       await _drainBookkeeping(tester);
     });
   });
 
-  group('what Home says about the surface before anybody taps', () {
-    testWidgets('the sheet says nothing, as it always did', (tester) async {
-      useTallSurface(tester);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: HomeScreen(
-            store: await _configuredStore(),
-            surfaceStore: _surfaceStoreOn(PaymentSurface.sdkSheet),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const ValueKey('homeSurface')), findsNothing);
-    });
-
-    testWidgets('the web surface says so, before anybody taps a tile', (
+  group('the busy guard covers both of a tile\'s actions', () {
+    testWidgets('a run in flight kills every browser button on the screen', (
       tester,
     ) async {
-      // A tester who set this yesterday needs to be told before they tap,
-      // not after. Its own test rather than a second pump of the case above:
-      // a second `pumpWidget` of the same widget type reuses the State, so
-      // `initState` would not run and the screen would answer for the first
-      // store rather than the second.
+      // One flag for all of them, which is what makes them dead together
+      // rather than one at a time: a second session is just as unwanted when
+      // the second press lands on another tile's other button.
       useTallSurface(tester);
+      final gate = Completer<MintedSession>();
 
       await tester.pumpWidget(
         MaterialApp(
           home: HomeScreen(
             store: await _configuredStore(),
-            surfaceStore: _surfaceStoreOn(PaymentSurface.webCheckout),
+            mintWith: (_, _) => gate.future,
+            launch: (_) async => true,
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      final said = tester
-          .widget<Text>(find.byKey(const ValueKey('homeSurface')))
-          .data!;
-      expect(said, contains('browser'));
-      expect(said, contains('session id'));
-    });
+      await tester.tap(_browserButton(demoPresets.first.name));
+      await tester.pump();
 
-    testWidgets('a choice made in Settings reaches Home when it comes back', (
-      tester,
-    ) async {
-      // Home holds the surface to render it, which makes it a value that can
-      // go stale. Settings is the only place it changes, and the gear is one
-      // of three routes there.
-      useTallSurface(tester);
-      final backend = InMemorySurfaceBackend();
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: HomeScreen(
-            store: await _configuredStore(),
-            surfaceStore: SurfaceStore(backend: backend),
-          ),
-        ),
+      for (final preset in demoPresets) {
+        expect(
+          tester.widget<TextButton>(_browserButton(preset.name)).onPressed,
+          isNull,
+          reason: preset.name,
+        );
+      }
+      expect(
+        tester.widget<TextButton>(_browserButton('customPreset')).onPressed,
+        isNull,
       );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('homeSurface')), findsNothing);
 
-      // Changed while Home is alive but not on top, the way a human does it.
-      backend.value = webSurfaceName;
-      await tester.tap(find.byTooltip('Settings'));
+      gate.complete(_mintedWithPage());
       await tester.pumpAndSettle();
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const ValueKey('homeSurface')), findsOneWidget);
-    });
-
-    testWidgets('the Test profile strip is a route back to Home too', (
-      tester,
-    ) async {
-      useTallSurface(tester);
-      final backend = InMemorySurfaceBackend();
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: HomeScreen(
-            store: await _configuredStore(),
-            surfaceStore: SurfaceStore(backend: backend),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      backend.value = webSurfaceName;
-      await tester.tap(find.byIcon(Icons.chevron_right).first);
-      await tester.pumpAndSettle();
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const ValueKey('homeSurface')), findsOneWidget);
+      await _drainBookkeeping(tester);
     });
   });
 
-  group('a Live run on the web surface', () {
-    testWidgets('the dialog says where it happens before any money moves', (
-      tester,
-    ) async {
-      useTallSurface(tester);
-
-      await tester.pumpWidget(
-        await liveApp(
-          state: await liveHolding(_liveCredentials),
-          home: HomeScreen(
-            store: SecretStore(backend: InMemorySecretBackend()),
-            surfaceStore: _surfaceStoreOn(PaymentSurface.webCheckout),
-            launch: (_) async => true,
-            liveMintWith: (_, _, _) async => _mintedWithPage(),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.textContaining('It opens in your browser instead of the app.'),
-        findsOneWidget,
-      );
-      // Cancel is still the default action of a dialog about real money.
-      expect(find.byKey(const ValueKey('liveCancel')), findsOneWidget);
-    });
-
-    testWidgets('Cancel on the web surface mints nothing at all', (
+  group('a Live run reached by the browser button', () {
+    testWidgets('the dialog comes first, and says where it happens', (
       tester,
     ) async {
       useTallSurface(tester);
@@ -1456,7 +1474,6 @@ void main() {
           state: await liveHolding(_liveCredentials),
           home: HomeScreen(
             store: SecretStore(backend: InMemorySecretBackend()),
-            surfaceStore: _surfaceStoreOn(PaymentSurface.webCheckout),
             launch: (_) async => true,
             liveMintWith: (_, _, _) async {
               minted++;
@@ -1467,9 +1484,102 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+      await tester.tap(_browserButton(liveTileKey(LiveScenario.smoke)));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('liveConfirmDialog')), findsOneWidget);
+      expect(
+        find.textContaining('It opens in your browser instead of the app.'),
+        findsOneWidget,
+      );
+      // Nothing is minted until Continue. Cancel is still the default action
+      // of a dialog about real money.
+      expect(minted, 0);
+      expect(find.byKey(const ValueKey('liveCancel')), findsOneWidget);
+    });
+
+    testWidgets('the tile tap asks the question without that sentence', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            liveMintWith: (_, _, _) async => _mintedWithPage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(liveTile(LiveScenario.smoke));
+      await tester.pumpAndSettle();
+
+      // Scoped to the dialog: the tiles behind it all carry the words "Open
+      // in browser", which is the point of them and not this assertion.
+      expect(find.byKey(const ValueKey('liveConfirmDialog')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('liveConfirmDialog')),
+          matching: find.textContaining('browser'),
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('Cancel mints nothing at all', (tester) async {
+      useTallSurface(tester);
+      var minted = 0;
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            launch: (_) async => true,
+            liveMintWith: (_, _, _) async {
+              minted++;
+              return _mintedWithPage();
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(_browserButton(liveTileKey(LiveScenario.smoke)));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('liveCancel')));
+      await tester.pumpAndSettle();
+
+      expect(minted, 0);
+      expect(find.byType(WebCheckoutRunScreen), findsNothing);
+    });
+
+    testWidgets('a dismissed dialog mints nothing either', (tester) async {
+      useTallSurface(tester);
+      var minted = 0;
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            launch: (_) async => true,
+            liveMintWith: (_, _, _) async {
+              minted++;
+              return _mintedWithPage();
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(_browserButton(liveTileKey(LiveScenario.smoke)));
+      await tester.pumpAndSettle();
+      // The barrier, which returns null rather than false.
+      await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
 
       expect(minted, 0);
@@ -1487,7 +1597,6 @@ void main() {
           state: await liveHolding(_liveCredentials),
           home: HomeScreen(
             store: SecretStore(backend: InMemorySecretBackend()),
-            surfaceStore: _surfaceStoreOn(PaymentSurface.webCheckout),
             launch: (url) async {
               opened.add(url);
               return true;
@@ -1498,7 +1607,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+      await tester.tap(_browserButton(liveTileKey(LiveScenario.smoke)));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('liveContinue')));
       await tester.pumpAndSettle();
@@ -1516,56 +1625,71 @@ void main() {
       // The red block, naming the session id, since there is no transaction.
       expect(find.byKey(const ValueKey('refundInstruction')), findsOneWidget);
       expect(find.textContaining('sess-web'), findsWidgets);
-
       await _drainBookkeeping(tester);
     });
 
-    testWidgets('the body it sends is the one the sheet would have sent', (
+    testWidgets('a Live browser run sends the tile tap\'s production body', (
       tester,
     ) async {
-      // The whole point of the feature: one mint, two surfaces. If the
-      // bodies differ the two runs are not comparable and the wallet answer
-      // means nothing.
       useTallSurface(tester);
       final sent = <String>[];
 
-      Future<void> pumpOn(PaymentSurface surface) async {
-        await tester.pumpWidget(
-          await liveApp(
-            state: await liveHolding(_liveCredentials),
-            // Keyed, so the second call builds a new State rather than
-            // reusing the first one's -- an unkeyed HomeScreen of the same
-            // type keeps its `initState`, and the second run would then read
-            // the first run's surface.
-            home: HomeScreen(
-              key: ValueKey(surface),
-              store: SecretStore(backend: InMemorySecretBackend()),
-              surfaceStore: _surfaceStoreOn(surface),
-              launch: (_) async => true,
-              liveMintWith: (_, body, _) async {
-                sent.add(body);
-                return _mintedWithPage();
-              },
-            ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+      Future<void> pressAndContinue(Finder control) async {
+        await tester.tap(control);
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const ValueKey('liveContinue')));
         await tester.pumpAndSettle();
         await _drainBookkeeping(tester);
-        // Back to Home. The Navigator survives the next `pumpWidget`, so a
-        // run screen left on top would hide the tile the second half taps.
         await tester.pageBack();
         await tester.pumpAndSettle();
       }
 
-      await pumpOn(PaymentSurface.sdkSheet);
-      await pumpOn(PaymentSurface.webCheckout);
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            launch: (_) async => true,
+            liveMintWith: (_, body, _) async {
+              sent.add(body);
+              return _mintedWithPage();
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await pressAndContinue(liveTile(LiveScenario.smoke));
+      await pressAndContinue(_browserButton(liveTileKey(LiveScenario.smoke)));
 
       expect(sent, hasLength(2));
       expect(sent.first, sent.last);
+    });
+
+    testWidgets('a tile with nothing held goes to Settings, not the browser', (
+      tester,
+    ) async {
+      // The first refusal, and the browser button is behind it exactly as
+      // the tile is.
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(null, identity: null),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            launch: (_) async => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(_browserButton(liveTileKey(LiveScenario.smoke)));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SettingsScreen), findsOneWidget);
+      expect(find.byKey(const ValueKey('liveConfirmDialog')), findsNothing);
+      expect(find.byType(WebCheckoutRunScreen), findsNothing);
     });
   });
 }
