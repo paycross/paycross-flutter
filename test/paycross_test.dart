@@ -27,7 +27,7 @@ class FakeHost extends g.PayCrossHostApi {
 
   @override
   Future<g.PcVersionInfo> versionInfo() async =>
-      g.PcVersionInfo(pluginVersion: '0.2.0', nativeSdkVersion: null);
+      g.PcVersionInfo(pluginVersion: '0.2.1', nativeSdkVersion: null);
 
   @override
   Future<g.PcPaymentResult> presentPayment(String sessionToken) async {

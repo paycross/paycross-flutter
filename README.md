@@ -17,7 +17,7 @@ Cards on both platforms, Google Pay on Android, and Apple Pay on iOS.
 
 ```yaml
 dependencies:
-  paycross_flutter: ^0.2.0
+  paycross_flutter: ^0.2.1
 ```
 
 Then raise both platform minimums to match the table above. Neither default is
