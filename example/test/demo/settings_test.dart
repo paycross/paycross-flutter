@@ -4,9 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/endpoints.dart';
 import 'package:paycross_demo/demo/environment.dart';
-import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/minter.dart';
-import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
@@ -201,29 +199,6 @@ String _fieldText(WidgetTester tester, String key) =>
 
 String? _errorOn(WidgetTester tester, String key) =>
     tester.widget<TextField>(find.byKey(ValueKey(key))).decoration!.errorText;
-
-/// Which currency the Live dropdown is showing.
-///
-/// The field the widget is built from rather than the text it paints: this
-/// screen rebuilds it from `_liveCurrency` on every change, so this is what
-/// "Use for this session" would hand over if it were pressed now.
-String _currencyShown(WidgetTester tester) => tester
-    .widget<DropdownButtonFormField<String>>(
-      find.byKey(const ValueKey('liveCurrency')),
-    )
-    .initialValue!;
-
-/// Opens the Live currency dropdown and picks a code off it.
-///
-/// `.last`, because the field paints the selected code and the menu it
-/// opens paints all three, so the plain finder matches the code twice and
-/// the one in the menu is the later of the two in the tree.
-Future<void> _pickCurrency(WidgetTester tester, String code) async {
-  await tester.tap(find.byKey(const ValueKey('liveCurrency')));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text(code).last);
-  await tester.pumpAndSettle();
-}
 
 void main() {
   testWidgets('stores what is typed', (tester) async {
@@ -821,7 +796,12 @@ void main() {
     // behind a case that only ever looked for absences.
     expect(find.byKey(const ValueKey('liveName')), findsOneWidget);
     expect(find.byKey(const ValueKey('liveEmail')), findsOneWidget);
-    expect(find.byKey(const ValueKey('liveCurrency')), findsOneWidget);
+    // And no currency. It was picked here, once per session, beside an
+    // amount that lived in a constant -- the two halves of one figure set on
+    // two screens. Both are fields of the preset body now, and this note is
+    // what tells a tester where they went.
+    expect(find.byKey(const ValueKey('liveCurrency')), findsNothing);
+    expect(find.byKey(const ValueKey('liveAmountNote')), findsOneWidget);
   });
 
   testWidgets('Test never asks for a name or an email', (tester) async {
@@ -839,10 +819,9 @@ void main() {
 
     expect(find.byKey(const ValueKey('liveName')), findsNothing);
     expect(find.byKey(const ValueKey('liveEmail')), findsNothing);
-    // Nor for a currency: the sandbox presets carry their own, editable in
-    // the body editor, and a second way to set one in Test would be two
-    // answers to one question.
-    expect(find.byKey(const ValueKey('liveCurrency')), findsNothing);
+    // Nor the note about where a Live amount is set: there is nothing in
+    // Test that a sandbox preset's own editor does not already say.
+    expect(find.byKey(const ValueKey('liveAmountNote')), findsNothing);
     // And the wallet id, which is the Test-only field, is there -- so the
     // three above are absent because Test hides them, not because nothing
     // rendered.
@@ -857,135 +836,32 @@ void main() {
 
     expect(find.byKey(const ValueKey('liveName')), findsOneWidget);
     expect(find.byKey(const ValueKey('liveEmail')), findsOneWidget);
-    expect(find.byKey(const ValueKey('liveCurrency')), findsOneWidget);
+    expect(find.byKey(const ValueKey('liveAmountNote')), findsOneWidget);
   });
 
-  testWidgets('the currency starts on the default and offers three', (
+  testWidgets('Live says where the amount and the currency now live', (
     tester,
   ) async {
-    // EUR, and not because nothing has been picked yet -- a dropdown with no
-    // selection would render an empty field and a tile quoting nothing. The
-    // three are the ones the sandbox editor offers, so a currency that mints
-    // here is one that has minted before.
+    // This screen used to ask for a currency, once per session, while the
+    // amount sat in a constant -- two halves of one figure on two screens,
+    // which is the "lazy workaround" the owner asked to be rid of. What
+    // replaces it is a sentence pointing at the place both are edited, so a
+    // tester who comes here looking for the amount is not left guessing.
     useTallSurface(tester);
     await tester.pumpWidget(
       await _liveSettings(store: SecretStore(backend: InMemorySecretBackend())),
     );
     await tester.pumpAndSettle();
 
-    expect(_currencyShown(tester), liveDefaultCurrency);
-    expect(_currencyShown(tester), 'EUR');
+    final note = tester
+        .widget<Text>(find.byKey(const ValueKey('liveAmountNote')))
+        .data!;
 
-    await tester.tap(find.byKey(const ValueKey('liveCurrency')));
-    await tester.pumpAndSettle();
-    for (final code in currencies) {
-      expect(find.text(code), findsWidgets, reason: code);
-    }
-    // And no fourth: the matrix runner's symbol table holds exactly these
-    // three, and a currency that is not in `currencies` has no symbol in the
-    // amount label either.
-    expect(currencies, hasLength(3));
-  });
-
-  testWidgets('the currency the tester picked is what the session holds', (
-    tester,
-  ) async {
-    // The reason this field exists: the production merchant can only take
-    // pounds, so a smoke locked to euros cannot run at all. Held by the same
-    // press as the credential and the identity, and held the same way.
-    useTallSurface(tester);
-    final backend = _CountingBackend();
-    final state = fakeEnvironment();
-    await tester.pumpWidget(
-      await _liveSettings(
-        state: state,
-        store: SecretStore(backend: backend),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
-    await tester.enterText(
-      find.byKey(const ValueKey('clientSecret')),
-      'live-secret',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('liveName')),
-      'Ada Lovelace',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('liveEmail')),
-      'ada@example.org',
-    );
-    await _pickCurrency(tester, 'GBP');
-
-    // Picked, and not yet held: the button is what hands it over, exactly as
-    // it does for the four typed fields.
-    expect(state.liveCurrency, liveDefaultCurrency);
-
-    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
-    await tester.pumpAndSettle();
-
-    expect(state.liveCurrency, 'GBP');
-    // Nowhere else. A currency is not a secret, but this screen writes
-    // nothing at all in Live and a new field is the easiest way to break
-    // that.
-    expect(backend.writes, 0);
-    expect(backend.deletes, 0);
-    expect(backend.entries, isEmpty);
-  });
-
-  testWidgets('a trip through Test puts the currency back to the default', (
-    tester,
-  ) async {
-    // The crossing rule, for the one Live input that is chosen rather than
-    // typed. A GBP left selected from the last session is a tile quoting
-    // £1.00 to somebody who has picked nothing, on a screen whose whole job
-    // is to say what is about to be charged.
-    useTallSurface(tester);
-    final state = fakeEnvironment();
-    await tester.pumpWidget(
-      await _liveSettings(
-        state: state,
-        store: SecretStore(backend: InMemorySecretBackend()),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.byKey(const ValueKey('clientId')), 'live-id');
-    await tester.enterText(
-      find.byKey(const ValueKey('clientSecret')),
-      'live-secret',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('liveName')),
-      'Ada Lovelace',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('liveEmail')),
-      'ada@example.org',
-    );
-    await _pickCurrency(tester, 'USD');
-    await tester.tap(find.byKey(const ValueKey('useForThisSession')));
-    await tester.pumpAndSettle();
-    // Actually held first, so the assertion after the crossing is not green
-    // against a state that never held anything but the default.
-    expect(state.liveCurrency, 'USD');
-
-    await tester.tap(find.text('Test'));
-    await tester.pumpAndSettle();
-
-    expect(state.liveCurrency, liveDefaultCurrency);
-
-    // Back in, where the dropdown exists again and can be read.
-    await tester.tap(find.text('Live'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const ValueKey('liveConfirm')), 'LIVE');
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('switchToLive')));
-    await tester.pumpAndSettle();
-
-    expect(_currencyShown(tester), liveDefaultCurrency);
+    expect(note, contains('amount'));
+    expect(note, contains('currency'));
+    // Where to go, not merely that it moved.
+    expect(note, contains('pencil'));
+    expect(note, contains('Save'));
   });
 
   testWidgets('a Live credential reaches memory and nothing else', (
@@ -1586,14 +1462,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
 
-    // And the currency, which is the same drift in the one field nobody
-    // types: the screen would go on saying "Held for this session" about a
-    // currency the tester has since changed, and the smoke would charge the
-    // old one.
-    await hold();
-    await _pickCurrency(tester, 'GBP');
-    expect(find.byKey(const ValueKey('settingsMessage')), findsNothing);
-    expect(state.liveCurrency, liveDefaultCurrency);
+    // The currency clause that used to close this case is gone with the
+    // dropdown: there is no field here any more that is picked rather than
+    // typed, so the four above are the whole of what this rule covers.
   });
 
   testWidgets('the gate can be backed out of', (tester) async {

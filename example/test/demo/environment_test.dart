@@ -150,40 +150,24 @@ void main() {
     expect(state.liveIdentity?.firstName, 'Ada');
   });
 
-  test(
-    'a currency is held only in Live, and defaults everywhere else',
-    () async {
-      final state = fakeEnvironment();
+  test('what a session holds is a credential and an identity, and no more', () {
+    // This state also held a currency, set by the same button as the
+    // identity, and the owner's word for that was "a lazy workaround": the
+    // amount lived in a constant and the currency lived here, so the two
+    // halves of one figure were set on two different screens. Both are
+    // fields of the preset body now.
+    //
+    // Pinned as a set rather than by one absence, so the next thing that
+    // tries to live for a session -- an amount, a transaction type -- has to
+    // be argued for here first.
+    final state = DemoEnvironmentState(configure: _RecordingConfigure().call);
 
-      // The default rather than null, unlike the credential and the identity:
-      // everything that reads this is rendering an amount, and there is no
-      // such thing as an amount in no currency.
-      expect(state.liveCurrency, liveDefaultCurrency);
-      // And the setter does nothing in Test, the rule the other two follow.
-      state.useCurrencyForThisSession('GBP');
-      expect(state.liveCurrency, liveDefaultCurrency);
-
-      await state.enterLive(liveConfirmationWord);
-      state.useCurrencyForThisSession('GBP');
-      expect(state.liveCurrency, 'GBP');
-    },
-  );
-
-  test('leaving Live puts the currency back to the default', () async {
-    // Not merely hidden by the getter's gate: the field itself is reset, so
-    // the next session in Live starts on EUR rather than inheriting a choice
-    // nobody in it made. Read back in Live for exactly that reason -- in
-    // Test the gate would answer the default whether or not the field was
-    // touched.
-    final state = fakeEnvironment();
-    await state.enterLive(liveConfirmationWord);
-    state.useCurrencyForThisSession('GBP');
-    expect(state.liveCurrency, 'GBP');
-
-    expect(await state.leaveLive(), isNull);
-    await state.enterLive(liveConfirmationWord);
-
-    expect(state.liveCurrency, liveDefaultCurrency);
+    expect(state.liveCredentials, isNull);
+    expect(state.liveIdentity, isNull);
+    // The two setters that exist, and there is no third. A currency setter
+    // would not compile against this file.
+    expect(state.useForThisSession, isNotNull);
+    expect(state.useIdentityForThisSession, isNotNull);
   });
 
   test('a wallet id cannot ride along with a Live credential', () async {
@@ -378,15 +362,15 @@ void main() {
     await state.enterLive('LIVE');
     state.useForThisSession(_live);
     state.useIdentityForThisSession(_identity);
-    state.useCurrencyForThisSession('GBP');
     await state.leaveLive();
 
-    // Five: the banner, the Settings surface and Home's grid all redraw
+    // Four: the banner, the Settings surface and Home's grid all redraw
     // from these, and a missed notify is a screen that says Test on
     // production. Holding the identity is one of them -- the Live tile
-    // stops refusing the moment it lands -- and so is holding the currency,
-    // which is the figure that tile and its dialog quote.
-    expect(heard, 5);
+    // stops refusing the moment it lands. It was five while a currency was
+    // held for the session too; that is a field of the preset body now, so
+    // there is one fewer thing to notify about.
+    expect(heard, 4);
   });
   test(
     'credentials armed while leaving Live do not survive the exit',

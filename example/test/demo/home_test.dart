@@ -13,6 +13,8 @@ import 'package:paycross_demo/demo/history_screen.dart';
 import 'package:paycross_demo/demo/home.dart';
 import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/minter.dart';
+import 'package:paycross_demo/demo/money.dart';
+import 'package:paycross_demo/demo/preset_store.dart';
 import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/run.dart';
 import 'package:paycross_demo/demo/secrets.dart';
@@ -93,16 +95,14 @@ const LiveIdentity _liveIdentity = LiveIdentity(
 Future<DemoEnvironmentState> liveHolding(
   Credentials? credentials, {
   LiveIdentity? identity = _liveIdentity,
-  String currency = liveDefaultCurrency,
 }) async {
   final state = fakeEnvironment();
   await state.enterLive(liveConfirmationWord);
   if (credentials != null) state.useForThisSession(credentials);
   if (identity != null) state.useIdentityForThisSession(identity);
-  // Unconditional, unlike the two above: there is no half-armed currency to
-  // reproduce, because a session always has one and the default is what a
-  // session that has chosen nothing holds.
-  state.useCurrencyForThisSession(currency);
+  // No currency. A session held one until the addendum; it is a field of
+  // the preset body now, so what a tile charges comes out of the store
+  // rather than out of this state.
   return state;
 }
 
@@ -158,6 +158,19 @@ Future<void> _drainBookkeeping(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 6));
   await tester.pump(const Duration(seconds: 6));
   await tester.pumpAndSettle();
+}
+
+/// The words one tile's title is showing.
+///
+/// A bare `Text` on a tile nobody has edited and a `Row` carrying the
+/// "edited" marker beside it on one somebody has, so a case that reads a
+/// title has to cope with both rather than assert whichever shape it
+/// happened to get.
+String _titleText(ListTile tile) {
+  final title = tile.title!;
+  if (title is Text) return title.data!;
+  final beside = (title as Row).children.first as Expanded;
+  return (beside.child as Text).data!;
 }
 
 /// The finder for one tile's "Open in browser" button.
@@ -477,15 +490,21 @@ void main() {
     for (final scenario in LiveScenario.values) {
       expect(liveTile(scenario), findsOneWidget, reason: scenario.name);
       expect(
-        find.text(liveScenarioName(scenario, liveDefaultCurrency)),
+        find.text(
+          liveTileTitle(liveScenarioName(scenario), liveDefaultBody(scenario)),
+        ),
         findsOneWidget,
         reason: scenario.name,
       );
     }
-    // No editor, no custom preset, no decline scenarios, no Google Pay tile,
-    // and no pencil to open a body with. Live is still deliberately tiny.
+    // No Custom tile, no decline scenarios and no Google Pay tile. Live is
+    // still deliberately small -- but every tile has a pencil now, because
+    // what it charges is a body somebody can edit and keep.
     expect(find.byKey(const ValueKey('customPreset')), findsNothing);
-    expect(find.byTooltip('Edit the body'), findsNothing);
+    expect(
+      find.byTooltip('Edit the body'),
+      findsNWidgets(LiveScenario.values.length),
+    );
     expect(find.byType(IconButton), findsWidgets); // the app bar still exists
     for (final preset in demoPresets) {
       expect(find.text(preset.name), findsNothing, reason: preset.name);
@@ -836,7 +855,7 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('every place quotes the same amount, in every currency', (
+  testWidgets('every place quotes the amount in the body it will mint', (
     tester,
   ) async {
     // The hazard the single source was written for. The figure used to be
@@ -845,27 +864,46 @@ void main() {
     // spend the money -- on the tile they tapped and in the dialog asking
     // them to confirm it. Three tiles multiply that hazard by three.
     //
+    // Now that the amount is editable there is a second hazard on top: a
+    // site still reading the old constant would quote €1.00 over a tile
+    // somebody had saved at £42.50. So the bodies here are overridden, and
+    // what is checked is that every site followed them.
+    //
     // Read off the rendered widgets rather than off the functions that build
     // them: `live_test` already pins what the functions return, and a screen
     // that called the wrong one, or none, would pass that and fail this.
     useTallSurface(tester);
     for (final code in currencies) {
-      final state = await liveHolding(_liveCredentials, currency: code);
+      final presets = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      for (final scenario in LiveScenario.values) {
+        await presets.saveOverride(
+          liveScenarioId(scenario),
+          '{"amount":4250,"currency":"$code",'
+          '"customer":{"merchant_reference":"r"}}',
+        );
+      }
+      final label = formatMoney(4250, code);
+
       await tester.pumpWidget(
         await liveApp(
-          state: state,
+          state: await liveHolding(_liveCredentials),
           home: HomeScreen(
+            // Keyed per pass. `pumpWidget` reuses the element tree, so a
+            // HomeScreen swapped for another of the same type keeps the
+            // State it had -- and `initState` would not run again, leaving
+            // this pass reading the previous pass's store.
+            key: ValueKey(code),
             store: SecretStore(backend: InMemorySecretBackend()),
+            livePresetStore: presets,
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      final quoted = <String>[
-        tester
-            .widget<Text>(find.byKey(const ValueKey('homeEnvironment')))
-            .data!,
-      ];
+      final quoted = <String>[];
       for (final scenario in LiveScenario.values) {
         final tile = tester.widget<ListTile>(
           find.descendant(
@@ -880,8 +918,7 @@ void main() {
         );
 
         quoted
-          ..add((tile.title! as Text).data!)
-          ..add((tile.subtitle! as Text).data!)
+          ..add(_titleText(tile))
           ..add((dialog.content! as Text).data!);
 
         // Nothing is minted here: Cancel, so the next tile is tapped on a
@@ -890,24 +927,53 @@ void main() {
         await tester.pumpAndSettle();
       }
 
-      // Home's paragraph plus a title, a subtitle and a dialog for each of
-      // three tiles. Counted here so that a copy site quietly deleted from
-      // the screen turns into a failure rather than into a shorter loop.
-      expect(quoted, hasLength(10), reason: code);
+      // A title and a dialog for each of three tiles. Counted here so that a
+      // copy site quietly deleted from the screen turns into a failure
+      // rather than into a shorter loop.
+      expect(quoted, hasLength(6), reason: code);
       for (final line in quoted) {
-        expect(line, contains(liveSmokeAmountLabel(code)), reason: line);
-        // And nothing on screen quotes one of the other two. Without this a
-        // screen that ignored the choice and always said €1.00 would pass
-        // the EUR pass of this loop and be caught only by the other two.
+        expect(line, contains(label), reason: line);
+        // And nothing on screen quotes the shipped figure, which is what a
+        // site still reading the constant would say.
+        expect(line, isNot(contains('1.00')), reason: line);
+        // Nor one of the other two currencies. Without this a screen that
+        // ignored the body and always said €42.50 would pass the EUR pass of
+        // this loop and be caught only by the other two.
         for (final other in currencies.where((c) => c != code)) {
           expect(
             line,
-            isNot(contains(liveSmokeAmountLabel(other))),
+            isNot(contains(formatMoney(4250, other))),
             reason: '$code / $other: $line',
           );
         }
       }
     }
+  });
+
+  testWidgets('Home points at the tiles rather than quoting one figure', (
+    tester,
+  ) async {
+    // The paragraph quoted a constant while every tile charged it. It cannot
+    // now: three tiles can hold three different amounts, so a paragraph with
+    // a figure in it would be wrong for at least two of them.
+    useTallSurface(tester);
+    await tester.pumpWidget(
+      await liveApp(
+        state: await liveHolding(_liveCredentials),
+        home: HomeScreen(store: SecretStore(backend: InMemorySecretBackend())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final said = tester
+        .widget<Text>(find.byKey(const ValueKey('homeEnvironment')))
+        .data!;
+
+    expect(said, contains('Live'));
+    expect(said, contains('Refund'));
+    // Where the figure is, rather than the figure.
+    expect(said, contains('its own title'));
+    expect(said, isNot(contains('1.00')));
   });
 
   testWidgets('each tile mints its own body, not the tile above it', (
@@ -946,7 +1012,7 @@ void main() {
 
       expect(
         sent,
-        liveScenarioBody(scenario, _liveIdentity, liveDefaultCurrency),
+        withLiveIdentity(liveDefaultBody(scenario), _liveIdentity),
         reason: scenario.name,
       );
       // And the run is filed under the tile that was tapped, because History
@@ -954,7 +1020,7 @@ void main() {
       // two charges nobody can tell apart afterwards.
       expect(
         tester.widget<RunScreen>(find.byType(RunScreen)).preset.name,
-        liveScenarioName(scenario, liveDefaultCurrency),
+        liveScenarioName(scenario),
         reason: scenario.name,
       );
 
@@ -973,20 +1039,29 @@ void main() {
     }
   });
 
-  testWidgets('the smoke charges in the currency that was chosen', (
-    tester,
-  ) async {
-    // The other end of the same choice: not what the tester was shown, but
+  testWidgets('the smoke charges what its saved body says', (tester) async {
+    // The other end of the same edit: not what the tester was shown, but
     // what the production merchant is asked for. A merchant that can only
     // take pounds is the reason this exists -- a body that said EUR would
-    // be refused for a reason that says nothing about the SDK.
-    final state = await liveHolding(_liveCredentials, currency: 'GBP');
+    // be refused for a reason that says nothing about the SDK. It used to
+    // come from a per-session dropdown; it is a saved body now, which is
+    // what makes it survive a restart.
+    final presets = PresetStore(
+      backend: InMemoryPresetBackend(),
+      environment: DemoEnvironment.live,
+    );
+    await presets.saveOverride(
+      liveScenarioId(LiveScenario.smoke),
+      '{"amount":4250,"currency":"GBP",'
+      '"customer":{"merchant_reference":"paycross_live_smoke"}}',
+    );
     String? sent;
     await tester.pumpWidget(
       await liveApp(
-        state: state,
+        state: await liveHolding(_liveCredentials),
         home: HomeScreen(
           store: SecretStore(backend: InMemorySecretBackend()),
+          livePresetStore: presets,
           liveMintWith: (credentials, body, endpoints) async {
             sent = body;
             return const MintedSession(
@@ -1007,9 +1082,15 @@ void main() {
 
     final body = jsonDecode(sent!) as Map<String, Object?>;
     expect(body['currency'], 'GBP');
-    // The amount is untouched by the choice: minor units, so one pound is
-    // the same 100 one euro is.
-    expect(body['amount'], liveSmokeMinorUnits);
+    expect(body['amount'], 4250);
+    // And the identity is spliced in at this moment rather than stored, so
+    // the saved row holds none and the minted body holds all three.
+    final customer = body['customer']! as Map<String, Object?>;
+    expect(customer['email'], _liveIdentity.email);
+    expect(customer['first_name'], _liveIdentity.firstName);
+    expect(customer['last_name'], _liveIdentity.lastName);
+    final saved = (await presets.read()).overrides.values.single;
+    expect(saved, isNot(contains(_liveIdentity.email)));
 
     await tester.pump(const Duration(seconds: 10));
     await tester.pumpAndSettle();
@@ -1172,11 +1253,7 @@ void main() {
 
       final minted = await liveMintWithCredentials(
         const Credentials(clientId: 'live-id', clientSecret: 'live-secret'),
-        liveScenarioBody(
-          LiveScenario.smoke,
-          _liveIdentity,
-          liveDefaultCurrency,
-        ),
+        withLiveIdentity(liveDefaultBody(LiveScenario.smoke), _liveIdentity),
         liveEndpoints,
         client: client,
       );
@@ -1690,6 +1767,489 @@ void main() {
       expect(find.byType(SettingsScreen), findsOneWidget);
       expect(find.byKey(const ValueKey('liveConfirmDialog')), findsNothing);
       expect(find.byType(WebCheckoutRunScreen), findsNothing);
+    });
+  });
+
+  group('presets somebody saved', () {
+    /// A Home whose two stores are both in memory, so no case here reaches
+    /// the Keychain or `SharedPreferences`.
+    Future<void> pumpHome(
+      WidgetTester tester,
+      PresetStore presets, {
+      List<String>? sent,
+    }) async {
+      useTallSurface(tester);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomeScreen(
+            store: await _configuredStore(),
+            presetStore: presets,
+            mintWith: (_, body) async {
+              sent?.add(body);
+              return _mintedWithPage();
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('an edited preset mints the body that was saved', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      final preset = demoPresets.first;
+      await presets.saveOverride(
+        preset.id!,
+        '{"amount":4242,"currency":"GBP",'
+        '"customer":{"merchant_reference":"CUST-1"}}',
+      );
+      final sent = <String>[];
+      await pumpHome(tester, presets, sent: sent);
+
+      await tester.tap(find.text(preset.name));
+      await tester.pumpAndSettle();
+      await _drainBookkeeping(tester);
+
+      // The whole of what the owner asked for: a scenario edited once stays
+      // edited, rather than needing the currency picked again every run.
+      expect((jsonDecode(sent.single) as Map)['amount'], 4242);
+    });
+
+    testWidgets('an edited preset says so on its tile', (tester) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      final preset = demoPresets.first;
+      await presets.saveOverride(preset.id!, '{"amount":4242}');
+      await pumpHome(tester, presets);
+
+      // Without it the tile is indistinguishable from the shipped scenario,
+      // and a run that behaves oddly reads as a bug in the SDK rather than
+      // as the body somebody edited last week.
+      expect(find.byKey(ValueKey(editedMarkerKey(preset.id!))), findsOneWidget);
+      expect(
+        find.byKey(ValueKey(editedMarkerKey(demoPresets[1].id!))),
+        findsNothing,
+      );
+    });
+
+    testWidgets('a preset nobody edited mints the bytes it ships with', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      final sent = <String>[];
+      await pumpHome(tester, presets, sent: sent);
+
+      await tester.tap(find.text(demoPresets.first.name));
+      await tester.pumpAndSettle();
+      await _drainBookkeeping(tester);
+
+      // Byte for byte, because this is what the automated matrix runs.
+      expect(sent.single, demoPresets.first.body);
+    });
+
+    testWidgets('the pencil opens a built-in on the body that was saved', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await presets.saveOverride(demoPresets.first.id!, '{"amount":4242}');
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.byTooltip('Edit the body').first);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('amount')))
+            .controller!
+            .text,
+        '4242',
+      );
+    });
+
+    testWidgets('the tiles somebody made come after the built-in ones', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await presets.addCustom(name: 'My scenario', body: defaultBody());
+      await pumpHome(tester, presets);
+
+      expect(find.text('My scenario'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('My scenario')).dy,
+        greaterThan(tester.getTopLeft(find.text(demoPresets.last.name)).dy),
+      );
+      // And before Custom, which is the way in to a body nobody has typed
+      // yet rather than one of the tiles.
+      expect(
+        tester.getTopLeft(find.text('My scenario')).dy,
+        lessThan(tester.getTopLeft(find.text('Custom')).dy),
+      );
+    });
+
+    testWidgets('a tile somebody made mints its own body', (tester) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await presets.addCustom(name: 'My scenario', body: '{"amount":777}');
+      final sent = <String>[];
+      await pumpHome(tester, presets, sent: sent);
+
+      await tester.tap(find.text('My scenario'));
+      await tester.pumpAndSettle();
+      await _drainBookkeeping(tester);
+
+      expect(sent.single, '{"amount":777}');
+    });
+
+    testWidgets('its pencil opens an editor that can delete it', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await presets.addCustom(name: 'My scenario', body: defaultBody());
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.byTooltip('Edit the body').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Edit — My scenario'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+      // Nothing shipped it, so there is no default to go back to.
+      expect(find.text('Reset to default'), findsNothing);
+    });
+
+    testWidgets('Custom opens an editor with nothing to save into', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.text('Custom'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Save as new…'), findsOneWidget);
+      expect(find.text('Save'), findsNothing);
+      expect(find.text('Delete'), findsNothing);
+    });
+
+    testWidgets('a tile saved in the editor is on Home when it closes', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.text('Custom'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save as new…'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('newPresetName')),
+        'My scenario',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('saveAsNewConfirm')));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      // Home re-reads when the editor closes. Without that the tile somebody
+      // just made is not there until the app is restarted, which reads as
+      // the save having failed.
+      expect(find.text('My scenario'), findsOneWidget);
+    });
+
+    testWidgets('an edit saved on a built-in shows on Home when it closes', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.byTooltip('Edit the body').first);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('amount')), '4242');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(ValueKey(editedMarkerKey(demoPresets.first.id!))),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('Live never shows what was saved in Test', (tester) async {
+      // The addendum's separation, at the screen. The two halves are two
+      // SharedPreferences keys, so this is not a filter somebody has to
+      // remember to apply -- but the screen is where a wiring mistake would
+      // show, and a sandbox body on a production tile is a body nobody
+      // reviewed against a real merchant.
+      final sandbox = PresetStore(backend: InMemoryPresetBackend());
+      final production = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await sandbox.addCustom(name: 'Sandbox only', body: defaultBody());
+      await sandbox.saveOverride(demoPresets.first.id!, '{"amount":4242}');
+      await production.addCustom(
+        name: 'Production only',
+        body: liveDefaultBody(LiveScenario.smoke),
+      );
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            presetStore: sandbox,
+            livePresetStore: production,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sandbox only'), findsNothing);
+      // And nothing sandbox-shaped at all: no Custom tile, no preset names.
+      expect(find.byKey(const ValueKey('customPreset')), findsNothing);
+      for (final preset in demoPresets) {
+        expect(find.text(preset.name), findsNothing, reason: preset.name);
+      }
+      // What Live does show is its own half, which is the calibration: the
+      // absences above are a separation rather than a screen that drew
+      // nothing. By its full title, because a Live tile quotes what its own
+      // body charges beside the name.
+      expect(
+        find.text(
+          liveTileTitle('Production only', liveDefaultBody(LiveScenario.smoke)),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byTooltip('Edit the body'),
+        findsNWidgets(LiveScenario.values.length + 1),
+      );
+    });
+
+    testWidgets('Reset on an edited Live tile brings the shipped body back', (
+      tester,
+    ) async {
+      // Through Home, not by wiring the editor by hand, because the bug was
+      // in the wiring: Home substituted the override into the preset it
+      // handed the pencil, so the editor reset to the override. It cleared
+      // the store, changed nothing on screen, and did not mark the screen
+      // dirty -- so the next Save wrote the edit straight back.
+      //
+      // Reset is exactly the control a tester reaches for after mistyping an
+      // amount on a production tile.
+      final presets = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await presets.saveOverride(
+        liveScenarioId(LiveScenario.smoke),
+        '{"amount":9999,"currency":"GBP",'
+        '"customer":{"merchant_reference":"paycross_live_smoke"}}',
+      );
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            livePresetStore: presets,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Edit the body').first);
+      await tester.pumpAndSettle();
+      // It opens on what was saved, which is the other half of the wiring.
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('amount')))
+            .controller!
+            .text,
+        '9999',
+      );
+
+      await tester.tap(find.text('Reset to default'));
+      await tester.pumpAndSettle();
+
+      // The shipped amount, on screen, not merely in the store.
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('amount')))
+            .controller!
+            .text,
+        '$liveSmokeMinorUnits',
+      );
+      expect((await presets.read()).overrides, isEmpty);
+
+      // And back on Home the tile is no longer marked edited, and quotes the
+      // figure it ships with.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(
+          ValueKey(editedMarkerKey(liveScenarioId(LiveScenario.smoke))),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.text(
+          liveTileTitle(
+            liveScenarioName(LiveScenario.smoke),
+            liveDefaultBody(LiveScenario.smoke),
+          ),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('editing a Live tile back to its default clears the override', (
+      tester,
+    ) async {
+      // The second half of the same wiring bug. `_save` clears the override
+      // when the body matches the bytes the preset ships with -- and with the
+      // override baked into the preset it was handed, that comparison could
+      // never be true in Live, so putting a tile back to its default filed
+      // an override saying "the default" instead of removing one.
+      final presets = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await presets.saveOverride(
+        liveScenarioId(LiveScenario.smoke),
+        '{"amount":9999,"currency":"GBP",'
+        '"customer":{"merchant_reference":"paycross_live_smoke"}}',
+      );
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            livePresetStore: presets,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Edit the body').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(rawBodySectionLabel));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('rawBody')),
+        liveDefaultBody(LiveScenario.smoke),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+
+      expect((await presets.read()).overrides, isEmpty);
+
+      // And the tile behind it stops calling itself edited.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(
+          ValueKey(editedMarkerKey(liveScenarioId(LiveScenario.smoke))),
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('an edited Live tile still mints what it says', (tester) async {
+      // The calibration for the case above: the reset fix must not have
+      // stopped Home reading the override at all.
+      final presets = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await presets.saveOverride(
+        liveScenarioId(LiveScenario.smoke),
+        '{"amount":9999,"currency":"GBP",'
+        '"customer":{"merchant_reference":"paycross_live_smoke"}}',
+      );
+      String? sent;
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            livePresetStore: presets,
+            liveMintWith: (credentials, body, endpoints) async {
+              sent = body;
+              return const MintedSession(
+                id: 'sess-live',
+                token: 'tok',
+                sentBody: '{}',
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The tile quotes the edit before it is tapped.
+      expect(find.textContaining('£99.99'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+      await tester.pumpAndSettle();
+      // And so does the question it asks.
+      expect(find.textContaining('£99.99'), findsWidgets);
+      await tester.tap(find.byKey(const ValueKey('liveContinue')));
+      await tester.pumpAndSettle();
+
+      expect((jsonDecode(sent!) as Map)['amount'], 9999);
+
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('Test never shows what was saved in Live', (tester) async {
+      // The mirror, so the separation is pinned from both sides rather than
+      // by one screen that happens to read the right field.
+      final sandbox = PresetStore(backend: InMemoryPresetBackend());
+      final production = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await production.addCustom(
+        name: 'Production only',
+        body: liveDefaultBody(LiveScenario.smoke),
+      );
+      await production.saveOverride(
+        liveScenarioId(LiveScenario.smoke),
+        '{"amount":4250,"currency":"GBP"}',
+      );
+      await sandbox.addCustom(name: 'Sandbox only', body: defaultBody());
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomeScreen(
+            store: await _configuredStore(),
+            presetStore: sandbox,
+            livePresetStore: production,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Production only'), findsNothing);
+      expect(find.text('Sandbox only'), findsOneWidget);
+      // The sandbox tile the production store holds an override for is not
+      // marked edited, because that override is not in this half.
+      expect(
+        find.byKey(ValueKey(editedMarkerKey(demoPresets.first.id!))),
+        findsNothing,
+      );
     });
   });
 }

@@ -4,7 +4,6 @@ import 'endpoints.dart';
 import 'environment.dart';
 import 'live.dart';
 import 'minter.dart';
-import 'presets.dart';
 import 'secrets.dart';
 import 'version_panel.dart';
 
@@ -51,14 +50,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _liveName = TextEditingController();
   final _liveEmail = TextEditingController();
 
-  /// Which currency the smoke would charge in, until it is held.
-  ///
-  /// A field rather than a controller because it is picked off a list of
-  /// three rather than typed, so there is no text to validate and no keyboard
-  /// to come back from. It never blocks "Use for this session": there is
-  /// always a currency selected, so unlike the four typed fields it has no
-  /// empty state to explain.
-  String _liveCurrency = liveDefaultCurrency;
+  // There is deliberately no currency field here any more. This screen held
+  // one, picked off a list of three and handed over by "Use for this
+  // session" -- which meant the amount a Live tile charged was set in one
+  // place and the currency in another. Both are fields of the preset body
+  // now, edited together on the editor screen and saved together.
 
   bool _revealSecret = false;
   bool _busy = false;
@@ -355,10 +351,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _googlePay.clear();
     _liveName.clear();
     _liveEmail.clear();
-    // Back to the default rather than kept, for the reason the two above are
-    // cleared: a currency picked for one Live session is not the one the next
-    // session's tile should be quoting before anybody has picked anything.
-    _liveCurrency = liveDefaultCurrency;
     // The reveal goes with them. It is a decision the human took about a
     // sandbox secret, in a room they judged safe for one; inheriting it puts
     // the next environment's secret on screen in plaintext without anybody
@@ -382,7 +374,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (identity == null) return;
     state.useForThisSession(_typed);
     state.useIdentityForThisSession(identity);
-    state.useCurrencyForThisSession(_liveCurrency);
     setState(
       () => _message =
           'Held for this session. Nothing is saved — closing the app, or '
@@ -644,34 +635,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            // Beside the identity because it is held exactly as long: what
-            // the charge costs is part of what "Use for this session" hands
-            // over, and it is forgotten with the rest of it.
-            //
-            // The same three the sandbox editor offers, and no fourth: a
-            // currency the production merchant cannot take is a smoke that
-            // fails for a reason that says nothing about the SDK, and a
-            // dropdown is what stops one being typed.
-            DropdownButtonFormField<String>(
-              key: const ValueKey('liveCurrency'),
-              initialValue: _liveCurrency,
-              decoration: const InputDecoration(
-                labelText: 'Currency',
-                helperText: 'What the production merchant can take.',
-                helperMaxLines: 2,
-                border: OutlineInputBorder(),
-              ),
-              items: [
-                for (final code in currencies)
-                  DropdownMenuItem(value: code, child: Text(code)),
-              ],
-              // The same retraction the four typed fields make, and for the
-              // same reason: "Held for this session" would otherwise go on
-              // describing a currency the screen has stopped showing.
-              onChanged: (chosen) => setState(() {
-                _message = null;
-                if (chosen != null) _liveCurrency = chosen;
-              }),
+            // What the charge costs is not asked for here. The amount and
+            // the currency are fields of the preset body, on the editor
+            // screen behind each Live tile's pencil -- so the figure a
+            // tester agrees to on the confirmation dialog is the figure
+            // they edited, rather than one screen's constant and another
+            // screen's dropdown meeting in the middle.
+            const Text(
+              key: ValueKey('liveAmountNote'),
+              'The amount and the currency belong to each Live tile. Open a '
+              'tile with the pencil to change what it charges, and Save to '
+              'keep it.',
             ),
           ],
           // Test only: there is no Google Pay tile in Live for a wallet id to

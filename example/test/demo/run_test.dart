@@ -537,10 +537,14 @@ void main() {
       lastName: 'Lovelace',
       email: 'ada@example.org',
     );
-    final preset = livePreset(
-      LiveScenario.smoke,
-      identity,
-      liveDefaultCurrency,
+    // Through the splice, which is where a Live body gets its identity now:
+    // the stored preset carries none, and this is the only thing that puts
+    // one in.
+    final preset = Preset(
+      id: liveScenarioId(LiveScenario.smoke),
+      name: liveScenarioName(LiveScenario.smoke),
+      body: withLiveIdentity(liveDefaultBody(LiveScenario.smoke), identity),
+      expected: liveScenarioExpectation(LiveScenario.smoke),
     );
     final backend = InMemoryHistoryBackend();
     // The precondition this case rests on: the body really does contain

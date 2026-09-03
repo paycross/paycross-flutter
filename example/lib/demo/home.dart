@@ -7,6 +7,7 @@ import 'environment.dart';
 import 'history_screen.dart';
 import 'live.dart';
 import 'minter.dart';
+import 'preset_store.dart';
 import 'presets.dart';
 import 'run.dart';
 import 'secrets.dart';
@@ -160,6 +161,13 @@ Future<void> runPreset(
   );
 }
 
+/// The key one built-in tile's "edited" marker carries.
+///
+/// Built from the preset's id rather than its position or its name, for the
+/// reason `browserActionKey` is: reordering the list does not move a key, and
+/// a test that names a tile cannot quietly start asserting about another one.
+String editedMarkerKey(String id) => 'edited:$id';
+
 /// Which credentials a run would use, and where to change them.
 ///
 /// The environment half is a constant, not a reading: this build has no
@@ -252,12 +260,33 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     this.store = const SecretStore(),
+    this.presetStore = const PresetStore(),
+    this.livePresetStore = const PresetStore(environment: DemoEnvironment.live),
     this.mintWith = mintWithCredentials,
     this.liveMintWith = liveMintWithCredentials,
     this.launch = openInBrowser,
   });
 
   final SecretStore store;
+
+  /// The bodies somebody saved, and the tiles they made.
+  ///
+  /// A constructor argument for the same reason [store] is: the default
+  /// reaches `SharedPreferences`, which under `flutter test` has no platform
+  /// behind it -- and a store that cannot be read answers empty, so every
+  /// existing case here draws the tiles it always drew.
+  final PresetStore presetStore;
+
+  /// The same, for production.
+  ///
+  /// A second store rather than a mode argument threaded through the first,
+  /// which is the shape [liveMintWith] already has beside [mintWith] and is
+  /// chosen for the same reason: the sandbox path takes a default and the
+  /// production path is named explicitly, so a screen cannot reach the wrong
+  /// half by forgetting to say which it meant. The two write different
+  /// `SharedPreferences` keys, so a body saved in one mode is not merely
+  /// filtered out of the other -- it is not visible to it.
+  final PresetStore livePresetStore;
 
   /// Handed to a web run so a widget test never opens a browser.
   final LaunchCheckout launch;
@@ -282,6 +311,64 @@ class _HomeScreenState extends State<HomeScreen> {
   /// that was tapped: the second session is just as unwanted when the second
   /// tap lands on a different scenario.
   bool _busy = false;
+
+  /// The bodies somebody saved and the tiles they made, as of the last read.
+  ///
+  /// Empty until the first read comes back, and empty for good on a build
+  /// whose store cannot be reached -- which is the shipped scenarios, drawn
+  /// from `demoPresets` exactly as they always were.
+  SavedPresets _saved = const SavedPresets();
+
+  /// The same, for the production tiles. Its own field rather than one that
+  /// is swapped when the environment changes: the two are read from two keys
+  /// and a single field would be a moment, on every crossing, when Home
+  /// could draw one mode's tiles from the other mode's rows.
+  SavedPresets _savedLive = const SavedPresets();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  /// Reads both halves of the preset store, each into its own field as it
+  /// lands.
+  ///
+  /// Side by side rather than one after the other, and that is not a
+  /// micro-optimisation: these are two keys and two platform calls, and a
+  /// store with nothing behind it does not fail, it never answers. Awaited
+  /// in sequence, one unanswering read would keep the *other* half's tiles
+  /// off the screen for the rest of the process -- which under
+  /// `flutter test` is every case that injects one store and leaves the
+  /// other at its default.
+  ///
+  /// `PresetStore.read` answers empty on a store it cannot parse, so there
+  /// is nothing else here to guard against.
+  Future<void> _load() => Future.wait([
+    widget.presetStore.read().then((read) {
+      if (mounted) setState(() => _saved = read);
+    }),
+    widget.livePresetStore.read().then((read) {
+      if (mounted) setState(() => _savedLive = read);
+    }),
+  ]);
+
+  /// The production tiles, in the order they are worth running: the three
+  /// that ship, then whatever somebody made.
+  ///
+  /// The three defaults are handed on **as they ship**, with the saved body
+  /// carried separately by [SavedPresets.bodyFor], exactly as the sandbox
+  /// branch does. Substituting the override into the preset here is what
+  /// broke "Reset to default" on an edited Live tile: the editor resets to
+  /// `widget.preset.body`, so a preset that already held the override reset
+  /// to the override -- clearing the store, leaving the screen unchanged and
+  /// not even marking it dirty, so the next Save wrote the edit straight
+  /// back.
+  List<Preset> get _liveTiles => [
+    ...liveDefaultPresets,
+    for (final saved in _savedLive.custom)
+      saved.asPreset(expected: liveCustomExpectation),
+  ];
 
   /// Runs [preset] on the surface the pressed control names.
   ///
@@ -336,9 +423,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// all three tiles, which is what makes them dead together rather than one
   /// at a time -- a second production session is just as unwanted when the
   /// second tap lands on a different tile.
-  Future<void> _runLiveScenario(
+  Future<void> _runLive(
     BuildContext context,
-    LiveScenario scenario, {
+    Preset preset,
+    String body, {
     PaymentSurface surface = PaymentSurface.sdkSheet,
   }) async {
     // Belt to the disabled tiles' braces. They are what a tester sees, and
@@ -371,11 +459,28 @@ class _HomeScreenState extends State<HomeScreen> {
     // recorded as Live. Task 02 removed exactly this shape from Settings; it
     // does not belong in the function that spends money.
     final endpoints = state.endpoints;
-    // Sampled at the same instant and for the same reason: the dialog below
-    // quotes this figure and the body minted after it is built from it, so
-    // reading it twice would let a currency changed across the dialog make
-    // the two disagree about what the person authorised.
-    final currency = state.liveCurrency;
+    // [body] is the caller's, read from the store at the moment the control
+    // was pressed and not read again: the dialog below quotes the figure in
+    // it and the mint sends it, so reading the store twice would let a preset
+    // saved across that dialog make the two disagree about what the person
+    // authorised.
+    //
+    // A body whose amount this build cannot read is not asked about, because
+    // the question would have to invent the figure it is asking permission
+    // for. It cannot arise from anything this build saved -- the editor
+    // refuses a body that does not parse -- so this is about a row written
+    // by a newer one.
+    if (liveBodyMoney(body) == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'This tile\'s body has no amount this build can read. Open it '
+            'with the pencil and fix it before running it.',
+          ),
+        ),
+      );
+      return;
+    }
 
     final go = await showDialog<bool>(
       context: context,
@@ -387,9 +492,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // for the web surface about where it happens. Built there rather than
         // here so the dialog and the tile above it cannot end up describing
         // different tiles.
-        content: Text(
-          liveConfirmQuestion(scenario, currency, surface: surface),
-        ),
+        content: Text(liveConfirmQuestion(body, surface: surface)),
         actions: [
           // Cancel is the filled button and holds the focus: the default
           // action of this dialog is to not spend money. A dismissed barrier
@@ -414,10 +517,14 @@ class _HomeScreenState extends State<HomeScreen> {
     if (go != true || !context.mounted) return;
 
     setState(() => _busy = true);
-    final preset = livePreset(scenario, identity, currency);
-    // All three from the one instant above, and the surface from the control
-    // that was pressed. Built once and handed to whichever screen is pushed,
-    // so the two surfaces mint the same production body through the same
+    // The identity goes in here, at the last moment before the mint, and
+    // never into the store. It is a real person's name and email address,
+    // typed in Settings and held for exactly one session; a preset is a row
+    // on the phone that outlives it.
+    final charged = withLiveIdentity(body, identity);
+    // Both from the one instant above, and the surface from the control that
+    // was pressed. Built once and handed to whichever screen is pushed, so
+    // the two surfaces mint the same production body through the same
     // closure -- a Live web run and a Live sheet run differ in where the card
     // is typed and in nothing else.
     Future<MintedSession> mint(String body) =>
@@ -428,13 +535,13 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (_) => switch (surface) {
             PaymentSurface.sdkSheet => RunScreen(
               preset: preset,
-              body: preset.body,
+              body: charged,
               live: true,
               mintSession: mint,
             ),
             PaymentSurface.webCheckout => WebCheckoutRunScreen(
               preset: preset,
-              body: preset.body,
+              body: charged,
               live: true,
               launch: widget.launch,
               mintSession: mint,
@@ -447,20 +554,85 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Opens the Custom editor, and remembers which button opened it.
+  /// Opens the editor on one preset, and re-reads the store when it closes.
+  ///
+  /// One function for all three ways in -- a built-in's pencil, a saved
+  /// tile's pencil and the Custom tile -- so the re-read cannot be forgotten
+  /// on one of them. Without it a tile somebody just made is not on Home
+  /// until the app is restarted, which reads as the save having failed.
   ///
   /// The surface is decided before the body is typed and carried through, so
   /// the editor itself has no opinion about it: one Run button, and it runs
-  /// wherever the tile press said.
-  Future<void> _openEditor(
-    BuildContext context, {
+  /// wherever the press that opened this said.
+  Future<void> _edit(
+    BuildContext context,
+    Preset preset, {
+    required PresetKind kind,
+    String? savedBody,
+    DemoEnvironment environment = DemoEnvironment.test,
     PaymentSurface surface = PaymentSurface.sdkSheet,
-  }) => Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => EditorScreen(
-        preset: customPreset,
-        onRun: (body) => _run(context, customPreset, body, surface: surface),
+  }) async {
+    final live = environment == DemoEnvironment.live;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EditorScreen(
+          preset: preset,
+          kind: kind,
+          savedBody: savedBody,
+          environment: environment,
+          store: live ? widget.livePresetStore : widget.presetStore,
+          // In Live the editor's Run goes through the same three refusals a
+          // tile tap does -- the identity and credential check, the
+          // confirmation dialog, the busy guard. An editor whose Run skipped
+          // them would be the one way to spend money without being asked.
+          onRun: (body) => live
+              ? _runLive(context, preset, body, surface: surface)
+              : _run(context, preset, body, surface: surface),
+        ),
       ),
+    );
+    await _load();
+  }
+
+  /// The word one tile carries to say its body is not the shipped one.
+  ///
+  /// Quiet, and the same shape History's WEB marker is: it is a fact about
+  /// the row rather than a warning, and a run that behaves unexpectedly is a
+  /// great deal easier to read when the tile admits somebody edited it.
+  Widget? _editedMarker(Preset preset, {bool live = false}) {
+    final id = preset.id;
+    final saved = live ? _savedLive : _saved;
+    if (id == null || !saved.isEdited(preset)) return null;
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Text(
+        'edited',
+        key: ValueKey(editedMarkerKey(id)),
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  /// The pencil, which is the same affordance on a shipped tile and on one
+  /// somebody made.
+  Widget _pencil(
+    BuildContext context,
+    Preset preset, {
+    required PresetKind kind,
+    String? savedBody,
+    DemoEnvironment environment = DemoEnvironment.test,
+  }) => IconButton(
+    icon: const Icon(Icons.edit),
+    tooltip: 'Edit the body',
+    // The pencil is the edit affordance, so its Run is the ordinary run:
+    // the sheet. Custom's browser button below is the way to an edited body
+    // in the browser, and it says so on the button.
+    onPressed: () => _edit(
+      context,
+      preset,
+      kind: kind,
+      savedBody: savedBody,
+      environment: environment,
     ),
   );
 
@@ -491,6 +663,7 @@ class _HomeScreenState extends State<HomeScreen> {
     Color? onBrowser,
     Widget? leading,
     Widget? trailing,
+    Widget? marker,
   }) => Card(
     key: cardKey,
     color: color,
@@ -499,7 +672,16 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         ListTile(
           leading: leading,
-          title: Text(title),
+          // A Row only when there is something beside the title, so the
+          // twelve tiles that carry no marker are the widget they were.
+          title: marker == null
+              ? Text(title)
+              : Row(
+                  children: [
+                    Expanded(child: Text(title)),
+                    marker,
+                  ],
+                ),
           subtitle: Text(subtitle),
           isThreeLine: true,
           trailing: trailing,
@@ -521,15 +703,68 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
     ),
   );
+
+  /// What one Live tile will actually mint: the saved body if somebody saved
+  /// one, and the bytes it ships with otherwise.
+  ///
+  /// Named once and read by the title, both actions and the pencil, so a tile
+  /// cannot quote one body and mint another.
+  String _liveBody(Preset preset) => _savedLive.bodyFor(preset);
+
+  /// The widget key one Live tile carries.
+  ///
+  /// The three that ship keep the keys they shipped with, so every case
+  /// written against `liveSmokeTile` is still about the tile it was written
+  /// for. A tile somebody made is keyed by its own id, which cannot collide
+  /// with those three.
+  String _liveTileKey(Preset preset) {
+    for (final scenario in LiveScenario.values) {
+      if (preset.id == liveScenarioId(scenario)) return liveTileKey(scenario);
+    }
+    return preset.id ?? preset.name;
+  }
+
+  /// What the editor may save this Live tile into.
+  ///
+  /// The three that ship take an override; anything else in that list is a
+  /// tile somebody made, which is written back in place and can be deleted.
+  PresetKind _liveKind(Preset preset) =>
+      liveDefaultPresets.any((p) => p.id == preset.id)
+      ? PresetKind.builtIn
+      : PresetKind.custom;
+
+  /// One tile somebody made.
+  ///
+  /// Built through the same [_tile] the shipped scenarios use, so it carries
+  /// the browser button and the busy guard without either being pasted here.
+  /// Its body is the saved one -- there is no other -- so it needs no
+  /// `savedBody` and has no default to be marked as edited against.
+  Widget _customTile(BuildContext context, CustomPreset saved) {
+    final preset = saved.asPreset();
+    return _tile(
+      context,
+      cardKey: ValueKey('customTile:${saved.id}'),
+      // The id, not the name: two tiles somebody named the same thing would
+      // otherwise carry the same key as each other and as a built-in.
+      actionKey: saved.id,
+      leading: const Icon(Icons.bookmark_outline),
+      title: preset.name,
+      subtitle: preset.expected,
+      trailing: _pencil(context, preset, kind: PresetKind.custom),
+      onTap: () => _run(context, preset, preset.body),
+      onOpenInBrowser: () => _run(
+        context,
+        preset,
+        preset.body,
+        surface: PaymentSurface.webCheckout,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = LiveModeScope.maybeOf(context);
     final live = state?.isLive ?? false;
-    // What the two Live copy sites below quote. The tile is drawn before
-    // anything has been held for the session, so this is the default until
-    // "Use for this session" has been pressed -- and there is no scope at
-    // all in the automation build, where it is never read.
-    final currency = state?.liveCurrency ?? liveDefaultCurrency;
     return Scaffold(
       appBar: AppBar(
         title: const Text('PayCross Demo'),
@@ -574,11 +809,11 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Text(
               key: const ValueKey('homeEnvironment'),
               live
-                  ? 'Live — the PayCross production environment. Each of the '
-                        'three tiles below charges a real card '
-                        '${liveSmokeAmountLabel(currency)}. Refund every one '
-                        'you run in the back office as soon as it settles; '
-                        'this app cannot.'
+                  ? 'Live — the PayCross production environment. Every tile '
+                        'below charges a real card what its own title says. '
+                        'Refund every one you run in the back office as soon '
+                        'as it settles; this app cannot. The pencil edits '
+                        'what a tile charges.'
                   : 'Test — this build talks to the PayCross TEST sandbox. '
                         'Switch to Live in Settings to reach production; it '
                         'starts in Test on every launch.',
@@ -591,25 +826,44 @@ class _HomeScreenState extends State<HomeScreen> {
           // order is the order they are worth running: the smoke first, then
           // the pair, whose second half has nothing to offer until the first
           // half has settled.
+          // The three that ship and then whatever somebody made, drawn
+          // from one list by one builder. A production tile pasted beside
+          // them is a tile that could be missing a rung of the three
+          // refusals every one of these climbs.
           if (live)
-            for (final scenario in LiveScenario.values)
+            for (final preset in _liveTiles)
               _tile(
                 context,
-                cardKey: ValueKey(liveTileKey(scenario)),
-                actionKey: liveTileKey(scenario),
+                cardKey: ValueKey(_liveTileKey(preset)),
+                actionKey: _liveTileKey(preset),
                 color: Theme.of(context).colorScheme.errorContainer,
                 onBrowser: Theme.of(context).colorScheme.onErrorContainer,
                 leading: const Icon(Icons.credit_card),
-                title: liveScenarioName(scenario, currency),
-                subtitle: liveScenarioExpectation(scenario, currency),
+                // The figure comes off the body this tile will mint, so an
+                // edited tile quotes its own amount rather than a constant
+                // somebody changed out from under it.
+                title: liveTileTitle(preset.name, _liveBody(preset)),
+                marker: _editedMarker(preset, live: true),
+                subtitle: preset.expected,
+                trailing: _pencil(
+                  context,
+                  preset,
+                  kind: _liveKind(preset),
+                  // The override travels beside the shipped preset rather
+                  // than inside it, so "Reset to default" has the shipped
+                  // bytes to go back to.
+                  savedBody: _savedLive.overrides[preset.id],
+                  environment: DemoEnvironment.live,
+                ),
                 // Every tile goes dead while any run is being set up, not
                 // just the one that was tapped, and both of a tile's actions
                 // go together: a second production session is just as
                 // unwanted when the second press lands on the other button.
-                onTap: () => _runLiveScenario(context, scenario),
-                onOpenInBrowser: () => _runLiveScenario(
+                onTap: () => _runLive(context, preset, _liveBody(preset)),
+                onOpenInBrowser: () => _runLive(
                   context,
-                  scenario,
+                  preset,
+                  _liveBody(preset),
                   surface: PaymentSurface.webCheckout,
                 ),
               ),
@@ -619,35 +873,36 @@ class _HomeScreenState extends State<HomeScreen> {
                 context,
                 actionKey: preset.name,
                 title: preset.name,
+                marker: _editedMarker(preset),
                 subtitle: [
                   preset.expected,
                   if (preset.cardHint != null) 'Card: ${preset.cardHint}',
                   if (preset.hint != null) preset.hint!,
                 ].join('\n'),
-                trailing: IconButton(
-                  icon: const Icon(Icons.edit),
-                  tooltip: 'Edit the body',
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => EditorScreen(
-                        preset: preset,
-                        // The pencil is the edit affordance, so its Run is
-                        // the ordinary run: the sheet. Custom's browser
-                        // button below is the way to an edited body in the
-                        // browser, and it says so on the button.
-                        onRun: (body) => _run(context, preset, body),
-                      ),
-                    ),
-                  ),
+                trailing: _pencil(
+                  context,
+                  preset,
+                  kind: PresetKind.builtIn,
+                  savedBody: _saved.overrides[preset.id],
                 ),
-                onTap: () => _run(context, preset, preset.body),
+                // The saved body if somebody saved one, and the shipped bytes
+                // otherwise. Both buttons take it from the same place, so an
+                // edited scenario cannot run edited in the sheet and shipped
+                // in the browser.
+                onTap: () => _run(context, preset, _saved.bodyFor(preset)),
                 onOpenInBrowser: () => _run(
                   context,
                   preset,
-                  preset.body,
+                  _saved.bodyFor(preset),
                   surface: PaymentSurface.webCheckout,
                 ),
               ),
+          // The tiles somebody made, after the shipped ones and before
+          // Custom: the built-ins are what the guide names and the matrix
+          // runs, and Custom is the way in to a body nobody has typed yet
+          // rather than one of the scenarios.
+          if (!live)
+            for (final saved in _saved.custom) _customTile(context, saved),
           // The way in for a scenario nobody wrote a preset for. It opens the
           // same editor the pencils do, on the ordinary body. Both of its
           // actions go through that editor, because a body nobody has typed
@@ -661,10 +916,17 @@ class _HomeScreenState extends State<HomeScreen> {
               actionKey: 'customPreset',
               leading: const Icon(Icons.tune),
               title: 'Custom',
-              subtitle: 'Edit a session body by hand and run it.',
-              onTap: () => _openEditor(context),
-              onOpenInBrowser: () =>
-                  _openEditor(context, surface: PaymentSurface.webCheckout),
+              subtitle:
+                  'Edit a session body by hand and run it. "Save as new…" '
+                  'keeps it as a tile of its own.',
+              onTap: () =>
+                  _edit(context, customPreset, kind: PresetKind.scratch),
+              onOpenInBrowser: () => _edit(
+                context,
+                customPreset,
+                kind: PresetKind.scratch,
+                surface: PaymentSurface.webCheckout,
+              ),
             ),
         ],
       ),

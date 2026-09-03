@@ -21,12 +21,20 @@ void main() {
     expect(formatMoney(5, 'GBP'), '£0.05');
   });
 
-  test('the Live tile label is the same formatter at the smoke amount', () {
+  test('the Live tile label is this formatter, over the tile body', () {
+    // The figure a Live tile quotes is read off the body it will mint, not
+    // off a constant -- that is what lets the amount be edited and still be
+    // quoted correctly. It is still this one formatter underneath, so the
+    // figure agreed to and the figure reported are written by one hand.
     for (final currency in ['EUR', 'USD', 'GBP', 'CHF']) {
       expect(
-        liveSmokeAmountLabel(currency),
-        formatMoney(liveSmokeMinorUnits, currency),
+        liveBodyAmountLabel('{"amount":4250,"currency":"$currency"}'),
+        formatMoney(4250, currency),
       );
     }
+    expect(
+      liveBodyAmountLabel(liveDefaultBody(LiveScenario.smoke)),
+      formatMoney(liveSmokeMinorUnits, liveDefaultCurrency),
+    );
   });
 }

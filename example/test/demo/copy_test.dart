@@ -52,6 +52,24 @@ const List<String> retiredAmountMachinery = <String>[
   'four edits',
 ];
 
+/// Claims Live mode made while its amount was a constant and its currency
+/// was a per-session dropdown, and cannot make now that both are fields of
+/// each tile's saveable body.
+///
+/// A fifth list, and a fifth kind of wrong: a tester who reads that the
+/// amount is fixed will not go looking for the pencil that changes it, and
+/// one sent to Settings for a currency dropdown will not find one. The
+/// function name is in here for the reason `liveSmokeIdentity` was -- a
+/// document pointing at a symbol that no longer exists sends a maintainer
+/// to nothing.
+const List<String> retiredFixedAmountClaims = <String>[
+  'The amount is fixed',
+  'no editor anywhere near it',
+  'liveSmokeAmountLabel',
+  'pick the currency',
+  'currency you picked',
+];
+
 /// Claims Live mode made while it offered a single tile, and cannot make
 /// now that it offers three.
 ///
@@ -178,15 +196,15 @@ void main() {
     // sentence-initial capital rather than trying to match it.
     expect(readme, contains('a first and a last name'));
     expect(readme, contains('about the identity is saved'));
-    // The currency, which is chosen rather than typed and is the reason a
-    // smoke can run on a merchant that only takes one of the three. Pinned
-    // as a sentence for the reason every pin above is: the bare word turns
-    // up in the sandbox editor's paragraph as well.
-    expect(readme, contains('The currency is picked here too'));
-    // And in the steps a tester follows, where leaving it out is how
-    // somebody ends up charging euros on a pounds-only merchant. Whole on
-    // its line in the README, because `contains` sees the hand-wrapping.
-    expect(readme, contains('pick the currency'));
+    // The currency, and where it went. It was picked on this screen once
+    // per session, so a tester who has done this before will come back
+    // looking for the dropdown -- and the sentence that tells them it is a
+    // field of the tile now is the one thing that stops them concluding the
+    // feature broke. Pinned as a sentence for the reason every pin above is:
+    // the bare word turns up in the sandbox editor's paragraph as well.
+    expect(readme, contains('The currency is not picked here'));
+    // And the rule that makes a saved Live body safe to keep at all.
+    expect(readme, contains('The identity never goes into a preset'));
   });
 
   test('nothing still says Live offers a single tile', () {
@@ -280,7 +298,40 @@ void main() {
     // The one source, named where a maintainer will look for it. Without
     // this the case above is satisfied by a README that says nothing about
     // the amount at all.
-    expect(readme, contains('liveSmokeAmountLabel'));
+    expect(readme, contains('liveBodyAmountLabel'));
+    // The sweep reached something, so an empty offender list means the files
+    // were read rather than that none were found.
+    expect(scanned, greaterThan(10));
+  });
+
+  test('nothing says a Live amount is fixed, or asks for a currency', () {
+    // The same two halves as every case above: the guide, and every screen.
+    // A tester who reads that the figure cannot be changed will not look for
+    // the pencil, and one told to pick a currency in Settings will look for
+    // a dropdown that is not there.
+    final readme = File('README.md').readAsStringSync();
+    final offenders = <String>[];
+    var scanned = 0;
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      scanned++;
+      final source = entity.readAsStringSync();
+      if (retiredFixedAmountClaims.any(source.contains)) {
+        offenders.add(entity.path);
+      }
+    }
+
+    expect(offenders, isEmpty);
+    for (final gone in retiredFixedAmountClaims) {
+      expect(readme.contains(gone), isFalse, reason: gone);
+    }
+    // The other half: something true replaced it. Sentences rather than
+    // words, for the reason every pin in this file is a sentence.
+    expect(readme, contains('\n## Saving a preset\n'));
+    expect(readme, contains('Changing an amount is an edit on the phone'));
+    // The separation, which is the rule a tester most needs to know about
+    // before they save anything in Live.
+    expect(readme, contains('neither mode ever offers a body'));
     // The sweep reached something, so an empty offender list means the files
     // were read rather than that none were found.
     expect(scanned, greaterThan(10));
