@@ -192,6 +192,23 @@ String liveBody({
   billing: null,
 );
 
+/// The customer object of a decoded body, building one if there is not one.
+///
+/// For writes. Two places need it and both needed it for the same reason: a
+/// body with no `customer` is one the create schema answers 400 to, so a
+/// write that quietly did nothing would reproduce the failure PR #30 was
+/// about. The editor's fields write through this so typing into a body whose
+/// customer block was deleted by hand lands somewhere, and
+/// `withLiveIdentity` writes through it so the identity splice cannot be the
+/// thing that silently does nothing.
+Map<String, Object?> customerFor(Map<String, Object?> body) {
+  final existing = body['customer'];
+  if (existing is Map<String, Object?>) return existing;
+  final made = <String, Object?>{};
+  body['customer'] = made;
+  return made;
+}
+
 /// A named scenario: what to mint, what should happen, and which card to type.
 class Preset {
   const Preset({

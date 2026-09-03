@@ -2029,6 +2029,134 @@ void main() {
       );
     });
 
+    testWidgets('Reset on an edited Live tile brings the shipped body back', (
+      tester,
+    ) async {
+      // Through Home, not by wiring the editor by hand, because the bug was
+      // in the wiring: Home substituted the override into the preset it
+      // handed the pencil, so the editor reset to the override. It cleared
+      // the store, changed nothing on screen, and did not mark the screen
+      // dirty -- so the next Save wrote the edit straight back.
+      //
+      // Reset is exactly the control a tester reaches for after mistyping an
+      // amount on a production tile.
+      final presets = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await presets.saveOverride(
+        liveScenarioId(LiveScenario.smoke),
+        '{"amount":9999,"currency":"GBP",'
+        '"customer":{"merchant_reference":"paycross_live_smoke"}}',
+      );
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            livePresetStore: presets,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Edit the body').first);
+      await tester.pumpAndSettle();
+      // It opens on what was saved, which is the other half of the wiring.
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('amount')))
+            .controller!
+            .text,
+        '9999',
+      );
+
+      await tester.tap(find.text('Reset to default'));
+      await tester.pumpAndSettle();
+
+      // The shipped amount, on screen, not merely in the store.
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('amount')))
+            .controller!
+            .text,
+        '$liveSmokeMinorUnits',
+      );
+      expect((await presets.read()).overrides, isEmpty);
+
+      // And back on Home the tile is no longer marked edited, and quotes the
+      // figure it ships with.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(
+          ValueKey(editedMarkerKey(liveScenarioId(LiveScenario.smoke))),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.text(
+          liveTileTitle(
+            liveScenarioName(LiveScenario.smoke),
+            liveDefaultBody(LiveScenario.smoke),
+          ),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('an edited Live tile still mints what it says', (tester) async {
+      // The calibration for the case above: the reset fix must not have
+      // stopped Home reading the override at all.
+      final presets = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await presets.saveOverride(
+        liveScenarioId(LiveScenario.smoke),
+        '{"amount":9999,"currency":"GBP",'
+        '"customer":{"merchant_reference":"paycross_live_smoke"}}',
+      );
+      String? sent;
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            livePresetStore: presets,
+            liveMintWith: (credentials, body, endpoints) async {
+              sent = body;
+              return const MintedSession(
+                id: 'sess-live',
+                token: 'tok',
+                sentBody: '{}',
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The tile quotes the edit before it is tapped.
+      expect(find.textContaining('£99.99'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('liveSmokeTile')));
+      await tester.pumpAndSettle();
+      // And so does the question it asks.
+      expect(find.textContaining('£99.99'), findsWidgets);
+      await tester.tap(find.byKey(const ValueKey('liveContinue')));
+      await tester.pumpAndSettle();
+
+      expect((jsonDecode(sent!) as Map)['amount'], 9999);
+
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+    });
+
     testWidgets('Test never shows what was saved in Live', (tester) async {
       // The mirror, so the separation is pinned from both sides rather than
       // by one screen that happens to read the right field.

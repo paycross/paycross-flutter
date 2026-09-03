@@ -80,21 +80,6 @@ Map<String, Object?>? _customerOf(Map<String, Object?> body) {
   return customer is Map<String, Object?> ? customer : null;
 }
 
-/// The customer object of a decoded body, building one if a hand edit
-/// removed it.
-///
-/// For writes only, which is why it is separate from [_customerOf]. A field
-/// that typed into nothing was the silent failure this whole screen is
-/// designed against -- and a body with no customer is one the create schema
-/// answers 400 to, so building it is the repair as much as the fix.
-Map<String, Object?> _customerFor(Map<String, Object?> body) {
-  final existing = body['customer'];
-  if (existing is Map<String, Object?>) return existing;
-  final made = <String, Object?>{};
-  body['customer'] = made;
-  return made;
-}
-
 /// One string field of the customer object, as text.
 String _customerText(Map<String, Object?> body, String field) {
   final value = _customerOf(body)?[field];
@@ -238,7 +223,7 @@ class _EditorScreenState extends State<EditorScreen> {
         name: 'customerEmail',
         label: 'Customer email',
         read: (body) => _customerText(body, 'email'),
-        write: (body, typed) => _customerFor(body)['email'] = typed.trim(),
+        write: (body, typed) => customerFor(body)['email'] = typed.trim(),
         problemWith: (typed) => typed.trim().isEmpty
             ? 'The create schema requires an email address.'
             : null,
@@ -247,7 +232,7 @@ class _EditorScreenState extends State<EditorScreen> {
         name: 'customerFirst',
         label: 'Customer first name',
         read: (body) => _customerText(body, 'first_name'),
-        write: (body, typed) => _customerFor(body)['first_name'] = typed.trim(),
+        write: (body, typed) => customerFor(body)['first_name'] = typed.trim(),
         problemWith: (typed) => typed.trim().isEmpty
             ? 'The create schema requires a first name.'
             : null,
@@ -256,7 +241,7 @@ class _EditorScreenState extends State<EditorScreen> {
         name: 'customerLast',
         label: 'Customer last name',
         read: (body) => _customerText(body, 'last_name'),
-        write: (body, typed) => _customerFor(body)['last_name'] = typed.trim(),
+        write: (body, typed) => customerFor(body)['last_name'] = typed.trim(),
         problemWith: (typed) => typed.trim().isEmpty
             ? 'The create schema requires a last name.'
             : null,
@@ -272,7 +257,7 @@ class _EditorScreenState extends State<EditorScreen> {
       write: (body, typed) =>
           // Randomise this and the card stored by one run can never be found
           // by the next.
-          _customerFor(body)['merchant_reference'] = typed.trim(),
+          customerFor(body)['merchant_reference'] = typed.trim(),
       problemWith: (typed) => typed.trim().isEmpty
           ? 'A saved card is found by this, so it cannot be empty.'
           : null,
@@ -796,7 +781,7 @@ class _EditorScreenState extends State<EditorScreen> {
               ),
               value: _hasOption(sandboxAddressEntry, _customerOf),
               onChanged: (on) =>
-                  _setOption(sandboxAddressEntry, _customerFor, on),
+                  _setOption(sandboxAddressEntry, customerFor, on),
             ),
           const SizedBox(height: 8),
           Card(

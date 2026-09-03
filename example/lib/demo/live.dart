@@ -170,8 +170,15 @@ const String liveSmokeCustomerReference = 'paycross_live_smoke';
 /// [liveExtraOption] is. What any of them actually charges after somebody
 /// has edited and saved it is whatever that body says.
 enum LiveScenario {
-  /// A plain 1.00 sale. What Live mode was when it had one tile, and its
-  /// body is unchanged to the byte.
+  /// A plain 1.00 sale. What Live mode was when it had one tile.
+  ///
+  /// Its body is no longer the bytes that tile shipped, and both halves of
+  /// it changed: the stored body carries no identity, because a preset row
+  /// outlives the session a name was typed for, and the minted body is
+  /// re-encoded by [withLiveIdentity] so `merchant_reference` comes before
+  /// the three identity fields rather than after them. Same keys and values,
+  /// which the create schema reads, in an order it does not. Both shapes are
+  /// pinned to the byte in `live_test.dart`.
   smoke,
 
   /// The same sale, asking the sheet to offer "Save card for future use".
@@ -431,13 +438,12 @@ final List<Preset> liveDefaultPresets = <Preset>[
 /// care about and a person reading a bug report does not either.
 String withLiveIdentity(String body, LiveIdentity identity) {
   final decoded = _decode(body) ?? <String, Object?>{};
-  final existing = decoded['customer'];
-  final customer = existing is Map<String, Object?>
-      ? existing
-      : <String, Object?>{};
+  // The same helper the editor's fields write through, for the same reason:
+  // a splice that quietly did nothing would reproduce the 400 of PR #30 on
+  // the one merchant nobody can retry cheaply.
+  final customer = customerFor(decoded);
   customer['email'] = identity.email;
   customer['first_name'] = identity.firstName;
   customer['last_name'] = identity.lastName;
-  decoded['customer'] = customer;
   return const JsonEncoder.withIndent('  ').convert(decoded);
 }

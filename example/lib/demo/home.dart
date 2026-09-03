@@ -355,14 +355,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// The production tiles, in the order they are worth running: the three
   /// that ship, then whatever somebody made.
+  ///
+  /// The three defaults are handed on **as they ship**, with the saved body
+  /// carried separately by [SavedPresets.bodyFor], exactly as the sandbox
+  /// branch does. Substituting the override into the preset here is what
+  /// broke "Reset to default" on an edited Live tile: the editor resets to
+  /// `widget.preset.body`, so a preset that already held the override reset
+  /// to the override -- clearing the store, leaving the screen unchanged and
+  /// not even marking it dirty, so the next Save wrote the edit straight
+  /// back.
   List<Preset> get _liveTiles => [
-    for (final preset in liveDefaultPresets)
-      Preset(
-        id: preset.id,
-        name: preset.name,
-        body: _savedLive.bodyFor(preset),
-        expected: preset.expected,
-      ),
+    ...liveDefaultPresets,
     for (final saved in _savedLive.custom)
       saved.asPreset(expected: liveCustomExpectation),
   ];
@@ -422,7 +425,8 @@ class _HomeScreenState extends State<HomeScreen> {
   /// second tap lands on a different tile.
   Future<void> _runLive(
     BuildContext context,
-    Preset preset, {
+    Preset preset,
+    String body, {
     PaymentSurface surface = PaymentSurface.sdkSheet,
   }) async {
     // Belt to the disabled tiles' braces. They are what a tester sees, and
@@ -455,11 +459,12 @@ class _HomeScreenState extends State<HomeScreen> {
     // recorded as Live. Task 02 removed exactly this shape from Settings; it
     // does not belong in the function that spends money.
     final endpoints = state.endpoints;
-    // The body, sampled at the same instant and for the same reason: the
-    // dialog below quotes the figure in it and the mint sends it, so reading
-    // the store twice would let a preset saved across that dialog make the
-    // two disagree about what the person authorised.
-    final body = preset.body;
+    // [body] is the caller's, read from the store at the moment the control
+    // was pressed and not read again: the dialog below quotes the figure in
+    // it and the mint sends it, so reading the store twice would let a preset
+    // saved across that dialog make the two disagree about what the person
+    // authorised.
+    //
     // A body whose amount this build cannot read is not asked about, because
     // the question would have to invent the figure it is asking permission
     // for. It cannot arise from anything this build saved -- the editor
@@ -581,16 +586,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // confirmation dialog, the busy guard. An editor whose Run skipped
           // them would be the one way to spend money without being asked.
           onRun: (body) => live
-              ? _runLive(
-                  context,
-                  Preset(
-                    id: preset.id,
-                    name: preset.name,
-                    body: body,
-                    expected: preset.expected,
-                  ),
-                  surface: surface,
-                )
+              ? _runLive(context, preset, body, surface: surface)
               : _run(context, preset, body, surface: surface),
         ),
       ),
@@ -707,6 +703,13 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
     ),
   );
+
+  /// What one Live tile will actually mint: the saved body if somebody saved
+  /// one, and the bytes it ships with otherwise.
+  ///
+  /// Named once and read by the title, both actions and the pencil, so a tile
+  /// cannot quote one body and mint another.
+  String _liveBody(Preset preset) => _savedLive.bodyFor(preset);
 
   /// The widget key one Live tile carries.
   ///
@@ -839,23 +842,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 // The figure comes off the body this tile will mint, so an
                 // edited tile quotes its own amount rather than a constant
                 // somebody changed out from under it.
-                title: liveTileTitle(preset.name, preset.body),
+                title: liveTileTitle(preset.name, _liveBody(preset)),
                 marker: _editedMarker(preset, live: true),
                 subtitle: preset.expected,
                 trailing: _pencil(
                   context,
                   preset,
                   kind: _liveKind(preset),
+                  // The override travels beside the shipped preset rather
+                  // than inside it, so "Reset to default" has the shipped
+                  // bytes to go back to.
+                  savedBody: _savedLive.overrides[preset.id],
                   environment: DemoEnvironment.live,
                 ),
                 // Every tile goes dead while any run is being set up, not
                 // just the one that was tapped, and both of a tile's actions
                 // go together: a second production session is just as
                 // unwanted when the second press lands on the other button.
-                onTap: () => _runLive(context, preset),
+                onTap: () => _runLive(context, preset, _liveBody(preset)),
                 onOpenInBrowser: () => _runLive(
                   context,
                   preset,
+                  _liveBody(preset),
                   surface: PaymentSurface.webCheckout,
                 ),
               ),
