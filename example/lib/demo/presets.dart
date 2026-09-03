@@ -55,6 +55,33 @@ const String _sandboxBilling = '''
         "country": "US"
       }''';
 
+/// The three options the editor's switches write, as values rather than as
+/// the text the presets splice in.
+///
+/// Decoded from the very strings above rather than typed a second time. The
+/// editor's switch and the preset bodies then cannot disagree about the shape
+/// of one feature -- which is the same rule that keeps `live.dart` reading
+/// [saveCardConfigOption] instead of spelling it again.
+///
+/// Functions rather than constants because each answer is a fresh map: the
+/// editor decodes a body, splices one of these into it and encodes it back,
+/// and a shared map would carry one screen's edit into the next body.
+Map<String, Object?> saveCardConfigEntry() =>
+    jsonDecode('{$saveCardConfigOption}') as Map<String, Object?>;
+
+/// The `saved_cards` key, for the same reason.
+Map<String, Object?> savedCardsEntry() =>
+    jsonDecode('{$savedCardsOption}') as Map<String, Object?>;
+
+/// The fake billing address, as it sits under `customer`.
+///
+/// The one option of the three that is not top level: [_body] nests it in
+/// `customer.address`, so this is the whole `address` key rather than the
+/// `billing` key inside it.
+Map<String, Object?> sandboxAddressEntry() => <String, Object?>{
+  'address': jsonDecode('{$_sandboxBilling}'),
+};
+
 String _body({
   required int amount,
   // The sandbox default, and spelled here rather than taken from

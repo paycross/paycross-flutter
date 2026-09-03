@@ -519,54 +519,50 @@ void main() {
       expect(sent, isEmpty);
     });
 
-    test(
-      'a body that never arrives is cut off by the same deadline',
-      () async {
-        // send() completes when the headers land; the body is read after it.
-        // A deadline over only the first leaves a phone that lost signal
-        // mid-body waiting on mint() for as long as the socket stays open.
-        final minter = Minter(
-          credentials: _credentials,
-          now: () => clock,
-          newIdempotencyKey: () => 'idem',
-          timeout: const Duration(milliseconds: 50),
-          client: MockClient.streaming((request, bodyStream) async {
-            if (request.url.path.endsWith('/token')) {
-              return http.StreamedResponse(
-                Stream.value(
-                  utf8.encode(
-                    jsonEncode({
-                      'access_token': jwtExpiring(
-                        clock.add(const Duration(hours: 1)),
-                      ),
-                      'expires_in': 3600,
-                    }),
-                  ),
-                ),
-                200,
-              );
-            }
-            // Headers, and then nothing.
+    test('a body that never arrives is cut off by the same deadline', () async {
+      // send() completes when the headers land; the body is read after it.
+      // A deadline over only the first leaves a phone that lost signal
+      // mid-body waiting on mint() for as long as the socket stays open.
+      final minter = Minter(
+        credentials: _credentials,
+        now: () => clock,
+        newIdempotencyKey: () => 'idem',
+        timeout: const Duration(milliseconds: 50),
+        client: MockClient.streaming((request, bodyStream) async {
+          if (request.url.path.endsWith('/token')) {
             return http.StreamedResponse(
-              StreamController<List<int>>().stream,
+              Stream.value(
+                utf8.encode(
+                  jsonEncode({
+                    'access_token': jwtExpiring(
+                      clock.add(const Duration(hours: 1)),
+                    ),
+                    'expires_in': 3600,
+                  }),
+                ),
+              ),
               200,
             );
-          }),
-        );
+          }
+          // Headers, and then nothing.
+          return http.StreamedResponse(
+            StreamController<List<int>>().stream,
+            200,
+          );
+        }),
+      );
 
-        await expectLater(
-          minter.mint('{"amount":1000}'),
-          throwsA(
-            isA<MinterError>().having(
-              (e) => e.message,
-              'message',
-              contains('TimeoutException'),
-            ),
+      await expectLater(
+        minter.mint('{"amount":1000}'),
+        throwsA(
+          isA<MinterError>().having(
+            (e) => e.message,
+            'message',
+            contains('TimeoutException'),
           ),
-        );
-      },
-      timeout: const Timeout(Duration(seconds: 5)),
-    );
+        ),
+      );
+    }, timeout: const Timeout(Duration(seconds: 5)));
 
     test('a mint that returns no session_token says so', () async {
       final minter = minterOver(
