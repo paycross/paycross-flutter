@@ -1,3 +1,17 @@
+## 0.2.1
+
+* Apple Pay and Google Pay are now offered on account-funding sessions, not
+  only on payment sessions. The wallet buttons appear under the same rules as
+  before — session loaded, session allows wallets, an identifier configured,
+  a device that can pay — the change is that an account-funding session can
+  now satisfy "session allows wallets" instead of always failing it. The
+  plugin has no session-type logic of its own; this follows entirely from the
+  native SDK bump below.
+* Requires the native iOS SDK at PayCross 0.2.1, up from 0.2.0, and the native
+  Android SDK at paycross-android 0.3.4, up from 0.3.3.
+* An explicit `wallets.apple_pay: false` or `wallets.google_pay: false` on the
+  session still hides the corresponding button, on either session type.
+
 ## 0.2.0
 
 * Apple Pay on iOS. Pass `applePayMerchantId` to `PayCross.configure` and the
