@@ -100,7 +100,7 @@ void main() {
       backend: _seeded([
         _entry(
           session: 'sess-live',
-          preset: liveScenarioName(LiveScenario.smoke, liveDefaultCurrency),
+          preset: liveScenarioName(LiveScenario.smoke),
           live: true,
         ),
         _entry(session: 'sess-9', preset: '3DS challenge → approve'),
@@ -112,10 +112,7 @@ void main() {
 
     // Both rows are on screen, so the Test row being unmarked is a fact about
     // the row rather than about a row that never rendered.
-    expect(
-      find.text(liveScenarioName(LiveScenario.smoke, liveDefaultCurrency)),
-      findsOneWidget,
-    );
+    expect(find.text(liveScenarioName(LiveScenario.smoke)), findsOneWidget);
     expect(find.text('3DS challenge → approve'), findsOneWidget);
     // One marking for one live row, whatever the rest of the list holds.
     expect(find.byKey(const ValueKey('historyLive')), findsOneWidget);

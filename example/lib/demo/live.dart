@@ -1,43 +1,68 @@
+import 'dart:convert';
+
 import 'money.dart';
 import 'presets.dart';
 import 'surface.dart';
 
-/// The amount every Live tile charges, in minor units. One of whatever
-/// currency the tester picked.
+/// What the three default Live bodies charge, in minor units.
 ///
-/// Hardcoded, with no editor anywhere near it. A Live amount field is a
-/// Live typo, and the difference between one euro and a hundred is one
-/// keystroke.
+/// A default rather than a fixture. It was hardcoded with no editor near it,
+/// on the reasoning that a Live amount field is a Live typo -- and the
+/// workaround that grew out of it was a per-session currency picker in
+/// Settings, which the owner called lazy. The amount and the currency are
+/// now fields of the preset body like every other field, edited on the same
+/// screen and saved in the same store.
 ///
-/// **Changing it is one edit.** It was once several: the charge body and the
-/// confirmation dialog derived from this constant, but the copy around them
-/// spelled the figure out by hand, so changing one meant the app quoted two
-/// different numbers to the person about to spend the money. Every site now
-/// renders [liveSmokeAmountLabel], which is the only place the figure is
-/// written for a human to read -- and three tiles would otherwise have
-/// tripled the number of places to get it wrong.
+/// What replaced the old protection is that nothing quotes a constant any
+/// more. Every figure a human reads before spending -- the tile's title, the
+/// confirmation dialog -- is rendered from the body that is about to be
+/// minted, by [liveBodyAmountLabel]. An edited amount cannot be quoted
+/// wrongly, because there is no second place holding the old one.
 const int liveSmokeMinorUnits = 100;
 
-/// The currency every Live tile charges in until the tester picks another.
+/// The currency the three default Live bodies charge in.
 ///
-/// One of [currencies], because the dropdown that changes it is built from
-/// that list. A value rather than a null, because the tile quotes an amount
-/// before anything has been held for the session and there has to be
-/// something to quote.
+/// One of [currencies], because the editor's dropdown is built from that
+/// list. A default and nothing more: the currency a run actually charges in
+/// is whatever the body says, and the body is editable and saveable.
 const String liveDefaultCurrency = 'EUR';
 
-/// What a Live tile costs, written the way the tester reads it.
+/// What a Live body will actually charge, or null if this build cannot read
+/// it.
 ///
-/// The one place the figure is spelled out. Every piece of copy quotes it --
-/// each tile's title, each tile's subtitle, Home's Live paragraph and each
-/// confirmation dialog -- and every one of them calls this, so they cannot
-/// say two different numbers about the same charge.
+/// Read off the body rather than off a constant, and that is the whole of
+/// how the copy stays honest now that the amount is editable: the tile
+/// title and the confirmation dialog are rendered from the very string that
+/// is about to be minted, so there is no second place holding a stale
+/// figure to disagree with it.
+///
+/// Null rather than a guess when the body does not parse or carries no
+/// amount. A saved Live body cannot be in that state -- the editor refuses
+/// to save one -- but a row written by a newer build could be, and a
+/// confirmation dialog that quoted a made-up figure over a real charge is
+/// the one failure worth being loud about. Callers refuse the run.
+({int amount, String currency})? liveBodyMoney(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is! Map<String, Object?>) return null;
+    final amount = decoded['amount'];
+    final currency = decoded['currency'];
+    if (amount is! int || currency is! String) return null;
+    return (amount: amount, currency: currency);
+  } on FormatException {
+    return null;
+  }
+}
+
+/// What a Live body charges, written the way the tester reads it, or null.
 ///
 /// Rendered by [formatMoney], the same function the result screen uses, so
 /// the figure the tester agreed to and the figure they are told was charged
 /// are written by one hand.
-String liveSmokeAmountLabel(String currency) =>
-    formatMoney(liveSmokeMinorUnits, currency);
+String? liveBodyAmountLabel(String body) {
+  final money = liveBodyMoney(body);
+  return money == null ? null : formatMoney(money.amount, money.currency);
+}
 
 /// Who a Live charge is made under.
 ///
@@ -139,9 +164,11 @@ const String liveSmokeCustomerReference = 'paycross_live_smoke';
 /// three go through, and a copied tile is how one of them ends up guarding
 /// two runs and another guarding one.
 ///
-/// All three charge the same amount, in the same currency, to the same
-/// [liveSmokeCustomerReference]. The only thing they disagree about in the
-/// body is one top-level key, which is what [liveExtraOption] is.
+/// All three *default* to the same amount and currency, and all three name
+/// the same [liveSmokeCustomerReference]. The only thing their default
+/// bodies disagree about is one top-level key, which is what
+/// [liveExtraOption] is. What any of them actually charges after somebody
+/// has edited and saved it is whatever that body says.
 enum LiveScenario {
   /// A plain 1.00 sale. What Live mode was when it had one tile, and its
   /// body is unchanged to the byte.
@@ -169,6 +196,21 @@ String? liveExtraOption(LiveScenario scenario) => switch (scenario) {
   LiveScenario.paySavedCard => savedCardsOption,
 };
 
+/// What a saved edit to one of these tiles is filed under.
+///
+/// Words a maintainer typed rather than the tile's name, for the reason
+/// every built-in id is: the name is copy and gets re-worded, and an edit
+/// filed under a name would be lost the day somebody improves the wording.
+///
+/// They live in the Live half of the preset store and can never collide
+/// with a sandbox id, because the two halves are separate keys rather than
+/// one namespace being careful.
+String liveScenarioId(LiveScenario scenario) => switch (scenario) {
+  LiveScenario.smoke => 'live-smoke',
+  LiveScenario.storeCard => 'live-store-card',
+  LiveScenario.paySavedCard => 'live-pay-saved',
+};
+
 /// The widget key the tile carries on Home.
 ///
 /// Named here rather than written on the widget, so that a test taps the
@@ -181,20 +223,29 @@ String liveTileKey(LiveScenario scenario) => switch (scenario) {
   LiveScenario.paySavedCard => 'liveSavedCardTile',
 };
 
-/// A tile's title, and what it tells the person tapping it.
+/// A tile's name, without the figure it charges.
 ///
-/// Functions rather than fields of [livePreset], because the tiles are drawn
-/// whether or not an identity is held and a preset cannot be built without
-/// one. They take the currency for the same reason: the tiles are on screen
-/// before "Use for this session" has been pressed, and there they quote
-/// [liveDefaultCurrency].
-String liveScenarioName(LiveScenario scenario, String currency) {
-  final amount = liveSmokeAmountLabel(currency);
-  return switch (scenario) {
-    LiveScenario.smoke => 'Live smoke — $amount charge',
-    LiveScenario.storeCard => 'Live — store card, $amount charge',
-    LiveScenario.paySavedCard => 'Live — pay with saved card, $amount charge',
-  };
+/// The figure moved out of the name when the amount became editable: a name
+/// is what History files a run under and what the editor's title bar says,
+/// and a name carrying a figure would be a name that lies the moment
+/// somebody saves a different amount. [liveTileTitle] puts the two together
+/// for the tile, reading the money off the body.
+String liveScenarioName(LiveScenario scenario) => switch (scenario) {
+  LiveScenario.smoke => 'Live smoke',
+  LiveScenario.storeCard => 'Live — store card',
+  LiveScenario.paySavedCard => 'Live — pay with saved card',
+};
+
+/// What a Live tile is called on Home: its name, and what it will charge.
+///
+/// The money comes from the body about to be minted rather than from a
+/// constant, so an edited tile quotes its own figure. A body this build
+/// cannot read falls back to the name alone -- the tile refuses to run at
+/// all in that state, and a title inventing an amount would be worse than a
+/// title that is merely short.
+String liveTileTitle(String name, String body) {
+  final amount = liveBodyAmountLabel(body);
+  return amount == null ? name : '$name — $amount charge';
 }
 
 /// What the tester should see, and what they owe afterwards.
@@ -202,37 +253,44 @@ String liveScenarioName(LiveScenario scenario, String currency) {
 /// Every one of them says Refund, because every one of them is real money
 /// and the subtitle is the last thing read before the tap.
 ///
+/// No figure in any of them: the title above already quotes what this body
+/// charges, and a subtitle repeating a constant is exactly the second place
+/// that used to be able to disagree with it.
+///
 /// Deliberately worded so that none begins with one of the five prefixes the
 /// matrix runner reads as "this build has no automation define". Automation
 /// never runs Live, but the two preset sets are held to one rule so they
 /// cannot diverge.
-String liveScenarioExpectation(LiveScenario scenario, String currency) {
-  final amount = liveSmokeAmountLabel(currency);
-  return switch (scenario) {
-    LiveScenario.smoke =>
-      'A real card is charged $amount on the production merchant. Refund it '
-          'in the back office straight afterwards.',
-    LiveScenario.storeCard =>
-      'A real card is charged $amount and stored on the production customer '
-          'for the tile below. Tick "Save card for future use" in the sheet. '
-          'Refund the charge in the back office straight afterwards.',
-    LiveScenario.paySavedCard =>
-      'A card stored on the production customer is charged $amount. Run '
-          '"store card" first, or the list in the sheet is empty. Refund the '
-          'charge in the back office straight afterwards.',
-  };
-}
+String liveScenarioExpectation(LiveScenario scenario) => switch (scenario) {
+  LiveScenario.smoke =>
+    'A real card is charged the amount above on the production merchant. '
+        'Refund it in the back office straight afterwards.',
+  LiveScenario.storeCard =>
+    'A real card is charged and stored on the production customer for the '
+        'tile below. Tick "Save card for future use" in the sheet. Refund '
+        'the charge in the back office straight afterwards.',
+  LiveScenario.paySavedCard =>
+    'A card stored on the production customer is charged. Run "store card" '
+        'first, or the list in the sheet is empty. Refund the charge in the '
+        'back office straight afterwards.',
+};
+
+/// What a tile somebody made in Live tells the person tapping it.
+///
+/// Its own sentence rather than the sandbox one. A body somebody typed is
+/// still a real charge, and "whatever the edited body asks for" is not what
+/// a tester needs to read above a production Continue button.
+const String liveCustomExpectation =
+    'A body you saved is charged on the production merchant. Refund it in '
+    'the back office straight afterwards.';
 
 /// What the confirmation dialog asks before the money moves.
 ///
-/// Here rather than spelled out on Home, for the reason
-/// [liveSmokeAmountLabel] is: this sentence and the tile's own are read
-/// seconds apart by somebody deciding whether to spend, and two files
-/// writing them is how they end up describing different tiles.
-///
-/// The smoke's question is the one that shipped, unchanged. The other two
-/// add a sentence, because "this will charge a real card 1.00" is not the
-/// whole truth about a tile that also leaves a card on file.
+/// Built from the body that is about to be minted, not from the tile that
+/// was tapped. That is what makes it true of a preset somebody edited, and
+/// of one they made from scratch: the amount, the currency and the two
+/// saved-card sentences are all read out of the very bytes the minter will
+/// send, so there is nothing here that can be stale.
 ///
 /// [surface] adds one more sentence, and only for the web checkout. Where
 /// the money is about to be spent is the question this dialog asks; *which
@@ -240,28 +298,65 @@ String liveScenarioExpectation(LiveScenario scenario, String currency) {
 /// somebody who taps Continue expecting a sheet and gets a browser will
 /// wonder whether they tapped the wrong thing. Defaulted to the sheet, so
 /// every call written before the surface existed asks exactly what it asked.
+///
+/// A body this build cannot read is not asked about at all -- callers refuse
+/// the run before reaching here -- so the figure below is never invented.
 String liveConfirmQuestion(
-  LiveScenario scenario,
-  String currency, {
+  String body, {
   PaymentSurface surface = PaymentSurface.sdkSheet,
 }) {
-  final extra = switch (scenario) {
-    LiveScenario.smoke => '',
-    LiveScenario.storeCard =>
+  final amount =
+      liveBodyAmountLabel(body) ?? 'an amount this build cannot read';
+  final decoded = _decode(body);
+  final extra = <String>[
+    if (decoded?.containsKey('save_card_config') ?? false)
       ' It also stores the card on the production customer.',
-    LiveScenario.paySavedCard =>
+    if (decoded?.containsKey('saved_cards') ?? false)
       ' It charges a card already stored on the production customer.',
-  };
+  ].join();
   final where = switch (surface) {
     PaymentSurface.sdkSheet => '',
     PaymentSurface.webCheckout =>
       ' It opens in your browser instead of the app.',
   };
-  return 'This will charge a real card ${liveSmokeAmountLabel(currency)}.'
-      '$extra$where Continue?';
+  return 'This will charge a real card $amount.$extra$where Continue?';
 }
 
-/// What a tile mints, under the identity that was typed.
+/// Why this body must not be minted on production, or null.
+///
+/// One rule, and it is the one the sandbox presets exist on the other side
+/// of: the fake New York billing address. Production AVS and fraud rules are
+/// built to refuse exactly that, and a smoke that declines because of one
+/// has told the tester nothing about the SDK.
+///
+/// A refusal rather than a quiet strip. The raw body is the source of truth
+/// on the editor screen, and silently deleting a line somebody typed is how
+/// a tool stops being trustworthy -- so Run and Save go dead with this
+/// sentence beside them, and the person decides.
+///
+/// Checked where the human is, which is why nothing downstream repeats it:
+/// Save is the only way a body reaches the Live half of the store, so a
+/// saved Live body cannot carry an address.
+String? liveBodyProblem(String body) {
+  final customer = _decode(body)?['customer'];
+  if (customer is Map<String, Object?> && customer.containsKey('address')) {
+    return 'A Live body must not carry the sandbox billing address — '
+        'production fraud rules refuse a fabricated one.';
+  }
+  return null;
+}
+
+/// A decoded body, or null if it is not a JSON object.
+Map<String, Object?>? _decode(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    return decoded is Map<String, Object?> ? decoded : null;
+  } on FormatException {
+    return null;
+  }
+}
+
+/// What one of the three tiles mints before anybody has edited it.
 ///
 /// Built from the same `_body()` helper every sandbox preset uses, through
 /// [liveBody]. One definition of this shape, not two: the last time this
@@ -270,54 +365,79 @@ String liveConfirmQuestion(
 /// saved-card tiles are the same rule again -- they differ from the smoke by
 /// one argument, not by a body of their own.
 ///
-/// No billing address and no phone number. The create schema's
-/// `customer.required` list holds only `first_name`, `last_name` and
-/// `email`; `address` is additionally nullable and its own description
-/// calls it a prefill. So the minimal fields are all the API asks for.
+/// No identity, no billing address and no phone number.
 ///
-/// Both omissions are the same decision. A fabricated production address is
-/// the AVS risk this whole path exists to avoid, and the phone the sandbox
-/// presets carry -- `+12025551234`, the reserved fictional Washington-DC
-/// 555 range -- is a fabricated contact detail of the same class, scored by
-/// the same fraud engines, on a real charge from a European device. It would
-/// also write a wrong number onto a real person's production customer
-/// record. A charge that declines for either of those teaches the tester
-/// nothing about the SDK, which is the failure this design was written to
-/// prevent.
+/// The identity is left out because a preset outlives the session the name
+/// and address were typed for. [withLiveIdentity] puts them in at the
+/// moment of minting, which is where they were always put -- the change is
+/// that they are no longer baked into a string anything could store.
+///
+/// The address and the phone are left out for the older reason. The create
+/// schema's `customer.required` list holds only `first_name`, `last_name`
+/// and `email`; `address` is additionally nullable and its own description
+/// calls it a prefill. A fabricated production address is the AVS risk this
+/// whole path exists to avoid, and the phone the sandbox presets carry --
+/// `+12025551234`, the reserved fictional Washington-DC 555 range -- is a
+/// fabricated contact detail of the same class, scored by the same fraud
+/// engines, on a real charge from a European device. It would also write a
+/// wrong number onto a real person's production customer record. A charge
+/// that declines for either of those teaches the tester nothing about the
+/// SDK, which is the failure this design was written to prevent.
 ///
 /// If a real internal phone number is ever wanted, it is a third typed
 /// field beside the name and the email -- never an inherited sandbox
 /// default.
-///
-/// The currency is passed in rather than defaulted here, so that the body
-/// and the copy the tester read before pressing Continue take the same
-/// value from the same caller.
-String liveScenarioBody(
-  LiveScenario scenario,
-  LiveIdentity identity,
-  String currency,
-) => liveBody(
+String liveDefaultBody(LiveScenario scenario) => liveBody(
   amount: liveSmokeMinorUnits,
-  currency: currency,
-  email: identity.email,
-  firstName: identity.firstName,
-  lastName: identity.lastName,
+  currency: liveDefaultCurrency,
   customerReference: liveSmokeCustomerReference,
   extraTopLevel: liveExtraOption(scenario),
 );
 
-/// One Live tile, for the identity and the currency this session holds.
+/// The three Live tiles as they ship, before anybody edits them.
 ///
-/// What `RunScreen` is handed and what History records, so the three strings
-/// have to be the ones belonging to the tile that was tapped: a saved-card
-/// charge filed under the smoke's name is a charge nobody can tell from the
-/// other two afterwards.
-Preset livePreset(
-  LiveScenario scenario,
-  LiveIdentity identity,
-  String currency,
-) => Preset(
-  name: liveScenarioName(scenario, currency),
-  body: liveScenarioBody(scenario, identity, currency),
-  expected: liveScenarioExpectation(scenario, currency),
-);
+/// Presets like the sandbox ones, with stable ids, so the same store and the
+/// same editor serve both modes. What makes them Live is which half of the
+/// store their overrides are kept in, not a different type.
+///
+/// `cardHint` is deliberately null on all three: nothing about a sandbox
+/// card belongs on a production tile.
+final List<Preset> liveDefaultPresets = <Preset>[
+  for (final scenario in LiveScenario.values)
+    Preset(
+      id: liveScenarioId(scenario),
+      name: liveScenarioName(scenario),
+      body: liveDefaultBody(scenario),
+      expected: liveScenarioExpectation(scenario),
+    ),
+];
+
+/// Puts the identity typed in Settings into the body about to be minted.
+///
+/// At mint time, and nowhere else. A [LiveIdentity] is a real person's name
+/// and email address, held in memory for exactly one session on purpose; a
+/// preset is a row on the phone that outlives it. Splicing here is what lets
+/// the body be saved and the identity not be.
+///
+/// The customer object is created if the body has no usable one, rather than
+/// the identity being dropped. A body without those three fields is the 400
+/// PR #30 was written about, and a splice that quietly did nothing would
+/// reproduce it on the one merchant nobody can retry cheaply.
+///
+/// Re-encoded with the two-space indent the editor writes, so a body that
+/// goes through here reads the same as one that came out of the editor. Key
+/// order changes -- `merchant_reference` was written first in the template
+/// and the three identity fields land after it -- which the API does not
+/// care about and a person reading a bug report does not either.
+String withLiveIdentity(String body, LiveIdentity identity) {
+  final decoded = _decode(body) ?? <String, Object?>{};
+  final existing = decoded['customer'];
+  final customer = existing is Map<String, Object?>
+      ? existing
+      : <String, Object?>{};
+  customer['email'] = identity.email;
+  customer['first_name'] = identity.firstName;
+  customer['last_name'] = identity.lastName;
+  decoded['customer'] = customer;
+  return const JsonEncoder.withIndent('  ').convert(decoded);
+}

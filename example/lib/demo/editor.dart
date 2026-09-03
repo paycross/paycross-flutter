@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import 'environment.dart';
+import 'live.dart';
 import 'preset_store.dart';
 import 'presets.dart';
 
@@ -119,6 +121,7 @@ class EditorScreen extends StatefulWidget {
     required this.onRun,
     this.kind = PresetKind.builtIn,
     this.savedBody,
+    this.environment = DemoEnvironment.test,
     this.store = const PresetStore(),
   });
 
@@ -139,6 +142,18 @@ class EditorScreen extends StatefulWidget {
   /// draw its tiles, and a second read on the way in would be a second answer
   /// this screen could show while the tile behind it showed the first.
   final String? savedBody;
+
+  /// Which mode's preset this is, which decides two things and nothing else.
+  ///
+  /// A Live body carries no identity -- it is typed in Settings, held for
+  /// one session and spliced in at mint time -- so there are no boxes here
+  /// to type one into. And a Live body must not carry the sandbox billing
+  /// address, which `liveBodyProblem` refuses rather than quietly strips.
+  ///
+  /// Everything else is the same screen: the same fields, the same raw body,
+  /// the same four saving actions. Designing two editors is how the two
+  /// modes end up with different bugs.
+  final DemoEnvironment environment;
 
   /// Where Save, "Save as new…", "Reset to default" and Delete write.
   ///
@@ -197,6 +212,9 @@ class _EditorScreenState extends State<EditorScreen> {
   /// a body missing one answers 400 rather than minting. Clearing a box and
   /// running the old value anyway is the bug this whole shape exists to make
   /// impossible.
+  /// Whether this screen is editing a body that will charge a real card.
+  bool get _live => widget.environment == DemoEnvironment.live;
+
   late final List<_Bound> _fields = [
     _Bound(
       name: 'amount',
@@ -211,33 +229,39 @@ class _EditorScreenState extends State<EditorScreen> {
           ? 'A whole number of minor units — 1000 is €10.00.'
           : null,
     ),
-    _Bound(
-      name: 'customerEmail',
-      label: 'Customer email',
-      read: (body) => _customerText(body, 'email'),
-      write: (body, typed) => _customerFor(body)['email'] = typed.trim(),
-      problemWith: (typed) => typed.trim().isEmpty
-          ? 'The create schema requires an email address.'
-          : null,
-    ),
-    _Bound(
-      name: 'customerFirst',
-      label: 'Customer first name',
-      read: (body) => _customerText(body, 'first_name'),
-      write: (body, typed) => _customerFor(body)['first_name'] = typed.trim(),
-      problemWith: (typed) => typed.trim().isEmpty
-          ? 'The create schema requires a first name.'
-          : null,
-    ),
-    _Bound(
-      name: 'customerLast',
-      label: 'Customer last name',
-      read: (body) => _customerText(body, 'last_name'),
-      write: (body, typed) => _customerFor(body)['last_name'] = typed.trim(),
-      problemWith: (typed) => typed.trim().isEmpty
-          ? 'The create schema requires a last name.'
-          : null,
-    ),
+    // Test only, all three. In Live the identity is typed in Settings and
+    // spliced in at mint time, so a box here would be a box whose value is
+    // either ignored or -- worse -- saved into a row that outlives the
+    // session the name was given for.
+    if (!_live) ...[
+      _Bound(
+        name: 'customerEmail',
+        label: 'Customer email',
+        read: (body) => _customerText(body, 'email'),
+        write: (body, typed) => _customerFor(body)['email'] = typed.trim(),
+        problemWith: (typed) => typed.trim().isEmpty
+            ? 'The create schema requires an email address.'
+            : null,
+      ),
+      _Bound(
+        name: 'customerFirst',
+        label: 'Customer first name',
+        read: (body) => _customerText(body, 'first_name'),
+        write: (body, typed) => _customerFor(body)['first_name'] = typed.trim(),
+        problemWith: (typed) => typed.trim().isEmpty
+            ? 'The create schema requires a first name.'
+            : null,
+      ),
+      _Bound(
+        name: 'customerLast',
+        label: 'Customer last name',
+        read: (body) => _customerText(body, 'last_name'),
+        write: (body, typed) => _customerFor(body)['last_name'] = typed.trim(),
+        problemWith: (typed) => typed.trim().isEmpty
+            ? 'The create schema requires a last name.'
+            : null,
+      ),
+    ],
     _Bound(
       name: 'customerReference',
       label: 'Customer reference',
@@ -287,8 +311,18 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
-  void _validateBody() =>
-      _problem = _decoded == null ? rawBodyInvalidLabel : null;
+  /// Why the body cannot be minted, or null.
+  ///
+  /// Two rules, one field, because they answer one question: whether Run and
+  /// Save work. The second is Live only and is a refusal rather than a quiet
+  /// strip -- see `liveBodyProblem`.
+  void _validateBody() {
+    if (_decoded == null) {
+      _problem = rawBodyInvalidLabel;
+      return;
+    }
+    _problem = _live ? liveBodyProblem(_raw.text) : null;
+  }
 
   /// Writes the boxes from the body, which is the only source of truth here.
   ///
@@ -748,17 +782,22 @@ class _EditorScreenState extends State<EditorScreen> {
             value: _hasOption(savedCardsEntry, _topLevel),
             onChanged: (on) => _setOption(savedCardsEntry, _topLevel, on),
           ),
-          SwitchListTile(
-            key: const ValueKey('sandboxBilling'),
-            title: const Text('Send the sandbox billing address'),
-            subtitle: const Text(
-              'The fake New York address every sandbox preset ships with. A '
-              'real merchant refuses it.',
+          // Test only. On a production merchant a fabricated New York
+          // address is what AVS and fraud rules exist to refuse, so a switch
+          // that adds one would cost a smoke run and teach nothing about the
+          // SDK.
+          if (!_live)
+            SwitchListTile(
+              key: const ValueKey('sandboxBilling'),
+              title: const Text('Send the sandbox billing address'),
+              subtitle: const Text(
+                'The fake New York address every sandbox preset ships with. '
+                'A real merchant refuses it.',
+              ),
+              value: _hasOption(sandboxAddressEntry, _customerOf),
+              onChanged: (on) =>
+                  _setOption(sandboxAddressEntry, _customerFor, on),
             ),
-            value: _hasOption(sandboxAddressEntry, _customerOf),
-            onChanged: (on) =>
-                _setOption(sandboxAddressEntry, _customerFor, on),
-          ),
           const SizedBox(height: 8),
           Card(
             child: ExpansionTile(

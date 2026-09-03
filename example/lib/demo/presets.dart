@@ -93,9 +93,14 @@ String _body({
   String? extraTopLevel,
   String? customer,
   String reference = 'DEMO-{{timestamp}}',
-  String email = 'john.doe@example.com',
-  String firstName = 'John',
-  String lastName = 'Doe',
+  // Nullable, and defaulted to the sandbox fake. A Live body carries no
+  // identity at all: the one it is charged under is typed in Settings, held
+  // for one session, and spliced in at mint time by `withLiveIdentity` --
+  // never written into a preset that outlives the session. Omitting the
+  // three here is what makes a stored Live body incapable of holding one.
+  String? email = 'john.doe@example.com',
+  String? firstName = 'John',
+  String? lastName = 'Doe',
   String? phone = '+12025551234',
   String? billing = _sandboxBilling,
 }) =>
@@ -107,10 +112,7 @@ String _body({
   "merchant_reference": "$reference",
   "return_url": "https://merchant.example.com/payment/return",
   "success_url": "https://merchant.example.com/payment/success",${extraTopLevel == null ? '' : '\n  $extraTopLevel,'}
-  "customer": {
-    "email": ${jsonEncode(email)},
-    "first_name": ${jsonEncode(firstName)},
-    "last_name": ${jsonEncode(lastName)},${phone == null ? '' : '\n    "phone": ${jsonEncode(phone)},'}
+  "customer": {${email == null ? '' : '\n    "email": ${jsonEncode(email)},'}${firstName == null ? '' : '\n    "first_name": ${jsonEncode(firstName)},'}${lastName == null ? '' : '\n    "last_name": ${jsonEncode(lastName)},'}${phone == null ? '' : '\n    "phone": ${jsonEncode(phone)},'}
     "merchant_reference": "${customer ?? 'CUST-{{timestamp}}'}"${billing == null ? '' : ',\n    "address": {\n$billing\n    }'}
   }
 }''';
@@ -147,33 +149,30 @@ final String verifyProbeBody = _body(
   reference: 'DEMO-VERIFY-{{timestamp}}',
 );
 
-/// A body for an identity that is not the sandbox fake, with no billing
-/// address.
+/// A Live body: no identity, no phone and no billing address.
 ///
 /// Public because `live.dart` needs it and `_body` is private, and a second
 /// copy of the helper in that file is precisely the drift PR #30 was about.
 ///
-/// It takes the identity's three fields loose rather than the `LiveIdentity`
-/// they come from, because that type lives in `live.dart` and `live.dart`
-/// already imports this file -- naming it here would close a cycle that
-/// nothing needs. The call site unpacks the identity instead.
+/// It carries no identity at all, and that is the guarantee rather than an
+/// omission. A Live preset is a file on the phone; the name and address a
+/// charge is made under are typed in Settings and held for one session, so
+/// a body that could hold them is a body that would outlive the session
+/// they were given for. `withLiveIdentity` puts them in at mint time.
 ///
 /// The currency is required rather than defaulted, unlike every other
-/// argument here: a Live body is minted from a currency the tester chose on
-/// a dropdown, and a default would let a caller that forgot to pass it
-/// charge in euros on a merchant that only takes pounds.
-/// [extraTopLevel] is the one thing Live's three tiles disagree about. Null
-/// is the plain smoke; the saved-card tiles pass [saveCardConfigOption] and
-/// [savedCardsOption], which are the same two strings the sandbox presets
-/// above send. Threaded into the same `_body` argument rather than spliced
-/// on afterwards, so the sandbox pair and the Live pair cannot end up sending
-/// differently-shaped JSON for one feature.
+/// argument here: a body minted on a merchant that only takes pounds must
+/// not be able to fall back to euros because a caller forgot to say.
+///
+/// [extraTopLevel] is the one thing Live's three default tiles disagree
+/// about. Null is the plain smoke; the saved-card tiles pass
+/// [saveCardConfigOption] and [savedCardsOption], which are the same two
+/// strings the sandbox presets above send. Threaded into the same `_body`
+/// argument rather than spliced on afterwards, so the sandbox pair and the
+/// Live pair cannot end up sending differently-shaped JSON for one feature.
 String liveBody({
   required int amount,
   required String currency,
-  required String email,
-  required String firstName,
-  required String lastName,
   required String customerReference,
   String? extraTopLevel,
 }) => _body(
@@ -182,10 +181,13 @@ String liveBody({
   extraTopLevel: extraTopLevel,
   reference: 'LIVE-SMOKE-{{timestamp}}',
   customer: customerReference,
-  email: email,
-  firstName: firstName,
-  lastName: lastName,
-  // Both omitted, not faked, and for one reason. See `live.dart`.
+  // All five omitted, not faked, and for two reasons. The identity is
+  // spliced in at mint time; the phone and the address are fabricated
+  // contact details that production fraud rules exist to refuse. See
+  // `live.dart`.
+  email: null,
+  firstName: null,
+  lastName: null,
   phone: null,
   billing: null,
 );

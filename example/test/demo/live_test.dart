@@ -5,17 +5,20 @@ import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/surface.dart';
 
-/// The smoke body, to the byte, as it has been charging real cards.
+/// The smoke body as it is stored, to the byte.
 ///
 /// A literal rather than another call to the helper that builds it: a
 /// comparison against `liveBody(...)` compares the helper with itself and
-/// passes however the helper changed, and this is the one body in the app
-/// whose bytes were proven on a production merchant. Two tiles were added
-/// beside it; this is what says the first one did not move.
+/// passes however the helper changed.
+///
+/// It holds no identity. That is the change the addendum asked for and the
+/// thing this literal is here to keep true: a Live body is a row on the
+/// phone, and the name and email a charge is made under are typed in
+/// Settings, held for one session, and spliced in at mint time.
 ///
 /// `{{timestamp}}` is still a placeholder here -- the minter substitutes it
 /// at the moment of sending -- so the two strings are comparable.
-const String _smokeBodyAsShipped = '''
+const String _smokeBodyAsStored = '''
 {
   "amount": 100,
   "currency": "EUR",
@@ -24,10 +27,30 @@ const String _smokeBodyAsShipped = '''
   "return_url": "https://merchant.example.com/payment/return",
   "success_url": "https://merchant.example.com/payment/success",
   "customer": {
+    "merchant_reference": "paycross_live_smoke"
+  }
+}''';
+
+/// The smoke body as it is actually minted, to the byte.
+///
+/// The bytes that reach the API, which is the pair of this file's older
+/// pin: the identity is spliced in and the whole thing is re-encoded, so
+/// `merchant_reference` comes first and the three identity fields follow.
+/// Semantically the body that has been charging real cards; a different
+/// order of the same keys, which the create schema does not read.
+const String _smokeBodyAsMinted = '''
+{
+  "amount": 100,
+  "currency": "EUR",
+  "transaction_type": "sale",
+  "merchant_reference": "LIVE-SMOKE-{{timestamp}}",
+  "return_url": "https://merchant.example.com/payment/return",
+  "success_url": "https://merchant.example.com/payment/success",
+  "customer": {
+    "merchant_reference": "paycross_live_smoke",
     "email": "ada@example.org",
     "first_name": "Ada",
-    "last_name": "Lovelace",
-    "merchant_reference": "paycross_live_smoke"
+    "last_name": "Lovelace"
   }
 }''';
 
@@ -40,6 +63,11 @@ void main() {
     // anybody.
     email: 'ada@example.org',
   );
+
+  /// One default tile's body with the identity in it, which is what the
+  /// minter is actually handed.
+  String minted(LiveScenario scenario) =>
+      withLiveIdentity(liveDefaultBody(scenario), identity);
 
   test('a name is split on the last space', () {
     // The schema wants first_name and last_name; a human types one name.
@@ -88,14 +116,7 @@ void main() {
 
   test('the smoke charges one euro, and says so in its reference', () {
     final body =
-        jsonDecode(
-              liveScenarioBody(
-                LiveScenario.smoke,
-                identity,
-                liveDefaultCurrency,
-              ),
-            )
-            as Map<String, Object?>;
+        jsonDecode(liveDefaultBody(LiveScenario.smoke)) as Map<String, Object?>;
 
     expect(body['amount'], 100);
     expect(body['currency'], 'EUR');
@@ -105,35 +126,91 @@ void main() {
     expect(body['merchant_reference'], startsWith('LIVE-SMOKE-'));
   });
 
-  test('every tile charges one unit of the chosen currency', () {
-    // The whole point of the currency choice: the production merchant may
-    // only be able to take one of the three, and until this was passed
-    // through, a smoke on a GBP-only merchant could not run at all. All
-    // three tiles, because a saved-card tile that fell back to the default
-    // would be refused on that same merchant.
+  test('the stored smoke body carries no identity at all', () {
+    // The addendum's rule, structurally rather than by care: the three
+    // fields are absent from the string that goes in the store, so a preset
+    // row cannot hold a real person's name and email address.
+    expect(liveDefaultBody(LiveScenario.smoke), _smokeBodyAsStored);
+
     for (final scenario in LiveScenario.values) {
-      final gbp =
-          jsonDecode(liveScenarioBody(scenario, identity, 'GBP'))
+      final customer =
+          (jsonDecode(liveDefaultBody(scenario))
+                  as Map<String, Object?>)['customer']!
               as Map<String, Object?>;
 
-      expect(gbp['currency'], 'GBP', reason: scenario.name);
-      // Minor units, so one pound is the same 100 one euro is. A currency
-      // choice that also moved the amount would be an amount editor, which
-      // is the one thing Live deliberately does not have.
-      expect(gbp['amount'], 100, reason: scenario.name);
+      for (final field in const ['email', 'first_name', 'last_name']) {
+        expect(customer.containsKey(field), isFalse, reason: scenario.name);
+      }
     }
   });
 
-  test('the smoke body is the bytes that have been charging real cards', () {
+  test('the minted smoke body is the one that has been charging cards', () {
     // Byte for byte against a literal, not against the helper that builds
-    // it. Two tiles were added beside this one and both reach the same
-    // helper through a new argument; this is the case that says the tile
-    // which was already spending money did not change by a comma.
+    // it. The identity moved out of the stored body and into the splice;
+    // this is the case that says the bytes reaching the API still say the
+    // same thing.
+    expect(minted(LiveScenario.smoke), _smokeBodyAsMinted);
     expect(
-      liveScenarioBody(LiveScenario.smoke, identity, liveDefaultCurrency),
-      _smokeBodyAsShipped,
+      jsonDecode(minted(LiveScenario.smoke)),
+      jsonDecode(_smokeBodyAsStored)
+        ..['customer'] = {
+          'merchant_reference': liveSmokeCustomerReference,
+          'email': identity.email,
+          'first_name': identity.firstName,
+          'last_name': identity.lastName,
+        },
     );
   });
+
+  test('the splice puts the identity into a body that had none', () {
+    for (final scenario in LiveScenario.values) {
+      final customer =
+          (jsonDecode(minted(scenario)) as Map<String, Object?>)['customer']!
+              as Map<String, Object?>;
+
+      expect(customer['email'], identity.email, reason: scenario.name);
+      expect(customer['first_name'], identity.firstName);
+      // `last_name` is in the create schema's `customer.required` list beside
+      // the other two, so a body that loses it is a smoke that 400s on
+      // production -- the one place this app has no cheap way to find out.
+      expect(customer['last_name'], identity.lastName);
+    }
+  });
+
+  test('the splice builds a customer when the body has no usable one', () {
+    // A body somebody typed by hand can be missing it entirely. Dropping
+    // the identity there would reproduce the 400 of PR #30 on the one
+    // merchant nobody can retry cheaply.
+    final customer =
+        (jsonDecode(withLiveIdentity('{"amount":100}', identity))
+                as Map<String, Object?>)['customer']!
+            as Map<String, Object?>;
+
+    expect(customer['email'], identity.email);
+    expect(customer['first_name'], identity.firstName);
+    expect(customer['last_name'], identity.lastName);
+  });
+
+  test(
+    'the splice overwrites an identity somebody typed into the raw body',
+    () {
+      // The raw body is editable, so somebody can put an address in it by
+      // hand. What is charged has to be the identity held for this session,
+      // not a leftover in a preset saved last week.
+      const stale =
+          '{"amount":100,"customer":{"email":"old@example.org",'
+          '"first_name":"Old","last_name":"Name"}}';
+
+      final customer =
+          (jsonDecode(withLiveIdentity(stale, identity))
+                  as Map<String, Object?>)['customer']!
+              as Map<String, Object?>;
+
+      expect(customer['email'], identity.email);
+      expect(customer['first_name'], identity.firstName);
+      expect(customer['last_name'], identity.lastName);
+    },
+  );
 
   test('each saved-card tile is the smoke body plus exactly one key', () {
     // Not "contains save_card_config": that would pass with the customer
@@ -146,14 +223,13 @@ void main() {
 
     for (final entry in keys.entries) {
       final body =
-          jsonDecode(liveScenarioBody(entry.key, identity, liveDefaultCurrency))
-              as Map<String, Object?>;
+          jsonDecode(liveDefaultBody(entry.key)) as Map<String, Object?>;
       final withoutKey = Map<String, Object?>.of(body)..remove(entry.value);
 
       expect(body.containsKey(entry.value), isTrue, reason: entry.key.name);
       expect(
         jsonEncode(withoutKey),
-        jsonEncode(jsonDecode(_smokeBodyAsShipped)),
+        jsonEncode(jsonDecode(_smokeBodyAsStored)),
         reason: entry.key.name,
       );
     }
@@ -169,22 +245,10 @@ void main() {
     expect(liveExtraOption(LiveScenario.paySavedCard), savedCardsOption);
 
     final store =
-        jsonDecode(
-              liveScenarioBody(
-                LiveScenario.storeCard,
-                identity,
-                liveDefaultCurrency,
-              ),
-            )
+        jsonDecode(liveDefaultBody(LiveScenario.storeCard))
             as Map<String, Object?>;
     final pay =
-        jsonDecode(
-              liveScenarioBody(
-                LiveScenario.paySavedCard,
-                identity,
-                liveDefaultCurrency,
-              ),
-            )
+        jsonDecode(liveDefaultBody(LiveScenario.paySavedCard))
             as Map<String, Object?>;
 
     // The decoded values, which is what the backend reads. The sandbox
@@ -201,7 +265,7 @@ void main() {
     // that can never be offered.
     for (final scenario in LiveScenario.values) {
       final customer =
-          (jsonDecode(liveScenarioBody(scenario, identity, 'GBP'))
+          (jsonDecode(liveDefaultBody(scenario))
                   as Map<String, Object?>)['customer']!
               as Map<String, Object?>;
 
@@ -210,137 +274,148 @@ void main() {
         liveSmokeCustomerReference,
         reason: scenario.name,
       );
-      // And the same identity, not the sandbox fake, on every one of them.
-      expect(customer['email'], identity.email, reason: scenario.name);
     }
   });
 
-  test('the amount label is the one place the figure is written', () {
+  test('the amount a tile quotes is read off its own body', () {
     // Three currencies, one figure, three symbols. Pinned as whole strings
     // because these are what a human reads on the tile and in the dialog
     // before deciding to spend money.
-    expect(liveSmokeAmountLabel('EUR'), '€1.00');
-    expect(liveSmokeAmountLabel('USD'), r'$1.00');
-    expect(liveSmokeAmountLabel('GBP'), '£1.00');
-    // Every currency the Live form can offer has a symbol, so the fallback
+    String at(String currency) =>
+        liveBodyAmountLabel('{"amount":100,"currency":"$currency"}')!;
+
+    expect(at('EUR'), '€1.00');
+    expect(at('USD'), r'$1.00');
+    expect(at('GBP'), '£1.00');
+    // Every currency the editor can offer has a symbol, so the fallback
     // below is unreachable from the app. It is here for the day a fourth is
     // added to the list and nobody remembers this map.
     for (final code in currencies) {
-      expect(liveSmokeAmountLabel(code), isNot(contains(code)), reason: code);
+      expect(at(code), isNot(contains(code)), reason: code);
     }
     // And that day: the code, not a euro sign borrowed from the default. An
     // unknown currency printed under the wrong symbol is the one failure
     // worth ruling out here.
-    expect(liveSmokeAmountLabel('JPY'), '1.00 JPY');
+    expect(at('JPY'), '1.00 JPY');
+    // An edited amount is quoted as edited. Before this, every figure came
+    // from a constant and the currency came from a per-session picker, so
+    // an edited body had no way to be quoted at all.
+    expect(liveBodyAmountLabel('{"amount":4250,"currency":"GBP"}'), '£42.50');
   });
 
-  test('every tile quotes the same amount as its body, in every currency', () {
-    // The single-source rule, at the three copy sites that live in this
-    // file. The rest are on Home and are pinned there, against the widgets a
-    // tester actually reads.
-    for (final scenario in LiveScenario.values) {
-      for (final code in currencies) {
-        final label = liveSmokeAmountLabel(code);
-        final quoted = <String>[
-          liveScenarioName(scenario, code),
-          liveScenarioExpectation(scenario, code),
-          liveConfirmQuestion(scenario, code),
-        ];
-
-        for (final line in quoted) {
-          expect(line, contains(label), reason: '${scenario.name}: $line');
-          // And no other currency's figure is anywhere near it.
-          for (final other in currencies.where((c) => c != code)) {
-            expect(
-              line,
-              isNot(contains(liveSmokeAmountLabel(other))),
-              reason: '${scenario.name} $code / $other: $line',
-            );
-          }
-        }
-
-        final body =
-            jsonDecode(liveScenarioBody(scenario, identity, code))
-                as Map<String, Object?>;
-        expect(body['currency'], code, reason: '${scenario.name} / $code');
-      }
+  test('a body this build cannot read quotes no figure at all', () {
+    // Null rather than a guess. A confirmation dialog inventing an amount
+    // over a real charge is the one failure worth being loud about, and the
+    // callers refuse the run on this null.
+    for (final unreadable in const [
+      '{ nope',
+      '[]',
+      '{"currency":"EUR"}',
+      '{"amount":"100","currency":"EUR"}',
+      '{"amount":100}',
+    ]) {
+      expect(liveBodyMoney(unreadable), isNull, reason: unreadable);
+      expect(liveBodyAmountLabel(unreadable), isNull, reason: unreadable);
     }
+    expect(liveBodyMoney('{"amount":100,"currency":"EUR"}'), isNotNull);
+  });
+
+  test('the tile title and the dialog quote the same body', () {
+    // The single-source rule, kept now that the figure is editable: both
+    // sites read the body about to be minted, so an edited amount cannot be
+    // quoted in one place and not the other.
+    const edited = '{"amount":4250,"currency":"GBP"}';
+    const label = '£42.50';
+
+    expect(liveTileTitle('Live smoke', edited), contains(label));
+    expect(liveConfirmQuestion(edited), contains(label));
+    // And no other currency's figure is anywhere near either of them.
+    for (final other in const ['€42.50', r'$42.50', '€1.00']) {
+      expect(liveTileTitle('Live smoke', edited), isNot(contains(other)));
+      expect(liveConfirmQuestion(edited), isNot(contains(other)));
+    }
+  });
+
+  test('a title with an unreadable body is short, never invented', () {
+    expect(liveTileTitle('Live smoke', '{ nope'), 'Live smoke');
   });
 
   test('the three tiles are three distinct, self-describing names', () {
     // A run is recorded in History by its preset name, so two tiles sharing
     // one name are two charges nobody can tell apart afterwards.
-    for (final code in currencies) {
-      final names = LiveScenario.values
-          .map((s) => liveScenarioName(s, code))
-          .toList();
+    final names = LiveScenario.values.map(liveScenarioName).toList();
 
-      expect(names.toSet(), hasLength(3), reason: code);
-      // Every one of them says Live, because that name is the title of the
-      // run screen and the row in History.
-      for (final name in names) {
-        expect(name, contains('Live'), reason: name);
-      }
+    expect(names.toSet(), hasLength(3));
+    // Every one of them says Live, because that name is the title of the
+    // run screen and the row in History.
+    for (final name in names) {
+      expect(name, contains('Live'), reason: name);
     }
-    // And each says what it does, in the words the README uses for it.
+    // And each says what it does, in the words the README uses for it. No
+    // figure in any of them: a name carrying one would lie the moment
+    // somebody saved a different amount.
+    expect(liveScenarioName(LiveScenario.smoke), 'Live smoke');
+    expect(liveScenarioName(LiveScenario.storeCard), 'Live — store card');
     expect(
-      liveScenarioName(LiveScenario.smoke, 'GBP'),
-      'Live smoke — £1.00 charge',
+      liveScenarioName(LiveScenario.paySavedCard),
+      'Live — pay with saved card',
     );
-    expect(
-      liveScenarioName(LiveScenario.storeCard, 'GBP'),
-      'Live — store card, £1.00 charge',
-    );
-    expect(
-      liveScenarioName(LiveScenario.paySavedCard, 'GBP'),
-      'Live — pay with saved card, £1.00 charge',
-    );
+    for (final name in names) {
+      expect(name, isNot(contains('1.00')), reason: name);
+    }
   });
 
-  test('the dialog says what the tile will do, beyond the amount', () {
-    // The smoke's question is the one that shipped, unchanged. The other two
-    // add one sentence each, because "charge a real card £1.00" is not the
-    // whole truth about a tile that also stores the card.
+  test('the dialog says what the body will do, beyond the amount', () {
+    // Read off the body rather than off the tile that was tapped, so it is
+    // true of a preset somebody edited and of one they made from scratch.
     expect(
-      liveConfirmQuestion(LiveScenario.smoke, 'EUR'),
+      liveConfirmQuestion(liveDefaultBody(LiveScenario.smoke)),
       'This will charge a real card €1.00. Continue?',
     );
     expect(
-      liveConfirmQuestion(LiveScenario.storeCard, 'EUR'),
+      liveConfirmQuestion(liveDefaultBody(LiveScenario.storeCard)),
       contains('stores the card'),
     );
     expect(
-      liveConfirmQuestion(LiveScenario.paySavedCard, 'EUR'),
+      liveConfirmQuestion(liveDefaultBody(LiveScenario.paySavedCard)),
       contains('already stored'),
+    );
+    // A body somebody edited to do both says both.
+    expect(
+      liveConfirmQuestion(
+        '{"amount":100,"currency":"EUR",'
+        '"save_card_config":{"usage":"card_on_file"},'
+        '"saved_cards":{"show":"all"}}',
+      ),
+      stringContainsInOrder(['stores the card', 'already stored']),
     );
     // All three still ask, rather than announce.
     for (final scenario in LiveScenario.values) {
-      final question = liveConfirmQuestion(scenario, 'EUR');
+      final question = liveConfirmQuestion(liveDefaultBody(scenario));
       expect(question, contains('charge a real card'), reason: scenario.name);
       expect(question, endsWith('Continue?'), reason: scenario.name);
     }
   });
 
   test('the subtitles tell a tester the order and the refund', () {
-    for (final code in currencies) {
-      // Every tile is money that has to be handed back, and the subtitle is
-      // where a tester reads it before tapping.
-      for (final scenario in LiveScenario.values) {
-        expect(
-          liveScenarioExpectation(scenario, code),
-          contains('Refund'),
-          reason: '${scenario.name} / $code',
-        );
-      }
-      // The pair is ordered: the list of cards in the sheet is snapshotted
-      // at session creation, so nothing is there to pay with until the store
-      // tile has settled.
+    // Every tile is money that has to be handed back, and the subtitle is
+    // where a tester reads it before tapping.
+    for (final scenario in LiveScenario.values) {
       expect(
-        liveScenarioExpectation(LiveScenario.paySavedCard, code),
-        contains('store card'),
-        reason: code,
+        liveScenarioExpectation(scenario),
+        contains('Refund'),
+        reason: scenario.name,
       );
     }
+    // The pair is ordered: the list of cards in the sheet is snapshotted
+    // at session creation, so nothing is there to pay with until the store
+    // tile has settled.
+    expect(
+      liveScenarioExpectation(LiveScenario.paySavedCard),
+      contains('store card'),
+    );
+    // A tile somebody made says the same thing about the money.
+    expect(liveCustomExpectation, contains('Refund'));
   });
 
   test('no tile expects anything a runner could misread', () {
@@ -356,17 +431,14 @@ void main() {
       'Outcome unknown',
       'Integration error',
     ]) {
-      // Every currency, since the expectation is built from one now and a
-      // symbol at the front of it would be a different string each time.
       for (final scenario in LiveScenario.values) {
-        for (final code in currencies) {
-          expect(
-            liveScenarioExpectation(scenario, code).startsWith(prefix),
-            isFalse,
-            reason: '${scenario.name} / $code / $prefix',
-          );
-        }
+        expect(
+          liveScenarioExpectation(scenario).startsWith(prefix),
+          isFalse,
+          reason: '${scenario.name} / $prefix',
+        );
       }
+      expect(liveCustomExpectation.startsWith(prefix), isFalse, reason: prefix);
     }
   });
 
@@ -380,24 +452,35 @@ void main() {
     expect(liveTileKey(LiveScenario.smoke), 'liveSmokeTile');
   });
 
+  test('every tile has its own id, and none looks like a sandbox one', () {
+    // The id is what a saved edit is filed under. Two tiles sharing one
+    // would show each other's edits.
+    final ids = LiveScenario.values.map(liveScenarioId).toList();
+
+    expect(ids.toSet(), hasLength(3));
+    for (final id in ids) {
+      expect(id, startsWith('live-'), reason: id);
+    }
+    // Belt to the separate-key-space braces: the two halves of the store
+    // are different keys, so a collision could not cross even if one of
+    // these were spelled like a sandbox id.
+    for (final preset in demoPresets) {
+      expect(ids, isNot(contains(preset.id)), reason: preset.name);
+    }
+  });
+
   test('a name the JSON template cannot hold raw still parses', () {
-    // The typed fields are interpolated into a hand-built JSON string, so
-    // anything with a quote or a backslash in it has to be escaped rather
-    // than pasted. Nobody picks their surname to suit our template.
-    //
-    // Through `parse` and `liveScenarioBody`, not `liveBody` directly: the
-    // split now sits between what a human types and what is encoded, and
-    // that is the path a real awkward surname takes.
+    // The typed fields go into the body through a JSON encoder now rather
+    // than being interpolated into a hand-built string, which is what makes
+    // this safe -- but the rule is worth keeping: nobody picks their surname
+    // to suit our template.
     const awkward = r'Ada Smith "Bud" O\Jones';
 
     final typed = LiveIdentity.parse(name: awkward, email: 'ada@example.org')!;
 
-    // Every tile, because all three interpolate the same fields and a body
-    // that escaped one of them and not the others would be invalid JSON on
-    // exactly the tile nobody tried.
     for (final scenario in LiveScenario.values) {
       final customer =
-          (jsonDecode(liveScenarioBody(scenario, typed, liveDefaultCurrency))
+          (jsonDecode(withLiveIdentity(liveDefaultBody(scenario), typed))
                   as Map<String, Object?>)['customer']!
               as Map<String, Object?>;
 
@@ -408,30 +491,47 @@ void main() {
 
   test('no tile body carries the sandbox customer or its address', () {
     for (final scenario in LiveScenario.values) {
-      final raw = liveScenarioBody(scenario, identity, liveDefaultCurrency);
-      final body = jsonDecode(raw) as Map<String, Object?>;
-      final customer = body['customer']! as Map<String, Object?>;
+      final raw = minted(scenario);
+      final customer =
+          (jsonDecode(raw) as Map<String, Object?>)['customer']!
+              as Map<String, Object?>;
 
       // The fake the sandbox presets use. A New York billing address and a
       // john.doe address are what production AVS and fraud rules are for.
       expect(customer['email'], isNot('john.doe@example.com'));
       expect(raw, isNot(contains('123 Main Street')), reason: scenario.name);
-      expect(customer['first_name'], identity.firstName);
-      // `last_name` is in the create schema's `customer.required` list beside
-      // the other two, so a body that loses it is a 1.00 smoke that 400s on
-      // production -- the one place this app has no cheap way to find out.
-      expect(customer['last_name'], identity.lastName);
+      expect(customer.containsKey('address'), isFalse, reason: scenario.name);
       // Omitted outright, not replaced with a plausible one. The sandbox
       // default is `+12025551234` -- the reserved fictional Washington-DC 555
       // range -- and on a real charge from a European device that is the same
       // fabricated-contact-detail risk the billing address is omitted for,
       // plus a wrong number written onto a real person's production customer
       // record. `phone` is not in the create schema's `customer.required`
-      // list, so leaving it out costs nothing. If a real internal number is
-      // ever wanted it is a third typed field beside the name and the email,
-      // never an inherited sandbox default.
+      // list, so leaving it out costs nothing.
       expect(customer.containsKey('phone'), isFalse, reason: scenario.name);
     }
+  });
+
+  test('a body carrying the sandbox billing address is refused', () {
+    // The other half of the rule above, for a body somebody typed. It is a
+    // refusal rather than a quiet strip: the raw body is the source of truth
+    // on the editor screen, and silently deleting a line somebody typed is
+    // how a tool stops being trustworthy.
+    const withBilling =
+        '{"amount":100,"currency":"EUR","customer":{"address":'
+        '{"billing":{"line1":"123 Main Street","country":"US"}}}}';
+
+    expect(liveBodyProblem(withBilling), isNotNull);
+    expect(liveBodyProblem(withBilling), contains('billing address'));
+    // And nothing else is refused: the rule is about that one key.
+    for (final scenario in LiveScenario.values) {
+      expect(
+        liveBodyProblem(liveDefaultBody(scenario)),
+        isNull,
+        reason: scenario.name,
+      );
+    }
+    expect(liveBodyProblem('{ nope'), isNull);
   });
 
   test('every tile body is a template until it is minted', () {
@@ -439,43 +539,47 @@ void main() {
     // sending, like every other body in this app.
     for (final scenario in LiveScenario.values) {
       expect(
-        liveScenarioBody(scenario, identity, liveDefaultCurrency),
+        liveDefaultBody(scenario),
         contains('{{timestamp}}'),
         reason: scenario.name,
       );
+      // And it survives the splice, which re-encodes the whole body.
+      expect(minted(scenario), contains('{{timestamp}}'));
     }
   });
 
-  test('a preset carries the three strings of the tile it belongs to', () {
+  test('a default preset carries the three strings of its tile', () {
     // What `RunScreen` is handed, and what History records. A preset built
     // from the wrong scenario is a saved-card charge filed under the smoke.
     for (final scenario in LiveScenario.values) {
-      final preset = livePreset(scenario, identity, 'USD');
+      final preset = liveDefaultPresets.firstWhere(
+        (p) => p.id == liveScenarioId(scenario),
+      );
 
-      expect(preset.name, liveScenarioName(scenario, 'USD'));
-      expect(preset.body, liveScenarioBody(scenario, identity, 'USD'));
-      expect(preset.expected, liveScenarioExpectation(scenario, 'USD'));
+      expect(preset.name, liveScenarioName(scenario));
+      expect(preset.body, liveDefaultBody(scenario));
+      expect(preset.expected, liveScenarioExpectation(scenario));
       // Nothing about a sandbox card belongs on a production tile.
       expect(preset.cardHint, isNull, reason: scenario.name);
     }
+    expect(liveDefaultPresets, hasLength(LiveScenario.values.length));
   });
 
   group('what the confirmation dialog says about where it happens', () {
+    final smoke = liveDefaultBody(LiveScenario.smoke);
+
     test('the sheet asks exactly what it always asked', () {
       // Every call written before the surface existed keeps its wording, and
       // the default is what makes that true rather than a promise about it.
       for (final scenario in LiveScenario.values) {
+        final body = liveDefaultBody(scenario);
         expect(
-          liveConfirmQuestion(scenario, 'EUR'),
-          liveConfirmQuestion(
-            scenario,
-            'EUR',
-            surface: PaymentSurface.sdkSheet,
-          ),
+          liveConfirmQuestion(body),
+          liveConfirmQuestion(body, surface: PaymentSurface.sdkSheet),
           reason: scenario.name,
         );
         expect(
-          liveConfirmQuestion(scenario, 'EUR'),
+          liveConfirmQuestion(body),
           isNot(contains('browser')),
           reason: scenario.name,
         );
@@ -488,8 +592,7 @@ void main() {
       // that stops that, and it sits before the money moves.
       for (final scenario in LiveScenario.values) {
         final asked = liveConfirmQuestion(
-          scenario,
-          'EUR',
+          liveDefaultBody(scenario),
           surface: PaymentSurface.webCheckout,
         );
 
@@ -508,8 +611,7 @@ void main() {
     test('a saved-card tile on the web says both things, in order', () {
       expect(
         liveConfirmQuestion(
-          LiveScenario.storeCard,
-          'EUR',
+          liveDefaultBody(LiveScenario.storeCard),
           surface: PaymentSurface.webCheckout,
         ),
         stringContainsInOrder([
@@ -519,6 +621,7 @@ void main() {
           'Continue?',
         ]),
       );
+      expect(smoke, isNot(contains('save_card_config')));
     });
   });
 }

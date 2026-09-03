@@ -129,25 +129,13 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// is all a charge needs.
   LiveIdentity? get liveIdentity => isLive ? _liveIdentity : null;
 
-  String _liveCurrency = liveDefaultCurrency;
-
-  /// Which currency a Live charge is made in, and only while the app is
-  /// actually in Live.
-  ///
-  /// Its own value rather than a field on [LiveIdentity]: the identity is
-  /// who is charged and this is what they are charged in, and the identity
-  /// is parsed out of two text fields while this is picked off a list of
-  /// three. One type that held both would have to be built from a name, an
-  /// address and a currency at once, which is not how either is entered.
-  ///
-  /// Gated on the environment like the two above, for the same reason: the
-  /// field and the environment change at different moments. It answers
-  /// [liveDefaultCurrency] outside Live rather than null, because everything
-  /// that reads it is rendering an amount and there is no such thing as an
-  /// amount in no currency. Not a secret, unlike a credential -- it is held
-  /// for one session because the choice belongs to the run, not because
-  /// holding it would be dangerous.
-  String get liveCurrency => isLive ? _liveCurrency : liveDefaultCurrency;
+  // There is deliberately no currency here. It was held for a session, set
+  // by the same button as the identity and quoted by every Live tile -- and
+  // the owner's word for that was "a lazy workaround". The currency a Live
+  // run charges in is a field of the preset body now, edited on the same
+  // screen and saved in the same store as the amount beside it. What is
+  // held for a session is what a session is actually for: a credential and
+  // an identity, neither of which belongs in a file.
 
   /// The pair a mint in this environment must use.
   ///
@@ -225,21 +213,6 @@ class DemoEnvironmentState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Holds the currency for this session and no longer.
-  ///
-  /// Set by the same button as the other two, and reset to
-  /// [liveDefaultCurrency] wherever they are dropped: a currency chosen for
-  /// one Live session has no business being the one the next session's tile
-  /// quotes before anybody has picked anything.
-  ///
-  /// A no-op outside Live, like the two setters above and for the same
-  /// reason.
-  void useCurrencyForThisSession(String currency) {
-    if (!isLive) return;
-    _liveCurrency = currency;
-    notifyListeners();
-  }
-
   /// Returns to Test, or returns why it did not.
   ///
   /// On every exit this actually performs, the credentials go first: they
@@ -256,7 +229,6 @@ class DemoEnvironmentState extends ChangeNotifier {
     if (_switching) return switchAlreadyInProgress;
     _liveCredentials = null;
     _liveIdentity = null;
-    _liveCurrency = liveDefaultCurrency;
     _switching = true;
     try {
       await configure(
@@ -273,7 +245,6 @@ class DemoEnvironmentState extends ChangeNotifier {
       // listener reading during it sees that promise already kept.
       _liveCredentials = null;
       _liveIdentity = null;
-      _liveCurrency = liveDefaultCurrency;
       notifyListeners();
       return 'The credentials are forgotten, but the SDK would not switch '
           'back: ${problem.runtimeType}. Still in Live — restart the app.';
@@ -287,7 +258,6 @@ class DemoEnvironmentState extends ChangeNotifier {
     // only stops it being read in Test.
     _liveCredentials = null;
     _liveIdentity = null;
-    _liveCurrency = liveDefaultCurrency;
     _environment = DemoEnvironment.test;
     notifyListeners();
     return null;

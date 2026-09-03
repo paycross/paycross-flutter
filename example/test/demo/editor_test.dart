@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/editor.dart';
+import 'package:paycross_demo/demo/environment.dart';
+import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/preset_store.dart';
 import 'package:paycross_demo/demo/presets.dart';
 
@@ -43,6 +45,7 @@ Future<void> _pumpEditor(
   PresetKind kind = PresetKind.builtIn,
   PresetStore? store,
   String? savedBody,
+  DemoEnvironment environment = DemoEnvironment.test,
 }) async {
   useTallSurface(tester);
   await tester.pumpWidget(
@@ -52,6 +55,7 @@ Future<void> _pumpEditor(
         onRun: onRun ?? (_) async {},
         kind: kind,
         savedBody: savedBody,
+        environment: environment,
         store: store ?? PresetStore(backend: InMemoryPresetBackend()),
       ),
     ),
@@ -773,6 +777,185 @@ void main() {
     });
   });
 
+  group('the same editor in Live', () {
+    final smoke = liveDefaultPresets.first;
+
+    /// The Live editor on one of the three production tiles.
+    Future<void> pumpLive(
+      WidgetTester tester, {
+      PresetStore? store,
+      String? savedBody,
+      Future<void> Function(String body)? onRun,
+    }) => _pumpEditor(
+      tester,
+      preset: smoke,
+      onRun: onRun,
+      // A Live-mode store, as Home hands it: its rows carry the production
+      // kind words, so a case here exercises what the app writes.
+      store:
+          store ??
+          PresetStore(
+            backend: InMemoryPresetBackend(),
+            environment: DemoEnvironment.live,
+          ),
+      savedBody: savedBody,
+      environment: DemoEnvironment.live,
+    );
+
+    testWidgets('the amount and the currency are ordinary fields', (
+      tester,
+    ) async {
+      // The whole of the addendum: the owner called setting a currency once
+      // per session a lazy workaround, and this is what replaced it.
+      String? ran;
+      await pumpLive(tester, onRun: (body) async => ran = body);
+
+      await tester.enterText(find.byKey(const ValueKey('amount')), '4250');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('currency-EUR')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('GBP').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect((jsonDecode(ran!) as Map)['amount'], 4250);
+      expect((jsonDecode(ran!) as Map)['currency'], 'GBP');
+    });
+
+    testWidgets('there is nowhere to type an identity', (tester) async {
+      // A preset is a row on the phone and the identity is held for one
+      // session. A field that wrote a real person's name into a saved body
+      // is the one thing this screen must not offer in Live.
+      await pumpLive(tester);
+
+      expect(find.byKey(const ValueKey('customerEmail')), findsNothing);
+      expect(find.byKey(const ValueKey('customerFirst')), findsNothing);
+      expect(find.byKey(const ValueKey('customerLast')), findsNothing);
+      // The reference stays: it is what a stored card is found by, and it is
+      // not anybody's name.
+      expect(find.byKey(const ValueKey('customerReference')), findsOneWidget);
+    });
+
+    testWidgets('a Live body it saves carries no identity', (tester) async {
+      final store = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await pumpLive(tester, store: store);
+
+      await tester.enterText(find.byKey(const ValueKey('amount')), '4250');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+
+      final saved = (await store.read()).overrides[smoke.id]!;
+      final customer = (jsonDecode(saved) as Map)['customer'] as Map;
+      for (final field in const ['email', 'first_name', 'last_name']) {
+        expect(customer.containsKey(field), isFalse, reason: field);
+      }
+    });
+
+    testWidgets('the sandbox billing switch is not offered', (tester) async {
+      // Production AVS and fraud rules exist to refuse a fabricated New York
+      // address, and a switch that adds one is a switch that costs a smoke
+      // run for a reason that says nothing about the SDK.
+      await pumpLive(tester);
+
+      expect(find.byKey(const ValueKey('sandboxBilling')), findsNothing);
+      // The two saved-card switches are the same in both modes.
+      expect(find.byKey(const ValueKey('saveCard')), findsOneWidget);
+      expect(find.byKey(const ValueKey('showSavedCards')), findsOneWidget);
+    });
+
+    testWidgets('a hand-typed billing address refuses Run and Save', (
+      tester,
+    ) async {
+      // A refusal rather than a quiet strip. The raw body is the source of
+      // truth on this screen, and silently deleting a line somebody typed is
+      // how a tool stops being trustworthy.
+      final store = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      var ranCount = 0;
+      await pumpLive(tester, store: store, onRun: (_) async => ranCount++);
+
+      await _openRawBody(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('rawBody')),
+        '{"amount":100,"currency":"EUR","customer":'
+        '{"merchant_reference":"r","address":{"billing":{"city":"NY"}}}}',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('billing address'), findsOneWidget);
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+
+      expect(ranCount, 0);
+      expect((await store.read()).overrides, isEmpty);
+    });
+
+    testWidgets('the sandbox editor still offers both', (tester) async {
+      // The mirror of the two cases above: nothing was taken away from Test.
+      await _pumpEditor(tester);
+
+      expect(find.byKey(const ValueKey('sandboxBilling')), findsOneWidget);
+      expect(find.byKey(const ValueKey('customerEmail')), findsOneWidget);
+    });
+
+    testWidgets('Save as new makes a production tile of its own', (
+      tester,
+    ) async {
+      final store = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await pumpLive(tester, store: store);
+
+      await tester.enterText(find.byKey(const ValueKey('amount')), '4250');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save as new…'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('newPresetName')),
+        'Forty-two fifty',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('saveAsNewConfirm')));
+      await tester.pumpAndSettle();
+
+      final saved = await store.read();
+      expect(saved.custom.single.name, 'Forty-two fifty');
+      expect((jsonDecode(saved.custom.single.body) as Map)['amount'], 4250);
+    });
+
+    testWidgets('Reset to default puts the shipped Live body back', (
+      tester,
+    ) async {
+      final store = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await store.saveOverride(smoke.id!, '{"amount":4250,"currency":"GBP"}');
+      await pumpLive(
+        tester,
+        store: store,
+        savedBody: '{"amount":4250,"currency":"GBP"}',
+      );
+
+      expect(_fieldText(tester, 'amount'), '4250');
+      await tester.tap(find.text('Reset to default'));
+      await tester.pumpAndSettle();
+
+      expect((await store.read()).overrides, isEmpty);
+      expect(_fieldText(tester, 'amount'), '$liveSmokeMinorUnits');
+    });
+  });
+
   group('a save the phone refuses', () {
     testWidgets('Save says so, rather than failing silently', (tester) async {
       // `PresetStore` rethrows to its caller on purpose, and this screen is
@@ -885,7 +1068,10 @@ void main() {
       // It used to file an override identical to the shipped bytes, after
       // which the tile read "edited" for good -- and a later release that
       // changed that preset would be silently masked by the stale copy.
-      final store = PresetStore(backend: InMemoryPresetBackend());
+      final store = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
       await _pumpEditor(tester, store: store);
 
       await tester.tap(find.byKey(const ValueKey('save')));
@@ -906,7 +1092,10 @@ void main() {
       // Through the raw field, because that is the way a person actually
       // gets here: they open a tile they edited last week and paste the
       // original back.
-      final store = PresetStore(backend: InMemoryPresetBackend());
+      final store = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
       const override =
           '{"amount":2500,"currency":"EUR",'
           '"customer":{"merchant_reference":"CUST-1"}}';
@@ -930,7 +1119,10 @@ void main() {
       // The calibration for the two cases above: the guard refuses a
       // no-change Save, and this is what says it has not started refusing
       // every Save.
-      final store = PresetStore(backend: InMemoryPresetBackend());
+      final store = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
       await _pumpEditor(tester, store: store);
 
       await tester.enterText(find.byKey(const ValueKey('amount')), '2500');

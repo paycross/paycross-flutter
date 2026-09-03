@@ -305,8 +305,10 @@ Paste the bug report block, say what you expected, and say what you saw.
 
 Live mode runs **three** scenarios against the PayCross production merchant
 with a **real card**: a plain charge, a charge that stores the card, and a
-charge against the card that was stored. Each is 1.00 in a currency you pick,
-and each is money you refund by hand immediately afterwards. It exists so the
+charge against the card that was stored. Each starts at 1.00 EUR and each is
+money you refund by hand immediately afterwards. Every one of them is an
+editable, saveable preset, exactly as the sandbox scenarios are — see
+[Saving a preset](#saving-a-preset). It exists so the
 mobile SDKs can be smoke-tested against production before a release. It is
 not a QA tool and it is not for routine use.
 
@@ -321,9 +323,10 @@ relaunch.
    wakes up.
 3. Press **Switch to Live**. A red `LIVE — REAL MONEY` bar appears across
    every screen and stays there until you leave.
-4. Type the **production** client ID and secret, and the **name and
-   email** the charge is made under, pick the currency, then press **Use
-   for this session**.
+4. Type the **production** client ID and secret and the **name and
+   email** the charge is made under, then press **Use for this session**.
+   The amount and the currency are not asked for here: they belong to each
+   tile, behind its pencil.
 
 ### The credentials and the identity
 
@@ -351,14 +354,15 @@ is refused — and a real internal address, which is where the receipt goes.
 **Use for this session** stays dead until all four fields are filled and the
 address has an `@` in it.
 
-**The currency is picked here too, and held the same way.** A dropdown over
-EUR, USD and GBP, starting on EUR, beside the name and the email. It is what
-the smoke charges in, because a production merchant may only be able to take
-one of the three — and a smoke locked to euros on a pounds-only merchant
-fails for a reason that says nothing about the SDK. The amount is one unit
-either way: 1.00 is 100 minor units in all three. Like the identity, it is
-held in memory for this session, written nowhere, and back to EUR the moment
-you switch to Test.
+**The currency is not picked here.** It used to be, once per session, on a
+dropdown beside the name — while the amount sat in a constant nobody could
+reach. Both are fields of each tile's body now, edited together behind the
+pencil and kept with **Save**, so a merchant that only takes pounds is a
+one-time edit rather than something to remember every session.
+
+**The identity never goes into a preset.** The name and the email are put
+into the body at the moment of minting and are not part of what is saved, so
+a body kept on the phone cannot carry a real person's details.
 
 **Nothing about the identity is saved either.** Not to the Keychain, not to
 History, not to a bug report. The run is recorded by its ids and its
@@ -370,8 +374,9 @@ effect of checking a password.
 
 ### Running the tiles
 
-Home shows three tiles, each of them a 1.00 charge on a real card, with the
-currency you picked in place of the euro sign below:
+Home shows three tiles to start with, each a 1.00 charge on a real card.
+Each title quotes what that tile's own body will charge, so an edited tile
+says its own figure:
 
 1. **Live smoke — €1.00 charge.** A plain sale. Nothing is stored.
 2. **Live — store card, €1.00 charge.** The same sale, with **Save card for
@@ -381,15 +386,19 @@ currency you picked in place of the euro sign below:
    cards already on the production customer offered in the sheet instead of a
    keypad.
 
+Each has a pencil, and anything you save with it appears here too.
+
 **Run 2 before 3.** The list of cards is fixed when the session is created, so
 running tile 3 without **store card** first shows an empty sheet with nothing
 to pay with. All three charge the same production customer, which is what lets
 a card stored on one run be spent on the next — on another day, or another
 device.
 
-Everything else Home has in Test is still gone: no presets, no editor, no
-Custom, no decline scenarios, no Google Pay, and no test-card cheat sheet in
-the top bar — those PANs mean nothing on a production merchant.
+Everything else Home has in Test is still gone: no decline scenarios, no
+Google Pay, no **Custom** tile, and no test-card cheat sheet in the top bar —
+those PANs mean nothing on a production merchant. The presets you save in
+Live are kept apart from the sandbox ones: neither mode ever offers a body
+saved in the other.
 
 All three tiles carry an **Open in browser** button. It charges the same real
 card on the hosted page instead of in the sheet, the confirmation dialog comes
@@ -399,13 +408,13 @@ than a transaction id — because there is not one to name. See
 
 With nothing held for this session a tile does not ask you anything —
 it takes you to Settings. So the only way to reach the dialog is to have
-already typed a production pair, a name and an email in this session. The
-currency needs no typing: there is always one selected.
+already typed a production pair, a name and an email in this session.
 
 Once it can run, tapping a tile asks *"This will charge a real card €1.00.
-Continue?"* — again with the currency you picked. Tiles 2 and 3 add one
-sentence to that question, saying that the card is also stored, or that a
-stored card is what gets charged. Cancel is the default and holds the focus,
+Continue?"* — with the figure read out of the body that tile is about to
+mint, so an edited amount is the amount you are asked about. A body that also
+stores the card, or spends a stored one, adds a sentence saying so.
+Cancel is the default and holds the focus,
 and dismissing the dialog — Android back button included — counts as Cancel.
 Continue mints a production session and opens the native sheet, and from there
 it is an ordinary payment with an ordinary card. The red bar is **not** over
@@ -416,13 +425,15 @@ One tile at a time. While a run is being set up all three go dead, because a
 second production session is just as unwanted when the second tap lands on a
 different tile.
 
-**If you ever change the amount, it is one edit.** The constant
-`liveSmokeMinorUnits` in [`lib/demo/live.dart`](lib/demo/live.dart) is the
-figure, and `liveSmokeAmountLabel` beside it is the only place it is written
-for a human to read. Every site that quotes it — each tile's title, each
-tile's subtitle, the Live paragraph at the top of Home and each confirmation
-dialog — renders that one function, so they cannot end up quoting two
-different numbers to the person about to spend the money. Most of them used
+**Changing an amount is an edit on the phone.** Open the tile with its
+pencil, change **Amount in minor units** and **Currency**, and press
+**Save**. The constant `liveSmokeMinorUnits` in
+[`lib/demo/live.dart`](lib/demo/live.dart) is only the figure a tile starts
+at, and `liveBodyAmountLabel` beside it reads whatever the body actually
+says. Every site that quotes a figure — each tile's title and each
+confirmation dialog — renders that one function over that one body, so they
+cannot end up quoting two different numbers to the person about to spend the
+money. Most of them used
 to spell it out by hand.
 
 ### Afterwards — refund it
@@ -461,9 +472,15 @@ same bug-report block every other run gets.
   mode — links are disabled"* on screen and does nothing else. A real charge
   goes through a confirmation dialog, and a link is exactly the shape that
   arrives without one.
-- **The amount is fixed.** 1.00, hardcoded, no editor anywhere near it. The
-  currency is a choice; the figure is not.
-- **Only those three.** No decline scenarios, no editor, no Custom.
+- **The amount lives on the phone.** Edited behind a tile's pencil and kept
+  with **Save**, like everything else in the body. There is no server copy
+  and nothing syncs.
+- **Only those three to start with.** No decline scenarios and no **Custom**
+  tile; **Save as new…** on any tile is how you get a fourth.
+- **A Live body never carries the sandbox billing address.** The switch that
+  adds one is not offered in Live, and a body that has one by hand is refused
+  with the reason on screen — production fraud rules exist to turn a
+  fabricated address down.
 - **Apple Pay is the exception, and it is not a fourth tile.** The button
   lives inside the SDK payment sheet, so it turns up on all three runs above
   and you pick it there instead of typing a card. It appears only where the

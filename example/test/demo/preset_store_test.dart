@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/environment.dart';
+import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/preset_store.dart';
 import 'package:paycross_demo/demo/presets.dart';
 
@@ -245,5 +247,115 @@ void main() {
     // identity held in memory. Neither is a row in any store, and a null id
     // is what makes that true by construction rather than by care.
     expect(customPreset.id, isNull);
+  });
+
+  group('the two halves of the store', () {
+    test('Live and Test write different keys', () {
+      // The addendum's rule, and it is a rule about storage rather than
+      // about care: a body saved in one mode is never offered in the other
+      // because a read in one mode cannot see the other's rows at all.
+      const sandbox = SharedPreferencesPresetBackend(DemoEnvironment.test);
+      const production = SharedPreferencesPresetBackend(DemoEnvironment.live);
+
+      expect(sandbox.storageKey, isNot(production.storageKey));
+    });
+
+    test('the Test key is the one that shipped', () {
+      // Changing it would silently empty every preset a colleague has
+      // already saved, and an empty Home reads as the feature having been
+      // taken away rather than as the key having moved.
+      expect(
+        const SharedPreferencesPresetBackend(DemoEnvironment.test).storageKey,
+        'paycross_demo_presets',
+      );
+    });
+
+    test('Test is what a backend defaults to', () {
+      // Every call site written before Live had presets means the sandbox
+      // half, and a default that meant the other one would file a sandbox
+      // edit where the production tiles read.
+      expect(
+        const SharedPreferencesPresetBackend().storageKey,
+        const SharedPreferencesPresetBackend(DemoEnvironment.test).storageKey,
+      );
+    });
+
+    test('a Live scenario round-trips like any other preset', () async {
+      // The same store and the same code path. What makes a preset Live is
+      // which half its row is in, not a second type with its own rules.
+      final store = PresetStore(backend: InMemoryPresetBackend());
+      final preset = liveDefaultPresets.first;
+
+      await store.saveOverride(preset.id!, '{"amount":4250}');
+      final saved = await store.read();
+
+      expect(saved.bodyFor(preset), '{"amount":4250}');
+      expect(saved.isEdited(preset), isTrue);
+    });
+
+    test('a Test read drops rows a Live store wrote', () async {
+      // Defence in depth behind the separate key. If a Live row ever landed
+      // in the sandbox key -- a migration, a merge, a bug -- reading it as a
+      // sandbox tile would put a production body on a sandbox screen. The
+      // kind word is not one this half knows, and an unknown kind is dropped
+      // rather than guessed at.
+      //
+      // One backend deliberately, which is the only way to stage the mixing
+      // the separate keys otherwise make impossible.
+      final backend = InMemoryPresetBackend();
+      final production = PresetStore(
+        backend: backend,
+        environment: DemoEnvironment.live,
+      );
+      await production.addCustom(name: 'Live only', body: '{"amount":1}');
+      await production.saveOverride(
+        liveDefaultPresets.first.id!,
+        '{"amount":2}',
+      );
+
+      final asSandbox = await PresetStore(backend: backend).read();
+
+      expect(asSandbox.custom, isEmpty);
+      expect(asSandbox.overrides, isEmpty);
+      // And the calibration: the rows are there, and the half that wrote
+      // them reads them perfectly well.
+      expect(backend.rows, hasLength(2));
+      expect((await production.read()).custom, hasLength(1));
+      expect((await production.read()).overrides, hasLength(1));
+    });
+
+    test('a Live read drops rows a Test store wrote', () async {
+      final backend = InMemoryPresetBackend();
+      final sandbox = PresetStore(backend: backend);
+      await sandbox.addCustom(name: 'Sandbox only', body: '{"amount":1}');
+
+      final asProduction = await PresetStore(
+        backend: backend,
+        environment: DemoEnvironment.live,
+      ).read();
+
+      expect(asProduction.custom, isEmpty);
+      expect(backend.rows, hasLength(1));
+    });
+
+    test('a body saved in one half is not offered in the other', () async {
+      final sandbox = PresetStore(backend: InMemoryPresetBackend());
+      final production = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+
+      await production.addCustom(name: 'Live only', body: '{"amount":4250}');
+      await production.saveOverride(
+        liveDefaultPresets.first.id!,
+        '{"amount":4250}',
+      );
+      final read = await sandbox.read();
+
+      expect(read.custom, isEmpty);
+      expect(read.overrides, isEmpty);
+      // And the sandbox tiles still mint the bytes they ship with.
+      expect(read.bodyFor(demoPresets.first), demoPresets.first.body);
+    });
   });
 }
