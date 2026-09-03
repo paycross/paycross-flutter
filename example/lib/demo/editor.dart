@@ -22,6 +22,13 @@ const String rawBodyValidLabel = 'Valid JSON.';
 /// Why the raw body cannot be minted.
 const String rawBodyInvalidLabel = 'The body is not valid JSON.';
 
+/// What a store write that the phone refused says.
+///
+/// One string for all three saving actions: the person can do exactly one
+/// thing about any of them, which is try again, and three wordings would be
+/// three chances to say it differently.
+const String _couldNotSave = 'Could not save — nothing was written.';
+
 /// One box over the body: what it shows, why what is in it cannot be minted,
 /// and how it writes itself back.
 ///
@@ -69,6 +76,21 @@ class _Bound {
 Map<String, Object?>? _customerOf(Map<String, Object?> body) {
   final customer = body['customer'];
   return customer is Map<String, Object?> ? customer : null;
+}
+
+/// The customer object of a decoded body, building one if a hand edit
+/// removed it.
+///
+/// For writes only, which is why it is separate from [_customerOf]. A field
+/// that typed into nothing was the silent failure this whole screen is
+/// designed against -- and a body with no customer is one the create schema
+/// answers 400 to, so building it is the repair as much as the fix.
+Map<String, Object?> _customerFor(Map<String, Object?> body) {
+  final existing = body['customer'];
+  if (existing is Map<String, Object?>) return existing;
+  final made = <String, Object?>{};
+  body['customer'] = made;
+  return made;
 }
 
 /// One string field of the customer object, as text.
@@ -193,7 +215,7 @@ class _EditorScreenState extends State<EditorScreen> {
       name: 'customerEmail',
       label: 'Customer email',
       read: (body) => _customerText(body, 'email'),
-      write: (body, typed) => _customerOf(body)?['email'] = typed.trim(),
+      write: (body, typed) => _customerFor(body)['email'] = typed.trim(),
       problemWith: (typed) => typed.trim().isEmpty
           ? 'The create schema requires an email address.'
           : null,
@@ -202,7 +224,7 @@ class _EditorScreenState extends State<EditorScreen> {
       name: 'customerFirst',
       label: 'Customer first name',
       read: (body) => _customerText(body, 'first_name'),
-      write: (body, typed) => _customerOf(body)?['first_name'] = typed.trim(),
+      write: (body, typed) => _customerFor(body)['first_name'] = typed.trim(),
       problemWith: (typed) => typed.trim().isEmpty
           ? 'The create schema requires a first name.'
           : null,
@@ -211,7 +233,7 @@ class _EditorScreenState extends State<EditorScreen> {
       name: 'customerLast',
       label: 'Customer last name',
       read: (body) => _customerText(body, 'last_name'),
-      write: (body, typed) => _customerOf(body)?['last_name'] = typed.trim(),
+      write: (body, typed) => _customerFor(body)['last_name'] = typed.trim(),
       problemWith: (typed) => typed.trim().isEmpty
           ? 'The create schema requires a last name.'
           : null,
@@ -226,7 +248,7 @@ class _EditorScreenState extends State<EditorScreen> {
       write: (body, typed) =>
           // Randomise this and the card stored by one run can never be found
           // by the next.
-          _customerOf(body)?['merchant_reference'] = typed.trim(),
+          _customerFor(body)['merchant_reference'] = typed.trim(),
       problemWith: (typed) => typed.trim().isEmpty
           ? 'A saved card is found by this, so it cannot be empty.'
           : null,
@@ -330,12 +352,11 @@ class _EditorScreenState extends State<EditorScreen> {
   /// mode's two saved-card tiles already follow.
   void _setOption(
     Map<String, Object?> Function() entry,
-    Map<String, Object?>? Function(Map<String, Object?> body) into,
+    Map<String, Object?> Function(Map<String, Object?> body) into,
     bool on,
   ) => setState(
     () => _rewrite((body) {
       final target = into(body);
-      if (target == null) return;
       final option = entry();
       if (on) {
         target.addAll(option);
@@ -359,12 +380,29 @@ class _EditorScreenState extends State<EditorScreen> {
   /// The body itself, for the two top-level options.
   Map<String, Object?> _topLevel(Map<String, Object?> body) => body;
 
+  /// The currency the body says, whatever it says.
+  ///
+  /// Not narrowed to [currencies] any more. It used to fall back to the
+  /// first of the three, so a body hand-edited to `"currency": "PLN"` was
+  /// shown as EUR -- the screen contradicting itself, which is the one thing
+  /// every field on it is built not to do. Nothing minted wrongly, because
+  /// the dropdown only writes when it is changed, but the person could not
+  /// see that.
   String get _currency {
     final currency = _decoded?['currency'];
-    return currency is String && currencies.contains(currency)
+    return currency is String && currency.isNotEmpty
         ? currency
         : currencies.first;
   }
+
+  /// What the dropdown offers: the three this app knows, plus whatever the
+  /// body says if that is something else.
+  ///
+  /// Offered rather than merely displayed because a
+  /// `DropdownButtonFormField` whose value is not among its items throws.
+  /// Picking one of the three replaces the odd one, which is the way back.
+  List<String> get _currencyChoices =>
+      currencies.contains(_currency) ? currencies : [_currency, ...currencies];
 
   /// Whether what is on screen can be minted at all.
   bool get _runnable =>
@@ -388,6 +426,29 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
+  /// Runs one store write, and says so when the phone refuses it.
+  ///
+  /// `PresetStore` rethrows to its caller on purpose -- "better that this one
+  /// save fails and the caller is told" -- and this screen is that caller. It
+  /// used to tell nobody: no message, no "Saved.", and an unhandled async
+  /// error in the zone, leaving the person to infer a failure from the
+  /// absence of a confirmation.
+  ///
+  /// The same shape `run.dart` catches its History write with, and it answers
+  /// whether the write landed so that every caller below can decline to act
+  /// as though it had.
+  Future<bool> _wrote(Future<void> Function() write, String problem) async {
+    try {
+      await write();
+      return true;
+    } catch (_) {
+      // The type is not named. Nothing here came from outside the app, and
+      // the person can only do one thing about any of it: try again.
+      if (mounted) _say(problem);
+      return false;
+    }
+  }
+
   /// Says what just happened, on the channel the rest of this app says it on.
   void _say(String message) => ScaffoldMessenger.of(
     context,
@@ -403,17 +464,36 @@ class _EditorScreenState extends State<EditorScreen> {
     final body = _raw.text;
     final id = _id;
     if (id == null) return;
-    switch (_kind) {
-      case PresetKind.builtIn:
-        await widget.store.saveOverride(id, body);
-      case PresetKind.custom:
-        await widget.store.updateCustom(
-          CustomPreset(id: id, name: _name, body: body),
-        );
-      case PresetKind.scratch:
-        return;
+    // Nothing has changed since this screen opened or last saved. Writing
+    // anyway filed an override identical to the shipped bytes, after which
+    // the tile read "edited" for good -- and a later release that changed
+    // that preset would have been silently masked by the stale copy.
+    if (body == _savedBody) {
+      _say('Nothing to save.');
+      return;
     }
-    if (!mounted) return;
+    final wrote = switch (_kind) {
+      // Back to the bytes it ships with is the absence of an edit rather
+      // than an edit that happens to match, so the override goes instead of
+      // being rewritten to agree with it.
+      PresetKind.builtIn => await _wrote(
+        body == widget.preset.body
+            ? () => widget.store.clearOverride(id)
+            : () => widget.store.saveOverride(id, body),
+        _couldNotSave,
+      ),
+      PresetKind.custom => await _wrote(
+        () => widget.store.updateCustom(
+          CustomPreset(id: id, name: _name, body: body),
+        ),
+        _couldNotSave,
+      ),
+      PresetKind.scratch => false,
+    };
+    // The baseline only moves on a write that landed. Advancing it after a
+    // refusal would disarm the unsaved-changes guard, which is the one thing
+    // standing between a failed save and a lost edit.
+    if (!wrote || !mounted) return;
     setState(() => _savedBody = body);
     _say('Saved.');
   }
@@ -465,7 +545,15 @@ class _EditorScreenState extends State<EditorScreen> {
     );
     if (name == null || !mounted) return;
     final body = _raw.text;
-    final made = await widget.store.addCustom(name: name, body: body);
+    final CustomPreset made;
+    try {
+      made = await widget.store.addCustom(name: name, body: body);
+    } catch (_) {
+      // Becoming a tile that was never written would leave the next Save
+      // writing to an id nothing holds.
+      if (mounted) _say(_couldNotSave);
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _kind = PresetKind.custom;
@@ -486,7 +574,14 @@ class _EditorScreenState extends State<EditorScreen> {
   Future<void> _resetToDefault() async {
     final id = _id;
     if (_kind == PresetKind.builtIn && id != null) {
-      await widget.store.clearOverride(id);
+      // The screen and the store have to agree. Putting the body back while
+      // the override survived would show the shipped bytes here and "edited"
+      // on the tile behind it.
+      final wrote = await _wrote(
+        () => widget.store.clearOverride(id),
+        'Could not reset — the saved body is still there.',
+      );
+      if (!wrote) return;
     }
     if (!mounted) return;
     _raw.removeListener(_onRawChanged);
@@ -532,8 +627,12 @@ class _EditorScreenState extends State<EditorScreen> {
       ),
     );
     if (go != true || !mounted) return;
-    await widget.store.deleteCustom(id);
-    if (!mounted) return;
+    final wrote = await _wrote(
+      () => widget.store.deleteCustom(id),
+      'Could not delete — the tile is still there.',
+    );
+    // Leaving would say the tile had gone when it had not.
+    if (!wrote || !mounted) return;
     // Straight `pop`, which does not consult the guard below -- there is
     // nothing left to save the changes into.
     Navigator.of(context).pop();
@@ -624,7 +723,7 @@ class _EditorScreenState extends State<EditorScreen> {
                   border: OutlineInputBorder(),
                 ),
                 items: [
-                  for (final code in currencies)
+                  for (final code in _currencyChoices)
                     DropdownMenuItem(value: code, child: Text(code)),
                 ],
                 onChanged: (code) => code == null ? null : _setCurrency(code),
@@ -657,7 +756,8 @@ class _EditorScreenState extends State<EditorScreen> {
               'real merchant refuses it.',
             ),
             value: _hasOption(sandboxAddressEntry, _customerOf),
-            onChanged: (on) => _setOption(sandboxAddressEntry, _customerOf, on),
+            onChanged: (on) =>
+                _setOption(sandboxAddressEntry, _customerFor, on),
           ),
           const SizedBox(height: 8),
           Card(

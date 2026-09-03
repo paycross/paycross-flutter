@@ -11,6 +11,16 @@ import '_surface.dart';
 
 final _preset = demoPresets.first;
 
+/// A store the phone refuses to write to, which is what a device out of
+/// space, or one whose platform store is wedged, looks like from Dart.
+class _FailingPresetBackend implements PresetBackend {
+  @override
+  Future<List<String>> read() async => <String>[];
+
+  @override
+  Future<void> write(List<String> rows) async => throw StateError('no space');
+}
+
 /// The text a keyed field is showing.
 String _fieldText(WidgetTester tester, String key) =>
     tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
@@ -760,6 +770,273 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('open'), findsOneWidget);
+    });
+  });
+
+  group('a save the phone refuses', () {
+    testWidgets('Save says so, rather than failing silently', (tester) async {
+      // `PresetStore` rethrows to its caller on purpose, and this screen is
+      // that caller. Before this it told nobody: no message, no "Saved.",
+      // and an unhandled async error in the zone. The person had to infer a
+      // failure from the absence of a confirmation.
+      await _pumpEditor(
+        tester,
+        store: PresetStore(backend: _FailingPresetBackend()),
+      );
+
+      await tester.enterText(find.byKey(const ValueKey('amount')), '2500');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Could not save'), findsOneWidget);
+      expect(find.text('Saved.'), findsNothing);
+    });
+
+    testWidgets('the edit is still there to try again with', (tester) async {
+      // The body must not be treated as saved: the unsaved-changes guard is
+      // what stops the edit being lost on the way back, and a failed write
+      // that advanced the baseline would disarm it.
+      await _pushEditor(
+        tester,
+        store: PresetStore(backend: _FailingPresetBackend()),
+      );
+
+      await tester.enterText(find.byKey(const ValueKey('amount')), '2500');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('unsavedDialog')), findsOneWidget);
+    });
+
+    testWidgets('Save as new says so too', (tester) async {
+      await _pumpEditor(
+        tester,
+        store: PresetStore(backend: _FailingPresetBackend()),
+      );
+
+      await tester.tap(find.text('Save as new…'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('newPresetName')),
+        'Mine',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('saveAsNewConfirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Could not save'), findsOneWidget);
+      // And the screen is still editing what it was editing. Becoming a tile
+      // that was never written would leave a later Save writing to an id
+      // nothing holds.
+      expect(find.text('Edit — ${_preset.name}'), findsOneWidget);
+    });
+
+    testWidgets('a refused delete keeps the tile and the screen', (
+      tester,
+    ) async {
+      final store = PresetStore(backend: _FailingPresetBackend());
+      await _pumpEditor(
+        tester,
+        preset: const CustomPreset(
+          id: 'custom-1',
+          name: 'Mine',
+          body: '{"amount":1}',
+        ).asPreset(),
+        kind: PresetKind.custom,
+        store: store,
+      );
+
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('deleteConfirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Could not delete'), findsOneWidget);
+      // Still here. Leaving would say the tile had gone when it had not.
+      expect(find.text('Edit — Mine'), findsOneWidget);
+    });
+
+    testWidgets('a refused reset leaves the body alone', (tester) async {
+      // The screen and the store have to agree. Putting the body back while
+      // the override survived would show the shipped bytes here and "edited"
+      // on the tile behind it.
+      await _pumpEditor(
+        tester,
+        store: PresetStore(backend: _FailingPresetBackend()),
+        savedBody:
+            '{"amount":2500,"currency":"EUR",'
+            '"customer":{"merchant_reference":"CUST-1"}}',
+      );
+
+      await tester.tap(find.text('Reset to default'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Could not reset'), findsOneWidget);
+      expect(_fieldText(tester, 'amount'), '2500');
+    });
+  });
+
+  group('saving what nobody changed', () {
+    testWidgets('Save on an untouched preset writes nothing', (tester) async {
+      // It used to file an override identical to the shipped bytes, after
+      // which the tile read "edited" for good -- and a later release that
+      // changed that preset would be silently masked by the stale copy.
+      final store = PresetStore(backend: InMemoryPresetBackend());
+      await _pumpEditor(tester, store: store);
+
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+
+      expect((await store.read()).overrides, isEmpty);
+      expect(find.text('Nothing to save.'), findsOneWidget);
+    });
+
+    testWidgets('putting the shipped body back drops the override', (
+      tester,
+    ) async {
+      // Back to what it ships with is the absence of an edit, not an edit
+      // that happens to match. Rewriting the override would leave the tile
+      // marked "edited" over bytes nobody had changed -- and would go on
+      // masking that preset if a later release changed it.
+      //
+      // Through the raw field, because that is the way a person actually
+      // gets here: they open a tile they edited last week and paste the
+      // original back.
+      final store = PresetStore(backend: InMemoryPresetBackend());
+      const override =
+          '{"amount":2500,"currency":"EUR",'
+          '"customer":{"merchant_reference":"CUST-1"}}';
+      await store.saveOverride(_preset.id!, override);
+      await _pumpEditor(tester, store: store, savedBody: override);
+
+      await _openRawBody(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('rawBody')),
+        _preset.body,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+
+      expect((await store.read()).overrides, isEmpty);
+      expect(find.text('Saved.'), findsOneWidget);
+    });
+
+    testWidgets('an edit that is a real change still writes', (tester) async {
+      // The calibration for the two cases above: the guard refuses a
+      // no-change Save, and this is what says it has not started refusing
+      // every Save.
+      final store = PresetStore(backend: InMemoryPresetBackend());
+      await _pumpEditor(tester, store: store);
+
+      await tester.enterText(find.byKey(const ValueKey('amount')), '2500');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+
+      expect((await store.read()).overrides, hasLength(1));
+    });
+  });
+
+  group('a body somebody hand-edited', () {
+    testWidgets('a currency the app does not offer is shown, not hidden', (
+      tester,
+    ) async {
+      // The dropdown fell back to EUR over a body that said PLN: the screen
+      // contradicting itself, which is the one thing every field on it is
+      // built not to do. Nothing minted wrongly, because the dropdown only
+      // writes on change -- but the person could not see that.
+      await _pumpEditor(tester);
+
+      await _openRawBody(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('rawBody')),
+        '{"amount":1000,"currency":"PLN",'
+        '"customer":{"merchant_reference":"CUST-1"}}',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('currency-PLN')), findsOneWidget);
+      expect(find.byKey(const ValueKey('currency-EUR')), findsNothing);
+    });
+
+    testWidgets('picking a known currency replaces the unknown one', (
+      tester,
+    ) async {
+      String? ran;
+      await _pumpEditor(tester, onRun: (body) async => ran = body);
+
+      await _openRawBody(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('rawBody')),
+        '{"amount":1000,"currency":"PLN",'
+        '"customer":{"merchant_reference":"CUST-1"}}',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('currency-PLN')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('GBP').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      expect((jsonDecode(ran!) as Map)['currency'], 'GBP');
+    });
+
+    testWidgets('a customer block deleted by hand is rebuilt, not ignored', (
+      tester,
+    ) async {
+      // Typing into a field that wrote nowhere is the silent failure this
+      // screen's whole design rule is against -- and a body with no customer
+      // is one the create schema answers 400 to, so rebuilding it is the
+      // repair as well as the fix.
+      String? ran;
+      await _pumpEditor(tester, onRun: (body) async => ran = body);
+
+      await _openRawBody(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('rawBody')),
+        '{"amount":1000,"currency":"EUR"}',
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('customerEmail')),
+        'ada@example.com',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('customerReference')),
+        'CUST-9',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      final customer = (jsonDecode(ran!) as Map)['customer'] as Map;
+      expect(customer['email'], 'ada@example.com');
+      expect(customer['merchant_reference'], 'CUST-9');
+    });
+
+    testWidgets('the billing switch rebuilds it too', (tester) async {
+      String? ran;
+      await _pumpEditor(tester, onRun: (body) async => ran = body);
+
+      await _openRawBody(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('rawBody')),
+        '{"amount":1000,"currency":"EUR"}',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sandboxBilling')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Run'));
+      await tester.pumpAndSettle();
+
+      final customer = (jsonDecode(ran!) as Map)['customer'] as Map;
+      expect((customer['address'] as Map)['billing'], isA<Map>());
     });
   });
 }
