@@ -94,8 +94,11 @@ This is what Home looks like in Test. In Live it has one tile and none of
 what follows — see [Live mode](#live-mode).
 
 Tap a tile to run it. Each tile carries what should happen and which card to
-type. The pencil on the right opens the raw session body first, so you can
-change an amount or a field and run that instead.
+type. The pencil on the right opens the editor, where the fields people
+actually change — amount, currency, the customer, the saved-card switches —
+have their own boxes, and the raw JSON is tucked into **Advanced: raw body**
+for when you want it. What you type there can be kept: see
+[Saving a preset](#saving-a-preset).
 
 | Preset | What it proves |
 |---|---|
@@ -107,7 +110,7 @@ change an amount or a field and run that instead.
 | Store card (COF) | Saving a card for later, against the fixed customer `harness_cof_customer`. Safe to re-run. |
 | Pay with saved card (COF) | Charging that stored card without retyping it. **Run "Store card (COF)" first**, or the card list is empty. |
 | Google Pay (Android) | Whether the TEST merchant has the wallet enabled. Eligibility is merchant configuration, not a per-session setting, so the button's absence is not a bug. |
-| Custom | Opens the editor on the ordinary body. Whatever you make it do. |
+| Custom | Opens the editor on the ordinary body. Whatever you make it do, and **Save as new…** keeps it as a tile of its own. |
 
 Under each tile is an **Open in browser** button, which mints the same session
 and opens the hosted checkout page instead of the sheet. See [Open in
@@ -115,6 +118,37 @@ browser](#open-in-browser).
 
 While a run is being set up every tile goes dead, both of its buttons with it.
 That is the only busy indicator; there is no spinner.
+
+## Saving a preset
+
+Edits used to last one run. They no longer do — the editor has four saving
+actions under **Run**:
+
+- **Save** writes what is on screen back over the preset you opened. A tile
+  whose body is no longer the shipped one is marked **edited** on Home, and
+  the pencil reopens it the way you left it.
+- **Save as new…** asks for a name and makes a tile of its own. It appears
+  under the built-in scenarios, above **Custom**, with the same pencil and the
+  same **Open in browser** button. From that point the editor is editing the
+  new tile, so a second **Save** adjusts it rather than making another one.
+- **Reset to default** puts a built-in scenario back to the body it ships
+  with and forgets the saved one. It is not offered on a tile you made,
+  because nothing shipped it.
+- **Delete** removes a tile you made, after asking.
+
+Leaving the editor with an unsaved change asks first.
+
+Two things worth knowing:
+
+- **The shipped bodies are never edited.** A saved body is kept beside the
+  scenario, not instead of it, which is why **Reset to default** always has
+  something to go back to and why the automated matrix runs what it always
+  ran.
+- **A link runs the shipped body**, not the saved one. See [Running a
+  scenario from the command line](#running-a-scenario-from-the-command-line).
+
+Presets are kept on the phone, in the same ordinary storage History uses.
+Neither holds a credential or a session token.
 
 ## Open in browser
 
@@ -132,8 +166,8 @@ identity, what you see in the browser is directly comparable to what the sheet
 does on the same merchant.
 
 There is nothing to switch on and nothing to remember: it is a button, not a
-mode. Every tile has one — the eight Test presets, Custom, and all three Live
-tiles.
+mode. Every tile has one — the eight Test presets, every tile you saved,
+Custom, and all three Live tiles.
 
 What the browser button does differently:
 
@@ -239,6 +273,9 @@ Four things to know:
 - A link carries a preset name and nothing else. It cannot carry a credential,
   a token or a body, so one left in your shell history says only which
   scenario you ran.
+- **A link runs the scenario as it ships**, even when you have saved an edited
+  body for it, and it cannot name a tile you made at all. A link is a scripted
+  entrance; the tile is the one that honours what you saved.
 - **In Live they do not work at all.** The app says *"Live mode — links are
   disabled"* and starts nothing.
 
@@ -469,7 +506,10 @@ Live — restart the app."* Restart it. A relaunch always starts in Test.
   be looked up in the back office by its session id — and a Live one has to be
   refunded from there.
 - **A preset's pencil runs an edited body in the sheet only.** Use **Open in
-  browser** on the **Custom** tile for a hand-written body in the browser.
+  browser** on the **Custom** tile for a hand-written body in the browser, or
+  save the body as a tile and use that tile's button.
+- **Saved presets are per phone.** There is nowhere to sync them and no way to
+  export one; a colleague who needs the same body needs the body.
 
 ## The automation build
 
