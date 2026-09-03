@@ -2107,6 +2107,61 @@ void main() {
       );
     });
 
+    testWidgets('editing a Live tile back to its default clears the override', (
+      tester,
+    ) async {
+      // The second half of the same wiring bug. `_save` clears the override
+      // when the body matches the bytes the preset ships with -- and with the
+      // override baked into the preset it was handed, that comparison could
+      // never be true in Live, so putting a tile back to its default filed
+      // an override saying "the default" instead of removing one.
+      final presets = PresetStore(
+        backend: InMemoryPresetBackend(),
+        environment: DemoEnvironment.live,
+      );
+      await presets.saveOverride(
+        liveScenarioId(LiveScenario.smoke),
+        '{"amount":9999,"currency":"GBP",'
+        '"customer":{"merchant_reference":"paycross_live_smoke"}}',
+      );
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            livePresetStore: presets,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Edit the body').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(rawBodySectionLabel));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('rawBody')),
+        liveDefaultBody(LiveScenario.smoke),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+
+      expect((await presets.read()).overrides, isEmpty);
+
+      // And the tile behind it stops calling itself edited.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(
+          ValueKey(editedMarkerKey(liveScenarioId(LiveScenario.smoke))),
+        ),
+        findsNothing,
+      );
+    });
+
     testWidgets('an edited Live tile still mints what it says', (tester) async {
       // The calibration for the case above: the reset fix must not have
       // stopped Home reading the override at all.
