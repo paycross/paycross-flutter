@@ -13,6 +13,7 @@ import 'package:paycross_demo/demo/history_screen.dart';
 import 'package:paycross_demo/demo/home.dart';
 import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/minter.dart';
+import 'package:paycross_demo/demo/preset_store.dart';
 import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/run.dart';
 import 'package:paycross_demo/demo/secrets.dart';
@@ -1690,6 +1691,237 @@ void main() {
       expect(find.byType(SettingsScreen), findsOneWidget);
       expect(find.byKey(const ValueKey('liveConfirmDialog')), findsNothing);
       expect(find.byType(WebCheckoutRunScreen), findsNothing);
+    });
+  });
+
+  group('presets somebody saved', () {
+    /// A Home whose two stores are both in memory, so no case here reaches
+    /// the Keychain or `SharedPreferences`.
+    Future<void> pumpHome(
+      WidgetTester tester,
+      PresetStore presets, {
+      List<String>? sent,
+    }) async {
+      useTallSurface(tester);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomeScreen(
+            store: await _configuredStore(),
+            presetStore: presets,
+            mintWith: (_, body) async {
+              sent?.add(body);
+              return _mintedWithPage();
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('an edited preset mints the body that was saved', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      final preset = demoPresets.first;
+      await presets.saveOverride(
+        preset.id!,
+        '{"amount":4242,"currency":"GBP",'
+        '"customer":{"merchant_reference":"CUST-1"}}',
+      );
+      final sent = <String>[];
+      await pumpHome(tester, presets, sent: sent);
+
+      await tester.tap(find.text(preset.name));
+      await tester.pumpAndSettle();
+      await _drainBookkeeping(tester);
+
+      // The whole of what the owner asked for: a scenario edited once stays
+      // edited, rather than needing the currency picked again every run.
+      expect((jsonDecode(sent.single) as Map)['amount'], 4242);
+    });
+
+    testWidgets('an edited preset says so on its tile', (tester) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      final preset = demoPresets.first;
+      await presets.saveOverride(preset.id!, '{"amount":4242}');
+      await pumpHome(tester, presets);
+
+      // Without it the tile is indistinguishable from the shipped scenario,
+      // and a run that behaves oddly reads as a bug in the SDK rather than
+      // as the body somebody edited last week.
+      expect(find.byKey(ValueKey(editedMarkerKey(preset.id!))), findsOneWidget);
+      expect(
+        find.byKey(ValueKey(editedMarkerKey(demoPresets[1].id!))),
+        findsNothing,
+      );
+    });
+
+    testWidgets('a preset nobody edited mints the bytes it ships with', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      final sent = <String>[];
+      await pumpHome(tester, presets, sent: sent);
+
+      await tester.tap(find.text(demoPresets.first.name));
+      await tester.pumpAndSettle();
+      await _drainBookkeeping(tester);
+
+      // Byte for byte, because this is what the automated matrix runs.
+      expect(sent.single, demoPresets.first.body);
+    });
+
+    testWidgets('the pencil opens a built-in on the body that was saved', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await presets.saveOverride(demoPresets.first.id!, '{"amount":4242}');
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.byTooltip('Edit the body').first);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('amount')))
+            .controller!
+            .text,
+        '4242',
+      );
+    });
+
+    testWidgets('the tiles somebody made come after the built-in ones', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await presets.addCustom(name: 'My scenario', body: defaultBody());
+      await pumpHome(tester, presets);
+
+      expect(find.text('My scenario'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('My scenario')).dy,
+        greaterThan(tester.getTopLeft(find.text(demoPresets.last.name)).dy),
+      );
+      // And before Custom, which is the way in to a body nobody has typed
+      // yet rather than one of the tiles.
+      expect(
+        tester.getTopLeft(find.text('My scenario')).dy,
+        lessThan(tester.getTopLeft(find.text('Custom')).dy),
+      );
+    });
+
+    testWidgets('a tile somebody made mints its own body', (tester) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await presets.addCustom(name: 'My scenario', body: '{"amount":777}');
+      final sent = <String>[];
+      await pumpHome(tester, presets, sent: sent);
+
+      await tester.tap(find.text('My scenario'));
+      await tester.pumpAndSettle();
+      await _drainBookkeeping(tester);
+
+      expect(sent.single, '{"amount":777}');
+    });
+
+    testWidgets('its pencil opens an editor that can delete it', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await presets.addCustom(name: 'My scenario', body: defaultBody());
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.byTooltip('Edit the body').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Edit — My scenario'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+      // Nothing shipped it, so there is no default to go back to.
+      expect(find.text('Reset to default'), findsNothing);
+    });
+
+    testWidgets('Custom opens an editor with nothing to save into', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.text('Custom'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Save as new…'), findsOneWidget);
+      expect(find.text('Save'), findsNothing);
+      expect(find.text('Delete'), findsNothing);
+    });
+
+    testWidgets('a tile saved in the editor is on Home when it closes', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.text('Custom'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save as new…'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('newPresetName')),
+        'My scenario',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('saveAsNewConfirm')));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      // Home re-reads when the editor closes. Without that the tile somebody
+      // just made is not there until the app is restarted, which reads as
+      // the save having failed.
+      expect(find.text('My scenario'), findsOneWidget);
+    });
+
+    testWidgets('an edit saved on a built-in shows on Home when it closes', (
+      tester,
+    ) async {
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await pumpHome(tester, presets);
+
+      await tester.tap(find.byTooltip('Edit the body').first);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('amount')), '4242');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save')));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(ValueKey(editedMarkerKey(demoPresets.first.id!))),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('Live shows nothing anybody saved', (tester) async {
+      // Live's three tiles are built per run from an identity held in
+      // memory. A saved sandbox body on that screen would be a body nobody
+      // reviewed against a production merchant.
+      final presets = PresetStore(backend: InMemoryPresetBackend());
+      await presets.addCustom(name: 'My scenario', body: defaultBody());
+      await presets.saveOverride(demoPresets.first.id!, '{"amount":4242}');
+      useTallSurface(tester);
+
+      await tester.pumpWidget(
+        await liveApp(
+          state: await liveHolding(_liveCredentials),
+          home: HomeScreen(
+            store: SecretStore(backend: InMemorySecretBackend()),
+            presetStore: presets,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('My scenario'), findsNothing);
+      expect(find.byTooltip('Edit the body'), findsNothing);
     });
   });
 }

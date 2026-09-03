@@ -584,7 +584,7 @@ class _EditorScreenState extends State<EditorScreen> {
     onPopInvokedWithResult: (didPop, _) async {
       if (didPop) return;
       if (_dirty && !await _mayLeave()) return;
-      if (mounted) Navigator.of(context).pop();
+      if (context.mounted) Navigator.of(context).pop();
     },
     child: Scaffold(
       appBar: AppBar(title: Text('Edit — $_name')),
