@@ -169,9 +169,25 @@ class Preset {
     required this.name,
     required this.body,
     required this.expected,
+    this.id,
     this.cardHint,
     this.hint,
   });
+
+  /// What a saved edit to this preset is filed under, or null for a preset
+  /// nothing can be saved into.
+  ///
+  /// Separate from [name] and deliberately duller than it. The name is copy
+  /// and gets re-worded; an edit filed under a name would be lost the day
+  /// somebody improves the wording, and the person who lost it would have
+  /// no way to tell that from the store having forgotten.
+  ///
+  /// Null on [customPreset] and on every Live tile, and that null is the
+  /// guarantee rather than a gap: Custom is the blank body somebody types
+  /// afresh each time, and a Live tile is built per run from an identity
+  /// held in memory. Neither is a row in any store, and a preset with no id
+  /// cannot become one by accident.
+  final String? id;
 
   final String name;
 
@@ -193,24 +209,28 @@ class Preset {
 /// The scenarios on Home, in the order they are worth running.
 final List<Preset> demoPresets = <Preset>[
   Preset(
+    id: 'instant-approve',
     name: 'Instant approve (no 3DS)',
     body: defaultBody(),
     expected: 'Approved with no 3-D Secure step at all.',
     cardHint: '4111 1111 1117 0000',
   ),
   Preset(
+    id: 'frictionless-3ds',
     name: 'Frictionless 3DS',
     body: defaultBody(),
     expected: 'Approved after a frictionless 3-D Secure check — no challenge.',
     cardHint: '4111 1111 1115 3063',
   ),
   Preset(
+    id: 'challenge-approve',
     name: '3DS challenge → approve',
     body: defaultBody(),
     expected: 'Approved after the challenge.',
     cardHint: '4111 1111 1115 3220, then tap approve on the sandbox ACS page',
   ),
   Preset(
+    id: 'challenge-decline',
     name: '3DS challenge → decline',
     body: defaultBody(),
     expected: 'Refused after the challenge — recovery do_not_retry.',
@@ -218,6 +238,7 @@ final List<Preset> demoPresets = <Preset>[
         '4111 1111 1115 3220, then tap fraud_suspected on the sandbox ACS page',
   ),
   Preset(
+    id: 'challenge-retryable',
     name: '3DS challenge → retryable decline',
     body: defaultBody(),
     // Verified on both platforms in the D0 matrix: a retryable recovery
@@ -231,6 +252,7 @@ final List<Preset> demoPresets = <Preset>[
         'sandbox ACS page',
   ),
   Preset(
+    id: 'cof-store',
     name: 'Store card (COF)',
     body: cofStoreBody,
     expected: 'Approved, and the card is stored for $cofCustomerReference.',
@@ -238,12 +260,14 @@ final List<Preset> demoPresets = <Preset>[
     hint: 'Re-running this is safe: the same PAN returns already_existing.',
   ),
   Preset(
+    id: 'cof-pay-saved',
     name: 'Pay with saved card (COF)',
     body: cofPaySavedBody,
     expected: 'Charged the stored card without retyping it.',
     hint: 'Run "Store card (COF)" first, or the card list will be empty.',
   ),
   Preset(
+    id: 'google-pay',
     name: 'Google Pay (Android)',
     body: defaultBody(),
     // Two merchant-level attributes gate the wallet button and neither has
