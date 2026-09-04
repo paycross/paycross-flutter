@@ -1,0 +1,26 @@
+name: Publish to pub.dev
+
+# One `vX.Y.Z` tag is one release on pub.dev. pub.dev trusts this repository's
+# GitHub Actions identity (Admin → Automated publishing: repository
+# paycross/paycross-flutter, tag pattern v{{version}}, environment pub.dev),
+# so no account, token or secret is involved. The `pub.dev` environment's
+# required reviewer is the approval gate: the run waits until an admin
+# approves it in the Actions UI.
+#
+# The tag must equal `version:` in pubspec.yaml — pub.dev rejects the upload
+# otherwise. demo-v* tags belong to demo-release.yml and do not match this
+# pattern, so the two never fire together.
+#
+# The reusable workflow installs both the Dart and Flutter SDKs, runs
+# `dart pub get`, a `--dry-run`, then `dart pub publish -f`.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+jobs:
+  publish:
+    permissions:
+      id-token: write # pub.dev authenticates the run through GitHub's OIDC token
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      environment: pub.dev
