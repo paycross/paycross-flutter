@@ -19,7 +19,8 @@ export 'src/recovery.dart'
         RecoveryDoNotRetry,
         RecoveryRestart,
         RecoveryRetry,
-        RecoveryUnrecognized;
+        RecoveryUnrecognized,
+        RecoveryVerifyBeforeRetry;
 export 'src/result.dart'
     show
         PayCrossAmount,

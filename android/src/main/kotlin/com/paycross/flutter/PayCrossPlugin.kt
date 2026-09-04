@@ -247,7 +247,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
         /** Private to the SDK's internal PaymentActivity; mirrored deliberately. */
         const val EXTRA_RESULT = "result"
 
-        const val PLUGIN_VERSION = "0.2.1"
+        const val PLUGIN_VERSION = "0.3.0"
 
         const val ERROR_NOT_CONFIGURED = "paycross_not_configured"
         const val ERROR_BUSY = "paycross_busy"
@@ -288,7 +288,7 @@ private fun PcTestCardPrefill.toNative() = TestCardPrefill(
     saveCard = saveCard
 )
 
-private fun PayCrossResult.toPigeon(): PcPaymentResult = when (this) {
+internal fun PayCrossResult.toPigeon(): PcPaymentResult = when (this) {
     is PayCrossResult.Success -> PcSuccess(
         transactionId = transactionId,
         status = status,
@@ -297,28 +297,37 @@ private fun PayCrossResult.toPigeon(): PcPaymentResult = when (this) {
 
     is PayCrossResult.Failure -> PcFailure(
         transactionId = transactionId,
-        // The canonical token, not the enum name. Dart re-parses it with the
-        // same rules, so the two platforms agree without Dart having to know
-        // Kotlin's naming.
-        recovery = recovery.toApiValue()
+        // The server's own string when there is one, so a value this SDK could
+        // not read still reaches Dart verbatim and lands on
+        // RecoveryUnrecognized rather than being rewritten. Falls back to the
+        // canonical token for a failure the SDK raised itself, which has no
+        // server value. Either way Dart re-parses it with the same rules, so
+        // the two platforms agree without Dart knowing Kotlin's naming.
+        recovery = recoveryRaw ?: recovery.toApiValue()
     )
 
-    PayCrossResult.Cancelled -> PcCancelled()
+    is PayCrossResult.Cancelled -> PcCancelled(transactionId = transactionId)
 }
 
 /**
  * Back to the wire token the server uses.
  *
- * Android's Recovery is a closed enum that discards the server's original
- * string, so an unrecognised value has already collapsed to DO_NOT_RETRY before
- * the plugin sees it. iOS preserves the raw value and will therefore produce
- * `unrecognized` where Android cannot. Documented asymmetry, fixable only in
- * the Android SDK.
+ * Only reached when there is no server string to pass through instead, which
+ * means the SDK raised the failure itself. The asymmetry this comment used to
+ * describe is gone: Android 0.4.0 keeps the server's value on
+ * `Failure.recoveryRaw`, so both platforms can now produce `unrecognized` with
+ * the original token, iOS from inside its enum and Android from beside it.
  */
-private fun Recovery.toApiValue(): String = when (this) {
+internal fun Recovery.toApiValue(): String = when (this) {
     Recovery.RETRY -> "retry"
     Recovery.CHANGE_METHOD -> "change_method"
     Recovery.RESTART -> "restart"
     Recovery.CONTACT_SUPPORT -> "contact_support"
     Recovery.DO_NOT_RETRY -> "do_not_retry"
+    Recovery.VERIFY_BEFORE_RETRY -> "verify_before_retry"
+    // Unreachable in practice: the SDK only produces UNRECOGNIZED by parsing a
+    // server value, which it then also carries on recoveryRaw. Deliberately not
+    // the empty string, which Dart reads as "absent, so retry" - the one answer
+    // that must never come out of an unreadable instruction.
+    Recovery.UNRECOGNIZED -> "unrecognized"
 }

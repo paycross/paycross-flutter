@@ -121,7 +121,7 @@ class _RunScreenState extends State<RunScreen> {
       transactionId = switch (paid) {
         PayCrossSuccess(:final transactionId) => transactionId,
         PayCrossFailure(:final transactionId) => transactionId,
-        PayCrossCancelled() => null,
+        PayCrossCancelled(:final transactionId) => transactionId,
       };
     } on PayCrossIntegrationError catch (problem) {
       label = labelForError(problem);

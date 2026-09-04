@@ -200,6 +200,42 @@ void main() {
     expect(stored.single.presetName, _preset.name);
   });
 
+  /// A cancel does not cancel the authorization, so the attempt the shopper
+  /// walked away from is exactly the one someone will come asking about.
+  testWidgets('a cancelled run keeps the transaction it abandoned', (
+    tester,
+  ) async {
+    final backend = InMemoryHistoryBackend();
+    final history = HistoryStore(backend: backend);
+
+    await tester.pumpWidget(
+      _run(
+        present: (_) async =>
+            const PayCrossCancelled(transactionId: 'txn-abandoned'),
+        history: history,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final stored = await history.read();
+    expect(stored.single.transactionId, 'txn-abandoned');
+  });
+
+  testWidgets('a cancelled run before any transaction records none', (
+    tester,
+  ) async {
+    final backend = InMemoryHistoryBackend();
+    final history = HistoryStore(backend: backend);
+
+    await tester.pumpWidget(
+      _run(present: (_) async => const PayCrossCancelled(), history: history),
+    );
+    await tester.pumpAndSettle();
+
+    final stored = await history.read();
+    expect(stored.single.transactionId, isNull);
+  });
+
   testWidgets('the bug report is copyable from the run itself', (tester) async {
     final copied = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(

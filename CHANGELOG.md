@@ -1,3 +1,32 @@
+## 0.3.0
+
+Source-incompatible. The plugin's own result types change, so this is a minor
+bump and an exhaustive `switch` in merchant code needs updating.
+
+* `PayCrossCancelled` carries `transactionId`, the last transaction the session
+  created, or null when the sheet was dismissed before one existed. Dismissing
+  the sheet does not cancel the authorization: a shopper can walk away after a
+  decline or part-way through a 3-D Secure challenge, and the server keeps its
+  own record of the attempt. Until now there was nothing in the result to
+  reconcile it against. Constructing `PayCrossCancelled()` still compiles;
+  code that destructures it exhaustively gains a field.
+* `RecoveryVerifyBeforeRetry` is a new `PayCrossRecovery` case, from the wire
+  token `verify_before_retry`. It means the native SDK's status poll ran out of
+  time and never observed the outcome, so the payment may have succeeded and
+  shifted liability. It is not retryable, which is the point: this is the one
+  recovery where trying again can charge a shopper twice. A `switch` over
+  `PayCrossRecovery` needs a branch for it; code that checks
+  `recovery.isRetryable` rather than matching cases needs no change and gets
+  the safe answer already.
+* An unrecognised recovery from an Android session now reaches Dart with the
+  server's own string, so it lands on `RecoveryUnrecognized(value)` instead of
+  being reported as a terminal decline. Previously only iOS could produce that
+  case. Both platforms now agree on the same server response, which was the
+  point of the asymmetry note this release removes.
+* Requires the native iOS SDK at PayCross 0.3.0, up from 0.2.1, and the native
+  Android SDK at paycross-android 0.4.0, up from 0.3.4. Both native releases
+  carry the same three changes; this release is the plugin catching up to them.
+
 ## 0.2.1
 
 * Apple Pay and Google Pay are now offered on account-funding sessions, not

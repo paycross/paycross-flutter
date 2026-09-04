@@ -173,6 +173,6 @@ abstract final class PayCross {
       transactionId: raw.transactionId,
       recovery: PayCrossRecovery.fromApiValue(raw.recovery),
     ),
-    g.PcCancelled() => const PayCrossCancelled(),
+    g.PcCancelled() => PayCrossCancelled(transactionId: raw.transactionId),
   };
 }

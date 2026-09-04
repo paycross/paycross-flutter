@@ -32,8 +32,8 @@ class PayCrossAmount {
 ///     showRetryPrompt();
 ///   case PayCrossFailure():
 ///     showDeclined();
-///   case PayCrossCancelled():
-///     break;
+///   case PayCrossCancelled(:final transactionId):
+///     if (transactionId != null) await reconcile(transactionId);
 /// }
 /// ```
 sealed class PayCrossResult {
@@ -82,8 +82,17 @@ class PayCrossFailure extends PayCrossResult {
 
 /// The shopper dismissed the payment sheet.
 class PayCrossCancelled extends PayCrossResult {
-  const PayCrossCancelled();
+  const PayCrossCancelled({this.transactionId});
+
+  /// The last transaction this session created, or null when the sheet was
+  /// dismissed before one existed.
+  ///
+  /// Dismissing the sheet does not cancel the authorization. A shopper can walk
+  /// away after a decline or part-way through a 3-D Secure challenge, and the
+  /// server keeps its own record of the attempt, so this is what lets you
+  /// reconcile the one they left behind.
+  final String? transactionId;
 
   @override
-  String toString() => 'PayCrossCancelled()';
+  String toString() => 'PayCrossCancelled($transactionId)';
 }

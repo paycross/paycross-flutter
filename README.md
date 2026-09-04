@@ -65,8 +65,10 @@ switch (result) {
     // Declined, but the shopper may try again in the same session.
   case PayCrossFailure():
     // Declined, terminal for this session.
-  case PayCrossCancelled():
-    // The shopper dismissed the sheet.
+  case PayCrossCancelled(:final transactionId):
+    // The shopper dismissed the sheet. Dismissing it does not cancel the
+    // authorization, so transactionId names the attempt they left behind,
+    // or is null if there was none yet.
 }
 ```
 
@@ -105,8 +107,15 @@ prefill with production throws `testPrefillInProduction`.
 ## Errors
 
 A decline is **not** an error — it arrives as `PayCrossFailure` with a
-`PayCrossRecovery` hint. Thrown errors are always `PayCrossIntegrationError`,
-meaning the SDK was asked to do something it cannot:
+`PayCrossRecovery` hint. Check `recovery.isRetryable` rather than matching on
+cases: it is a whitelist, so anything the SDK could not read fails closed. Two
+recoveries are worth naming, because both mean "do not simply charge again":
+`RecoveryVerifyBeforeRetry`, where the status poll ran out of time and the
+payment may in fact have succeeded, and `RecoveryUnrecognized`, which carries
+the server's own token for a value this version does not know.
+
+Thrown errors are always `PayCrossIntegrationError`, meaning the SDK was asked
+to do something it cannot:
 
 | Code | Meaning |
 |------|---------|

@@ -186,7 +186,16 @@ class PcFailure extends PcPaymentResult {
 }
 
 class PcCancelled extends PcPaymentResult {
-  PcCancelled();
+  PcCancelled({this.transactionId});
+
+  /// The last transaction this session created, or null when the sheet was
+  /// dismissed before one existed.
+  ///
+  /// A cancel does not cancel the authorization: the shopper can walk away
+  /// after a decline or part-way through a 3-D Secure challenge, leaving a
+  /// transaction on the server that the host app would otherwise have no way
+  /// to name.
+  String? transactionId;
 }
 
 @HostApi()

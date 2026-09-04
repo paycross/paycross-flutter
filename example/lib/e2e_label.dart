@@ -44,9 +44,9 @@ String labelForError(PayCrossIntegrationError error) =>
 /// token rather than the Dart class name is what lets a label be compared
 /// directly against the merchant API's `failure.recovery`.
 ///
-/// Exhaustive over the sealed class on purpose: a seventh recovery case
-/// becomes a compile error here rather than a silently wrong label in a cell
-/// that has already been signed off.
+/// Exhaustive over the sealed class on purpose: a new recovery case becomes a
+/// compile error here rather than a silently wrong label in a cell that has
+/// already been signed off.
 ///
 /// Not quite an inverse in one case: the legacy alias `contact_us` parses to
 /// [RecoveryContactSupport] and so labels as `contact_support`, which is not
@@ -57,5 +57,6 @@ String recoveryToken(PayCrossRecovery recovery) => switch (recovery) {
   RecoveryRestart() => 'restart',
   RecoveryDoNotRetry() => 'do_not_retry',
   RecoveryContactSupport() => 'contact_support',
+  RecoveryVerifyBeforeRetry() => 'verify_before_retry',
   RecoveryUnrecognized(:final value) => 'unrecognized($value)',
 };

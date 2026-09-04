@@ -16,6 +16,10 @@ void main() {
       expect(recoveryToken(const RecoveryRestart()), 'restart');
       expect(recoveryToken(const RecoveryDoNotRetry()), 'do_not_retry');
       expect(recoveryToken(const RecoveryContactSupport()), 'contact_support');
+      expect(
+        recoveryToken(const RecoveryVerifyBeforeRetry()),
+        'verify_before_retry',
+      );
     });
 
     test('carries the raw value for a token this SDK does not know', () {
@@ -32,6 +36,7 @@ void main() {
         'restart',
         'do_not_retry',
         'contact_support',
+        'verify_before_retry',
       ]) {
         expect(recoveryToken(PayCrossRecovery.fromApiValue(token)), token);
       }
@@ -66,8 +71,16 @@ void main() {
       );
     });
 
-    test('cancelled has no fields', () {
+    /// The label vocabulary was frozen in Phase 0 and every cell file in
+    /// `tool/e2e/` compares against it whole, so the cancelled label keeps its
+    /// shape even though the result now carries a transaction id. Changing it
+    /// would silently fail every cancel cell already signed off.
+    test('cancelled names no transaction, with or without one', () {
       expect(labelForResult(const PayCrossCancelled()), 'result:cancelled');
+      expect(
+        labelForResult(const PayCrossCancelled(transactionId: 'txn_1')),
+        'result:cancelled',
+      );
     });
   });
 
