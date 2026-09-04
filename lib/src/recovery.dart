@@ -40,6 +40,8 @@ sealed class PayCrossRecovery {
         return const RecoveryContactSupport();
       case 'do_not_retry':
         return const RecoveryDoNotRetry();
+      case 'verify_before_retry':
+        return const RecoveryVerifyBeforeRetry();
       default:
         return RecoveryUnrecognized(value!.trim());
     }
@@ -81,13 +83,28 @@ class RecoveryDoNotRetry extends PayCrossRecovery {
   String toString() => 'RecoveryDoNotRetry()';
 }
 
+/// The outcome was never observed. Check the transaction before re-collecting.
+///
+/// Raised when the native SDK's status poll runs out of time, which a lost
+/// network makes indistinguishable from a blip. The payment may well have
+/// succeeded and shifted liability, so this is the one case where retrying can
+/// charge a shopper twice. Not retryable, and the failure carries a
+/// transaction id precisely so the outcome can be resolved out of band.
+class RecoveryVerifyBeforeRetry extends PayCrossRecovery {
+  const RecoveryVerifyBeforeRetry();
+  @override
+  String toString() => 'RecoveryVerifyBeforeRetry()';
+}
+
 /// A value this version of the SDK does not know.
 ///
 /// Treated as not retryable. [value] is the server's token, kept so it can be
 /// logged and acted on without shipping a new SDK first.
 ///
-/// Currently only reachable on iOS: the Android SDK's `Recovery` is a closed
-/// enum that discards unknown values before the plugin can see them.
+/// Reachable on both platforms. iOS has always kept the raw string inside its
+/// enum, as `unrecognized(String)`; Android used to discard it, and from SDK
+/// 0.4.0 keeps it beside the enum on `Failure.recoveryRaw`, which the plugin
+/// passes through.
 class RecoveryUnrecognized extends PayCrossRecovery {
   const RecoveryUnrecognized(this.value);
 

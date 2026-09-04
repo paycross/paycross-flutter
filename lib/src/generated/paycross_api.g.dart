@@ -517,10 +517,19 @@ class PcFailure extends PcPaymentResult {
 }
 
 class PcCancelled extends PcPaymentResult {
-  PcCancelled();
+  PcCancelled({this.transactionId});
+
+  /// The last transaction this session created, or null when the sheet was
+  /// dismissed before one existed.
+  ///
+  /// A cancel does not cancel the authorization: the shopper can walk away
+  /// after a decline or part-way through a 3-D Secure challenge, leaving a
+  /// transaction on the server that the host app would otherwise have no way
+  /// to name.
+  String? transactionId;
 
   List<Object?> _toList() {
-    return <Object?>[];
+    return <Object?>[transactionId];
   }
 
   Object encode() {
@@ -529,7 +538,7 @@ class PcCancelled extends PcPaymentResult {
 
   static PcCancelled decode(Object result) {
     result as List<Object?>;
-    return PcCancelled();
+    return PcCancelled(transactionId: result[0] as String?);
   }
 
   @override
@@ -538,7 +547,10 @@ class PcCancelled extends PcPaymentResult {
     if (other is! PcCancelled || other.runtimeType != runtimeType) {
       return false;
     }
-    return true;
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(transactionId, other.transactionId);
   }
 
   @override
@@ -547,7 +559,7 @@ class PcCancelled extends PcPaymentResult {
 
   @override
   String toString() {
-    return 'PcCancelled()';
+    return 'PcCancelled(transactionId: $transactionId)';
   }
 }
 

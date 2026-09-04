@@ -587,14 +587,28 @@ data class PcFailure (
 }
 
 /** Generated class from Pigeon that represents data sent in messages. */
-class PcCancelled  : PcPaymentResult() {
+data class PcCancelled (
+  /**
+   * The last transaction this session created, or null when the sheet was
+   * dismissed before one existed.
+   *
+   * A cancel does not cancel the authorization: the shopper can walk away
+   * after a decline or part-way through a 3-D Secure challenge, leaving a
+   * transaction on the server that the host app would otherwise have no way
+   * to name.
+   */
+  val transactionId: String? = null
+) : PcPaymentResult()
+ {
   companion object {
     fun fromList(pigeonVar_list: List<Any?>): PcCancelled {
-      return PcCancelled()
+      val transactionId = pigeonVar_list[0] as String?
+      return PcCancelled(transactionId)
     }
   }
   fun toList(): List<Any?> {
     return listOf(
+      transactionId,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -604,15 +618,17 @@ class PcCancelled  : PcPaymentResult() {
     if (this === other) {
       return true
     }
-    return true
+    val other = other as PcCancelled
+    return PayCrossApiPigeonUtils.deepEquals(this.transactionId, other.transactionId)
   }
 
   override fun hashCode(): Int {
     var result = javaClass.hashCode()
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.transactionId)
     return result
   }
   override fun toString(): String {
-    return "PcCancelled()"
+    return "PcCancelled(transactionId=$transactionId)"
   }
 }
 private open class PayCrossApiPigeonCodec : StandardMessageCodec() {

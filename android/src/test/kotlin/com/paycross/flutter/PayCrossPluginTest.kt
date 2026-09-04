@@ -1,7 +1,11 @@
 package com.paycross.flutter
 
 import com.paycross.flutter.generated.FlutterError
+import com.paycross.flutter.generated.PcCancelled
+import com.paycross.flutter.generated.PcFailure
 import com.paycross.flutter.generated.PcPaymentResult
+import com.paycross.sdk.PayCrossResult
+import com.paycross.sdk.Recovery
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -44,9 +48,59 @@ internal class PayCrossPluginTest {
     fun versionInfo_reportsPluginVersionAndNoNativeVersion() {
         val info = PayCrossPlugin().versionInfo()
 
-        assertEquals("0.2.1", info.pluginVersion)
+        assertEquals("0.3.0", info.pluginVersion)
         // The Android SDK declares no version constant; the plugin reports
         // null rather than fabricating one.
         assertNull(info.nativeSdkVersion)
+    }
+
+    @Test
+    fun failure_sendsTheServersOwnRecoveryValue() {
+        val pigeon = PayCrossResult.Failure(
+            transactionId = "tx-1",
+            recovery = Recovery.UNRECOGNIZED,
+            recoveryRaw = "issuer_wants_a_phone_call"
+        ).toPigeon() as PcFailure
+
+        // Verbatim, so Dart lands on RecoveryUnrecognized with the real token
+        // rather than reporting a terminal decline it never received.
+        assertEquals("issuer_wants_a_phone_call", pigeon.recovery)
+    }
+
+    @Test
+    fun failure_withoutAServerValue_sendsTheCanonicalToken() {
+        val pigeon = PayCrossResult.Failure(
+            transactionId = "tx-2",
+            recovery = Recovery.VERIFY_BEFORE_RETRY
+        ).toPigeon() as PcFailure
+
+        assertEquals("verify_before_retry", pigeon.recovery)
+    }
+
+    @Test
+    fun everyRecoveryHasATokenAndNoneOfThemIsEmpty() {
+        // The empty string is how both SDKs spell "the server said nothing",
+        // which Dart reads as retry. No enum member may collapse to it.
+        for (recovery in Recovery.entries) {
+            assertEquals(
+                true,
+                recovery.toApiValue().isNotEmpty(),
+                "$recovery produced an empty wire token"
+            )
+        }
+    }
+
+    @Test
+    fun cancellation_carriesTheAttemptItWalkedAwayFrom() {
+        val pigeon = PayCrossResult.Cancelled(transactionId = "tx-3").toPigeon()
+
+        assertEquals("tx-3", (pigeon as PcCancelled).transactionId)
+    }
+
+    @Test
+    fun cancellation_beforeAnyTransaction_carriesNone() {
+        val pigeon = PayCrossResult.Cancelled(transactionId = null).toPigeon()
+
+        assertNull((pigeon as PcCancelled).transactionId)
     }
 }

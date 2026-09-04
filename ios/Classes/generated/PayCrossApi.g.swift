@@ -557,31 +557,43 @@ struct PcFailure: PcPaymentResult {
 
 /// Generated class from Pigeon that represents data sent in messages.
 struct PcCancelled: PcPaymentResult {
+  /// The last transaction this session created, or null when the sheet was
+  /// dismissed before one existed.
+  ///
+  /// A cancel does not cancel the authorization: the shopper can walk away
+  /// after a decline or part-way through a 3-D Secure challenge, leaving a
+  /// transaction on the server that the host app would otherwise have no way
+  /// to name.
+  var transactionId: String? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
   static func fromList(_ pigeonVar_list: [Any?]) -> PcCancelled? {
+    let transactionId: String? = nilOrValue(pigeonVar_list[0])
 
     return PcCancelled(
+      transactionId: transactionId
     )
   }
   func toList() -> [Any?] {
     return [
+      transactionId
     ]
   }
   static func == (lhs: PcCancelled, rhs: PcCancelled) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return true
+    return PayCrossApiPigeonInternal.deepEquals(lhs.transactionId, rhs.transactionId)
   }
 
   func hash(into hasher: inout Hasher) {
     hasher.combine("PcCancelled")
+    PayCrossApiPigeonInternal.deepHash(value: transactionId, hasher: &hasher)
   }
 
   public var description: String {
-    return "PcCancelled()"
+    return "PcCancelled(transactionId: \(String(describing: transactionId)))"
   }
 }
 

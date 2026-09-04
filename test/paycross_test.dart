@@ -85,6 +85,29 @@ void main() {
       PayCross.debugHostApi = (FakeHost(result: g.PcCancelled()));
       expect(await PayCross.presentPayment('token'), isA<PayCrossCancelled>());
     });
+
+    /// Dismissing the sheet does not cancel the authorization, so a shopper who
+    /// walks away after a decline leaves a transaction the host has to be able
+    /// to name.
+    test('a cancellation carries the attempt it walked away from', () async {
+      PayCross.debugHostApi = (FakeHost(
+        result: g.PcCancelled(transactionId: 'txn_9'),
+      ));
+
+      final result =
+          await PayCross.presentPayment('token') as PayCrossCancelled;
+
+      expect(result.transactionId, 'txn_9');
+    });
+
+    test('a cancellation before any transaction carries none', () async {
+      PayCross.debugHostApi = (FakeHost(result: g.PcCancelled()));
+
+      final result =
+          await PayCross.presentPayment('token') as PayCrossCancelled;
+
+      expect(result.transactionId, isNull);
+    });
   });
 
   group('recovery parsing', () {
@@ -101,6 +124,20 @@ void main() {
       expect(await parse('change_method'), isA<RecoveryChangeMethod>());
       expect(await parse('restart'), isA<RecoveryRestart>());
       expect(await parse('do_not_retry'), isA<RecoveryDoNotRetry>());
+      expect(
+        await parse('verify_before_retry'),
+        isA<RecoveryVerifyBeforeRetry>(),
+      );
+    });
+
+    /// The one recovery where retrying can charge a shopper twice: the poll ran
+    /// out of time, so the payment may have succeeded and shifted liability.
+    test('verify_before_retry is known, and is not retryable', () async {
+      final recovery = await parse('verify_before_retry');
+
+      expect(recovery, isA<RecoveryVerifyBeforeRetry>());
+      expect(recovery, isNot(isA<RecoveryUnrecognized>()));
+      expect(recovery.isRetryable, isFalse);
     });
 
     test('contact_us is an alias for contact_support', () async {
@@ -132,7 +169,12 @@ void main() {
     test('only retry and change_method are retryable', () async {
       expect((await parse('retry')).isRetryable, isTrue);
       expect((await parse('change_method')).isRetryable, isTrue);
-      for (final token in ['restart', 'contact_support', 'do_not_retry']) {
+      for (final token in [
+        'restart',
+        'contact_support',
+        'do_not_retry',
+        'verify_before_retry',
+      ]) {
         expect((await parse(token)).isRetryable, isFalse, reason: token);
       }
     });
