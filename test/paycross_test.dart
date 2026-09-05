@@ -160,6 +160,26 @@ void main() {
       expect(pending.reasonRaw, 'verify_before_retry');
     });
 
+    /// reasonRaw is what arrived, not what the plugin decided it meant. The
+    /// parse normalises; the record of the server's own spelling does not.
+    test(
+      'a pending outcome mapped from a failure keeps the server spelling',
+      () async {
+        PayCross.debugHostApi = (FakeHost(
+          result: g.PcFailure(
+            transactionId: 'txn_2',
+            recovery: '  VERIFY_BEFORE_RETRY ',
+          ),
+        ));
+
+        final pending =
+            await PayCross.presentPayment('token') as PayCrossPending;
+
+        expect(pending.reason, PayCrossPendingReason.serverVerify);
+        expect(pending.reasonRaw, '  VERIFY_BEFORE_RETRY ');
+      },
+    );
+
     /// A lost result is not an integration mistake: the payment may have been
     /// authorized. It returns as a value so the merchant's own switch has to
     /// decide what to do about it, instead of landing in a catch block that

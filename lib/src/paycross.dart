@@ -132,6 +132,8 @@ abstract final class PayCross {
       // merchant's exhaustive switch, where the compiler asks for a decision,
       // rather than in a catch block written once and forgotten.
       if (e.code == payCrossResultLostCode) {
+        // The canonical name, because nothing sent one: a native side that
+        // has lost its result has only an error code left to send.
         return const PayCrossPending(
           transactionId: null,
           reason: PayCrossPendingReason.resultLost,
@@ -194,9 +196,10 @@ abstract final class PayCross {
       PayCrossPending(
         transactionId: raw.transactionId,
         reason: PayCrossPendingReason.serverVerify,
-        // The canonical recovery token, which is what actually arrived. Not
-        // 'server_verify': that is the pending vocabulary, and nothing sent it.
-        reasonRaw: 'verify_before_retry',
+        // The recovery token exactly as it arrived, spacing and casing and
+        // all. Not 'server_verify': that is the pending vocabulary, and
+        // nothing sent it.
+        reasonRaw: raw.recovery,
       ),
     // The raw token is parsed here rather than crossing as an enum, so a
     // recovery value the server adds later degrades to "unrecognised, not

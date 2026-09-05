@@ -1,3 +1,5 @@
+import 'wire.dart';
+
 /// What the shopper can do after a declined payment.
 ///
 /// Deliberately a sealed class rather than an enum, and deliberately parsed in
@@ -26,7 +28,7 @@ sealed class PayCrossRecovery {
   /// including the trim, the lowercasing, the `contact_us` alias and the
   /// absent-means-retry default.
   factory PayCrossRecovery.fromApiValue(String? value) {
-    switch (value?.trim().toLowerCase()) {
+    switch (normalizedWireToken(value)) {
       case null:
       case '':
       case 'retry':
@@ -83,13 +85,17 @@ class RecoveryDoNotRetry extends PayCrossRecovery {
   String toString() => 'RecoveryDoNotRetry()';
 }
 
-/// The outcome was never observed. Check the transaction before re-collecting.
+/// The outcome was never observed.
 ///
-/// Raised when the native SDK's status poll runs out of time, which a lost
-/// network makes indistinguishable from a blip. The payment may well have
-/// succeeded and shifted liability, so this is the one case where retrying can
-/// charge a shopper twice. Not retryable, and the failure carries a
-/// transaction id precisely so the outcome can be resolved out of band.
+/// **No longer reachable through `PayCross.presentPayment`.** Every
+/// verify-before-retry is a `PayCrossPending` now, because it is the one
+/// outcome where reading a decline and charging again can charge a shopper
+/// twice — see `PayCrossPending` for what to do about it, and for the
+/// transaction id to reconcile against.
+///
+/// This case remains so that [PayCrossRecovery.fromApiValue] still parses the
+/// raw token, and still refuses to call it retryable, for anything that reads
+/// a server response directly.
 class RecoveryVerifyBeforeRetry extends PayCrossRecovery {
   const RecoveryVerifyBeforeRetry();
   @override

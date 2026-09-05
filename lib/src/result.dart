@@ -1,4 +1,5 @@
 import 'recovery.dart';
+import 'wire.dart';
 
 /// How much, in the smallest unit of the currency.
 class PayCrossAmount {
@@ -107,10 +108,16 @@ class PayCrossPending extends PayCrossResult {
   /// thing for what the merchant must do next.
   final PayCrossPendingReason reason;
 
-  /// The wire name exactly as it arrived, kept for the same reason
-  /// [PayCrossRecovery] keeps its token: a reason added after this version
-  /// ships is still loggable rather than lost to
+  /// The token this outcome arrived with, unparsed, kept for the same reason
+  /// [PayCrossRecovery] keeps its own: a value added after this version ships
+  /// is still loggable rather than lost to
   /// [PayCrossPendingReason.unrecognized].
+  ///
+  /// Usually the wire name a native SDK sent, verbatim. Two cases have no such
+  /// value to carry, and the plugin fills in the canonical name instead: a
+  /// result lost on the way out of a native SDK, which is `result_lost`, and a
+  /// failure still carrying the older `verify_before_retry` recovery, where the
+  /// recovery token itself is kept because it is what actually arrived.
   final String reasonRaw;
 
   @override
@@ -142,13 +149,13 @@ enum PayCrossPendingReason {
 
   /// Parses the wire name both native SDKs send.
   ///
-  /// Trims and lowercases exactly as [PayCrossRecovery.fromApiValue] does, so
-  /// the two vocabularies cannot drift in how they are read. Unlike recovery
-  /// there is no absent-means-something default: an empty or missing reason is
-  /// [unrecognized], because there is no safe reading of an unknown outcome to
-  /// fall back on.
+  /// Reads the token through the same normaliser [PayCrossRecovery.fromApiValue]
+  /// uses, so the two vocabularies cannot drift in how they are read. Unlike
+  /// recovery there is no absent-means-something default: an empty or missing
+  /// reason is [unrecognized], because there is no safe reading of an unknown
+  /// outcome to fall back on.
   static PayCrossPendingReason fromWireName(String? value) =>
-      switch (value?.trim().toLowerCase()) {
+      switch (normalizedWireToken(value)) {
         'poll_timeout' => pollTimeout,
         'result_lost' => resultLost,
         'server_verify' => serverVerify,

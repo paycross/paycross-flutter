@@ -1,7 +1,7 @@
 # A blank token. The only integration error whose mapping is not in doubt:
 # both plugins check it natively before anything else, ahead of even the
 # not-configured guard -- PayCrossPlugin.swift:59-61 and
-# PayCrossPlugin.kt:126-130 -- and both answer paycross_invalid_token.
+# PayCrossPlugin.kt:128-132 -- and both answer paycross_invalid_token.
 #
 # The field is empty on a cold start, so this cell simply presses Pay. The
 # session it minted goes unused, and asserting txn_count 0 on it is what
