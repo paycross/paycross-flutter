@@ -70,6 +70,19 @@ jobs:
             --build-name "${GITHUB_REF_NAME#demo-v}" \
             --build-number "$(git rev-list --count "$GITHUB_REF_NAME")"
 
+      - name: Build the signed app bundle
+        working-directory: example
+        env:
+          DEMO_KEYSTORE_FILE: ${{ runner.temp }}/demo-upload.p12
+          DEMO_KEYSTORE_PASSWORD: ${{ secrets.DEMO_KEYSTORE_PASSWORD }}
+          DEMO_KEY_ALIAS: ${{ secrets.DEMO_KEY_ALIAS }}
+          DEMO_KEY_PASSWORD: ${{ secrets.DEMO_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          flutter build appbundle --release \
+            --build-name "${GITHUB_REF_NAME#demo-v}" \
+            --build-number "$(git rev-list --count "$GITHUB_REF_NAME")"
+
       - name: Verify the certificate before anything is published
         env:
           DEMO_KEYSTORE_SHA256: ${{ vars.DEMO_KEYSTORE_SHA256 }}
@@ -86,6 +99,8 @@ jobs:
           # A debug-signed APK installs and runs and passes everything else,
           # then refuses to upgrade in place later. Fail here, not there.
           grep -qF "$DEMO_KEYSTORE_SHA256" certs.txt
+          AAB=example/build/app/outputs/bundle/release/app-release.aab
+          keytool -printcert -jarfile "$AAB" | grep SHA256 | tr -d ': ' | grep -qiF "$DEMO_KEYSTORE_SHA256"
 
       - name: Publish the release
         env:
@@ -94,6 +109,8 @@ jobs:
           set -euo pipefail
           APK=example/build/app/outputs/flutter-apk/app-release.apk
           cp "$APK" "paycross-demo-${GITHUB_REF_NAME}.apk"
+          AAB=example/build/app/outputs/bundle/release/app-release.aab
+          cp "$AAB" "paycross-demo-${GITHUB_REF_NAME}.aab"
           {
             echo "PayCross Demo ${GITHUB_REF_NAME#demo-v}"
             echo
@@ -103,10 +120,12 @@ jobs:
             echo "section of example/README.md before switching."
             echo
             echo "Install with \`adb install -r paycross-demo-${GITHUB_REF_NAME}.apk\`."
+            echo "The .aab is the same build for the Play Console."
             echo "See example/README.md for the credentials, the scenarios and"
             echo "the test-card cheat sheet — including the three PANs not to use."
           } > notes.md
           gh release create "$GITHUB_REF_NAME" \
             "paycross-demo-${GITHUB_REF_NAME}.apk" \
+            "paycross-demo-${GITHUB_REF_NAME}.aab" \
             --title "PayCross Demo ${GITHUB_REF_NAME#demo-v}" \
             --notes-file notes.md
