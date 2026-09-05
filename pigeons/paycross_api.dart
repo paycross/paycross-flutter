@@ -22,7 +22,8 @@ import 'package:pigeon/pigeon.dart';
     kotlinOut:
         'android/src/main/kotlin/com/paycross/flutter/generated/PayCrossApi.g.kt',
     kotlinOptions: KotlinOptions(package: 'com.paycross.flutter.generated'),
-    swiftOut: 'ios/paycross_flutter/Sources/paycross_flutter/generated/PayCrossApi.g.swift',
+    swiftOut:
+        'ios/paycross_flutter/Sources/paycross_flutter/generated/PayCrossApi.g.swift',
   ),
 )
 /// The backend the native SDK talks to.
