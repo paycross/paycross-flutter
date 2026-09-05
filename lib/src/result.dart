@@ -69,9 +69,10 @@ class PayCrossSuccess extends PayCrossResult {
   ///
   /// Null on every payment that stored no new card — the session did not ask
   /// for one (`save_card_config` is set when the session is created, not from
-  /// here), or the shopper paid with a card that was already on file. A
-  /// payment on a stored card carries no token, so do not read a null here as
-  /// the card having been forgotten.
+  /// here), the shopper left the save box unticked (it defaults to off), or
+  /// the shopper paid with a card that was already on file. A payment on a
+  /// stored card carries no token, so do not read a null here as the card
+  /// having been forgotten.
   final String? savedCardToken;
 
   /// False in the already-complete-session case above.

@@ -113,8 +113,10 @@ your customer; it is what you send to charge that card again. It is null on
 every payment that saved nothing.
 
 Showing a shopper the cards they already saved is a session option too:
-`saved_cards.show` lists them, `saved_cards.preselect` opens the sheet with one
-chosen, and `saved_cards.allow_removal` lets the shopper delete one. The native
+`saved_cards.show: "all"` lists them (or `saved_cards.tokens` names which ones;
+`show` is not a boolean), `saved_cards.preselect` opens the sheet with the
+most recently used one chosen, and `saved_cards.allow_removal` lets the
+shopper delete one. The native
 sheets render all of it, so there is nothing to build and nothing to call from
 Dart. CVC is always asked for on a saved card.
 
