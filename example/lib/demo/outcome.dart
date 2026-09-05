@@ -18,9 +18,14 @@ import 'money.dart';
 String humanOutcome(PayCrossResult outcome) => switch (outcome) {
   // Written by the same formatter as the tile the person tapped, so a
   // "£1.00" on the way in cannot come back as "100 GBP" on the way out.
-  PayCrossSuccess(:final transactionId, :final amount) =>
+  PayCrossSuccess(:final transactionId, :final amount, :final savedCardToken) =>
     'Approved — ${formatMoney(amount.minorUnits, amount.currencyCode)}, '
-        'transaction $transactionId',
+        'transaction $transactionId'
+        // In full, like the Android demo: a tester's next step is to read
+        // it back off the API as `stored_credentials.saved_token`, which a
+        // masked value cannot do. It charges nothing without the merchant
+        // credentials, which this app does not show and never stores here.
+        '${savedCardToken == null ? '' : ', saved card $savedCardToken'}',
   PayCrossFailure(:final transactionId, :final recovery)
       when recovery.isRetryable =>
     'Refused, worth another attempt — recovery ${recoveryToken(recovery)}'

@@ -31,6 +31,26 @@ void main() {
     );
   });
 
+  test('a success that saved a card names the token', () {
+    // A saved-card run is verified by reading this token back off the API, so
+    // it is shown whole rather than masked.
+    expect(
+      humanOutcome(
+        const PayCrossSuccess(
+          transactionId: 'txn_2',
+          status: 'success',
+          amount: PayCrossAmount(minorUnits: 1000, currencyCode: 'EUR'),
+          savedCardToken: 'tok_1',
+        ),
+      ),
+      'Approved — €10.00, transaction txn_2, saved card tok_1',
+    );
+  });
+
+  test('a success that saved nothing names no token', () {
+    expect(humanOutcome(_success('txn_3')), isNot(contains('saved card')));
+  });
+
   test('a refusal names the recovery the server sent', () {
     expect(
       humanOutcome(
