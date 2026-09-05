@@ -1,4 +1,5 @@
 import 'recovery.dart';
+import 'wire.dart';
 
 /// How much, in the smallest unit of the currency.
 class PayCrossAmount {
@@ -32,6 +33,8 @@ class PayCrossAmount {
 ///     showRetryPrompt();
 ///   case PayCrossFailure():
 ///     showDeclined();
+///   case PayCrossPending(:final transactionId):
+///     await reconcile(transactionId);
 ///   case PayCrossCancelled(:final transactionId):
 ///     if (transactionId != null) await reconcile(transactionId);
 /// }
@@ -78,6 +81,86 @@ class PayCrossFailure extends PayCrossResult {
 
   @override
   String toString() => 'PayCrossFailure($transactionId, $recovery)';
+}
+
+/// The outcome was never observed. The payment **may have succeeded**.
+///
+/// Neither a success nor a decline. The SDK never saw a verdict, and a payment
+/// that completed and shifted liability is indistinguishable from one that
+/// never happened, so this is the one outcome where charging again can charge
+/// the shopper twice.
+///
+/// Reconcile server-side against [transactionId] before collecting anything
+/// else. Never retry blindly, and never present it to the shopper as a
+/// decline.
+class PayCrossPending extends PayCrossResult {
+  const PayCrossPending({
+    this.transactionId,
+    required this.reason,
+    required this.reasonRaw,
+  });
+
+  /// The transaction to reconcile against, or null when the result was lost
+  /// before one was known.
+  final String? transactionId;
+
+  /// Why the outcome is unknown. Informational: every reason means the same
+  /// thing for what the merchant must do next.
+  final PayCrossPendingReason reason;
+
+  /// The token this outcome arrived with, unparsed, kept for the same reason
+  /// [PayCrossRecovery] keeps its own: a value added after this version ships
+  /// is still loggable rather than lost to
+  /// [PayCrossPendingReason.unrecognized].
+  ///
+  /// Usually the wire name a native SDK sent, verbatim. A failure still
+  /// carrying the older `verify_before_retry` recovery keeps that recovery
+  /// token, because it is what actually arrived. One case has no value to
+  /// carry: a result lost on the way out of a native SDK, where the plugin
+  /// fills in the canonical `result_lost`.
+  final String reasonRaw;
+
+  @override
+  String toString() =>
+      'PayCrossPending($transactionId, ${reason.name}, $reasonRaw)';
+}
+
+/// Why a payment's outcome is unknown.
+///
+/// A closed enum here, unlike [PayCrossRecovery], because nothing branches on
+/// it: the answer to every reason is the same, and [PayCrossPending.reasonRaw]
+/// carries the value a future reason would need. What the enum buys is a
+/// readable log line and a switchable value for telemetry.
+enum PayCrossPendingReason {
+  /// The native SDK's status poll reached its deadline without a verdict.
+  pollTimeout,
+
+  /// A result existed but never reached Dart — the engine or the host Activity
+  /// went away, or the result payload did not survive the platform channel.
+  resultLost,
+
+  /// The server answered `verify_before_retry`, which says it has no verdict
+  /// to give either.
+  serverVerify,
+
+  /// A wire name this version of the plugin does not know. Read
+  /// [PayCrossPending.reasonRaw] for what actually arrived.
+  unrecognized;
+
+  /// Parses the wire name both native SDKs send.
+  ///
+  /// Reads the token through the same normaliser [PayCrossRecovery.fromApiValue]
+  /// uses, so the two vocabularies cannot drift in how they are read. Unlike
+  /// recovery there is no absent-means-something default: an empty or missing
+  /// reason is [unrecognized], because there is no safe reading of an unknown
+  /// outcome to fall back on.
+  static PayCrossPendingReason fromWireName(String? value) =>
+      switch (normalizedWireToken(value)) {
+        'poll_timeout' => pollTimeout,
+        'result_lost' => resultLost,
+        'server_verify' => serverVerify,
+        _ => unrecognized,
+      };
 }
 
 /// The shopper dismissed the payment sheet.

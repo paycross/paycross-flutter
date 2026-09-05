@@ -10,6 +10,7 @@ import com.paycross.flutter.generated.PcConfiguration
 import com.paycross.flutter.generated.PcEnvironment
 import com.paycross.flutter.generated.PcFailure
 import com.paycross.flutter.generated.PcPaymentResult
+import com.paycross.flutter.generated.PcPending
 import com.paycross.flutter.generated.PcSuccess
 import com.paycross.flutter.generated.PcTestCardPrefill
 import com.paycross.flutter.generated.PcVersionInfo
@@ -17,6 +18,7 @@ import com.paycross.sdk.PayCross
 import com.paycross.sdk.PayCrossContract
 import com.paycross.sdk.PayCrossEnvironment
 import com.paycross.sdk.PayCrossResult
+import com.paycross.sdk.PendingReason
 import com.paycross.sdk.Recovery
 import com.paycross.sdk.TestCardPrefill
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -185,15 +187,11 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
         // clean cancellation for a payment that may have been authorized.
         val lost = resultCode == Activity.RESULT_OK && data?.hasExtra(EXTRA_RESULT) != true
         if (lost) {
-            return finishPending(
-                Result.failure(
-                    integrationError(
-                        ERROR_RESULT_UNKNOWN,
-                        "The payment Activity returned no result payload. The payment may " +
-                            "still have succeeded; reconcile server-side."
-                    )
-                )
-            )
+            // A success, not an error: the payment may have been authorized,
+            // and that is an outcome to reconcile rather than an integration
+            // mistake to catch. Dart turns it into PayCrossPending, which its
+            // exhaustive switch forces the merchant to answer.
+            return finishPending(Result.success(lostResult()))
         }
 
         val result = try {
@@ -306,8 +304,28 @@ internal fun PayCrossResult.toPigeon(): PcPaymentResult = when (this) {
         recovery = recoveryRaw ?: recovery.toApiValue()
     )
 
+    // The one outcome that can charge a shopper twice, and until 0.5.0 the one
+    // that crossed looking like an ordinary decline.
+    is PayCrossResult.Pending -> PcPending(
+        transactionId = transactionId,
+        // The enum's own wire name, so this mapping cannot drift from the
+        // vocabulary the iOS SDK sends for the same outcome.
+        reason = reason.wireName
+    )
+
     is PayCrossResult.Cancelled -> PcCancelled(transactionId = transactionId)
 }
+
+/**
+ * The outcome when the result payload never arrives.
+ *
+ * The SDK itself never produces RESULT_LOST - only this plugin can, because
+ * only this plugin's result crosses a platform channel that can drop it. The
+ * reason is in the shared vocabulary anyway, so merchant code handling pending
+ * outcomes handles this one on every platform.
+ */
+internal fun lostResult(): PcPending =
+    PcPending(transactionId = null, reason = PendingReason.RESULT_LOST.wireName)
 
 /**
  * Back to the wire token the server uses.

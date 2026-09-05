@@ -26,6 +26,8 @@ export 'src/result.dart'
         PayCrossAmount,
         PayCrossCancelled,
         PayCrossFailure,
+        PayCrossPending,
+        PayCrossPendingReason,
         PayCrossResult,
         PayCrossSuccess;
 export 'src/test_card_prefill.dart' show PayCrossTestCardPrefill;

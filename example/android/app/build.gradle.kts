@@ -74,8 +74,8 @@ android {
             // Intent and ships consumer rules to keep them; if those rules
             // ever stop being applied, R8 renames the classes, the result
             // never unmarshals, and every payment comes back as
-            // error:resultUnknown instead of its real outcome. Only a
-            // release build can show that, and only a real payment on one
+            // result:pending:result_lost: instead of its real outcome. Only
+            // a release build can show that, and only a real payment on one
             // can prove it does not.
             isMinifyEnabled = true
             isShrinkResources = true

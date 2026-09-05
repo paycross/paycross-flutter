@@ -22,7 +22,8 @@ import 'package:pigeon/pigeon.dart';
     kotlinOut:
         'android/src/main/kotlin/com/paycross/flutter/generated/PayCrossApi.g.kt',
     kotlinOptions: KotlinOptions(package: 'com.paycross.flutter.generated'),
-    swiftOut: 'ios/Classes/generated/PayCrossApi.g.swift',
+    swiftOut:
+        'ios/paycross_flutter/Sources/paycross_flutter/generated/PayCrossApi.g.swift',
   ),
 )
 /// The backend the native SDK talks to.
@@ -196,6 +197,26 @@ class PcCancelled extends PcPaymentResult {
   /// transaction on the server that the host app would otherwise have no way
   /// to name.
   String? transactionId;
+}
+
+/// The outcome was never observed. The payment MAY have succeeded.
+///
+/// Neither a success nor a decline: no verdict was ever seen, and a payment
+/// that completed and shifted liability is indistinguishable from one that
+/// never happened. It is a case of its own so the exhaustiveness both native
+/// SDKs were built around survives the crossing — collapsing it into
+/// PcFailure is what used to make the one double-charge risk look like an
+/// ordinary decline.
+class PcPending extends PcPaymentResult {
+  PcPending({this.transactionId, required this.reason});
+
+  /// The last transaction this session created, or null when the result was
+  /// lost before one was known.
+  String? transactionId;
+
+  /// The RAW wire name (`poll_timeout`, `result_lost`, `server_verify`), not a
+  /// parsed enum, for the same reason `PcFailure.recovery` is raw.
+  String reason;
 }
 
 @HostApi()

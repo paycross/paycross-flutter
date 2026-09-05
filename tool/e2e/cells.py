@@ -284,18 +284,29 @@ _CURRENCY = re.compile(r"^[A-Z]{3}$")
 #: contain colons. An empty `<txn>` is allowed; the app emits one when the
 #: session never reached a transaction.
 #:
-#: The two shapes that carry a transaction id share one trailing `:<txn>`,
+#: The three shapes that carry a transaction id share one trailing `:<txn>`,
 #: factored out here so it can be a named capture. `verify.match_label` reads
 #: it for a `<any>` cell, which names no id of its own and so has nothing else
 #: to cross-check against the merchant API. `result:cancelled` and `error:...`
 #: carry no id and the group is None for them, which is the honest answer:
 #: there was never one to read, as distinct from an empty one the app emitted
 #: because the session reached no transaction.
+#:
+#: `result:pending:` arrived with plugin 0.4.0. The outcome it names used to
+#: reach the app as `result:failure:verify_before_retry:<txn>`, which this
+#: pattern never accepted -- a discovery cell that hit a poll timeout was
+#: reported as a malformed label rather than as the unresolved payment it was.
+#: `verify_before_retry` is deliberately absent from the pending reasons: the
+#: plugin maps that recovery to the `server_verify` reason, so it is the
+#: vocabulary the app can actually emit that is listed here.
 LABEL_RE = re.compile(
     r"^(?:"
     r"(?:result:success"
     r"|result:failure:"
     r"(?:retry|change_method|restart|do_not_retry|contact_support"
+    r"|unrecognized\(.*\))"
+    r"|result:pending:"
+    r"(?:poll_timeout|result_lost|server_verify"
     r"|unrecognized\(.*\))"
     r"):(?P<txn>[^\s]*)"
     r"|result:cancelled"

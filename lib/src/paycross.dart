@@ -18,6 +18,7 @@ import 'test_card_prefill.dart';
 ///   case PayCrossSuccess(:final transactionId): await fulfil(transactionId);
 ///   case PayCrossFailure(:final recovery) when recovery.isRetryable: retry();
 ///   case PayCrossFailure(): showDeclined();
+///   case PayCrossPending(:final transactionId): reconcile(transactionId);
 ///   case PayCrossCancelled(): break;
 /// }
 /// ```
@@ -112,8 +113,9 @@ abstract final class PayCross {
   /// Future in `Future.timeout`: a shorter timeout abandons a live payment
   /// while the native SDK keeps polling, and the card may still be charged.
   ///
-  /// A decline is a [PayCrossFailure], not a thrown error. Anything thrown from
-  /// here is a [PayCrossIntegrationError].
+  /// A decline is a [PayCrossFailure], not a thrown error, and an outcome the
+  /// SDK never observed is a [PayCrossPending]. Anything thrown from here is a
+  /// [PayCrossIntegrationError].
   static Future<PayCrossResult> presentPayment(String sessionToken) async {
     if (_inFlight) {
       throw const PayCrossIntegrationError(
@@ -125,6 +127,19 @@ abstract final class PayCross {
     try {
       return _toPublic(await _api.presentPayment(sessionToken));
     } on PlatformException catch (e) {
+      // A lost result is an outcome, not an integration mistake: the payment
+      // may have been authorized. Returning it as a value puts it in the
+      // merchant's exhaustive switch, where the compiler asks for a decision,
+      // rather than in a catch block written once and forgotten.
+      if (e.code == payCrossResultLostCode) {
+        // The canonical name, because nothing sent one: a native side that
+        // has lost its result has only an error code left to send.
+        return const PayCrossPending(
+          transactionId: null,
+          reason: PayCrossPendingReason.resultLost,
+          reasonRaw: 'result_lost',
+        );
+      }
       throw PayCrossIntegrationError(
         payCrossErrorCodeFrom(e.code),
         e.message ?? 'The payment could not be presented.',
@@ -166,6 +181,26 @@ abstract final class PayCross {
         currencyCode: raw.amount.currencyCode,
       ),
     ),
+    g.PcPending() => PayCrossPending(
+      transactionId: raw.transactionId,
+      reason: PayCrossPendingReason.fromWireName(raw.reason),
+      reasonRaw: raw.reason,
+    ),
+    // Defensive, and deliberately before the general failure case. Both native
+    // SDKs send this outcome as PcPending now, but a merchant can pin an older
+    // native SDK under a newer plugin, and reading this one recovery as a
+    // decline is what put a double charge one retry away.
+    g.PcFailure()
+        when PayCrossRecovery.fromApiValue(raw.recovery)
+            is RecoveryVerifyBeforeRetry =>
+      PayCrossPending(
+        transactionId: raw.transactionId,
+        reason: PayCrossPendingReason.serverVerify,
+        // The recovery token exactly as it arrived, spacing and casing and
+        // all. Not 'server_verify': that is the pending vocabulary, and
+        // nothing sent it.
+        reasonRaw: raw.recovery,
+      ),
     // The raw token is parsed here rather than crossing as an enum, so a
     // recovery value the server adds later degrades to "unrecognised, not
     // retryable" instead of being silently rewritten.

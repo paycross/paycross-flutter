@@ -75,8 +75,10 @@ type turns on R8 and resource shrinking — `isMinifyEnabled` and
 Android SDK returns its outcome across an `Intent` and only its own
 `consumer-rules.pro` keeps `PayCrossResult`, its subclasses and `Recovery` from
 being renamed. If those rules ever stop being applied, every payment comes back
-as `error:resultUnknown` instead of its real outcome, and nothing but a minified
-build can show it.
+as `result:pending:result_lost:` instead of its real outcome, and nothing but a
+minified build can show it. That label reads as an unresolved payment, which is
+the honest reading of a result that was produced and then lost; before plugin
+0.4.0 the same breakage read as `error:resultUnknown`.
 
 `example/android/app/proguard-rules.pro` is deliberately empty: the rules this
 build needs come from the libraries. A rule appearing there means the SDK is not
@@ -653,8 +655,9 @@ $ADB shell settings put global always_finish_activities 0
 `always_finish_activities` is the worse of the two to inherit. Airplane mode
 fails the next cell in a way that at least looks like a network problem; this
 one makes the plugin's detach path fire on **every** cell that follows, so each
-reports `error:resultUnknown` and each reads as an SDK finding rather than as
-the one rig fault it is.
+reports `result:pending:result_lost:` and each reads as an SDK finding rather
+than as the one rig fault it is. It was `error:resultUnknown` before plugin
+0.4.0, which is worth knowing when reading an older run.
 
 That last one is the backstop rather than the plan: a replay can fail too, and
 `launch` is what catches a device left dirty by anything the replay could not

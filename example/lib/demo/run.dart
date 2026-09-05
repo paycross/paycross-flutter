@@ -121,6 +121,9 @@ class _RunScreenState extends State<RunScreen> {
       transactionId = switch (paid) {
         PayCrossSuccess(:final transactionId) => transactionId,
         PayCrossFailure(:final transactionId) => transactionId,
+        // The whole point of the pending case: this is the id to reconcile
+        // against, so it must reach History like any other.
+        PayCrossPending(:final transactionId) => transactionId,
         PayCrossCancelled(:final transactionId) => transactionId,
       };
     } on PayCrossIntegrationError catch (problem) {

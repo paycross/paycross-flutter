@@ -1,3 +1,42 @@
+## Unreleased
+
+Source-incompatible. `PayCrossResult` gains a case, so an exhaustive `switch`
+in merchant code needs a branch for it.
+
+* `PayCrossPending` is a new `PayCrossResult` case: the payment's outcome was
+  never observed, and it **may have succeeded**. Until now that outcome arrived
+  as a `PayCrossFailure` carrying `RecoveryVerifyBeforeRetry`, which is to say
+  it looked like a decline — and it is the one outcome where treating it as a
+  decline and charging again can charge the shopper twice. It carries the
+  `transactionId` to reconcile against, a `reason`
+  (`PayCrossPendingReason.pollTimeout`, `resultLost` or `serverVerify`) and the
+  raw wire name in `reasonRaw`, kept for a reason this version cannot read.
+  Every reason means the same thing for what the merchant must do next:
+  reconcile server-side, never retry blindly.
+* A lost result is a `PayCrossPending` with reason `resultLost` rather than a
+  thrown `PayCrossIntegrationError`. `PayCrossErrorCode.resultUnknown` is
+  deprecated and is never thrown; the enum member and its code mapping stay for
+  one minor so an existing `switch` over the codes still compiles. It was the
+  one error code that never meant a mistake in merchant code, which is why it
+  belongs in the result switch instead — where the compiler asks for a decision
+  rather than leaving it to a `catch` block written once and forgotten.
+* `RecoveryVerifyBeforeRetry` is no longer reachable through `presentPayment`.
+  Both native SDKs now send that outcome as a pending result, and the plugin
+  maps the recovery to `PayCrossPending` defensively as well, so a merchant
+  pinning an older native SDK under this plugin still gets the safe reading.
+  The case itself stays: `PayCrossRecovery.fromApiValue` is public and still
+  parses the token, still not retryable.
+* Requires the native iOS SDK at PayCross 0.4.0, up from 0.3.0, and the native
+  Android SDK at paycross-android 0.5.0, up from 0.4.0. Both native releases
+  introduced the pending outcome; this release is the plugin bridging it.
+* The iOS implementation moves to a Swift Package Manager layout under
+  `ios/paycross_flutter/Sources/paycross_flutter/`, with a `Package.swift` and
+  a privacy manifest. Merchants on CocoaPods need no change — the podspec
+  points at the new path — and merchants on Flutter's Swift Package Manager
+  support no longer pull CocoaPods in for this plugin.
+* The demo app renders the new outcome, and the E2E automation contract gains
+  `result:pending:<reason>:<txn>`.
+
 ## 0.3.0
 
 Source-incompatible. The plugin's own result types change, so this is a minor

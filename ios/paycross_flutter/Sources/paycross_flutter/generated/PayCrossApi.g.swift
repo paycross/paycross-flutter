@@ -597,6 +597,59 @@ struct PcCancelled: PcPaymentResult {
   }
 }
 
+/// The outcome was never observed. The payment MAY have succeeded.
+///
+/// Neither a success nor a decline: no verdict was ever seen, and a payment
+/// that completed and shifted liability is indistinguishable from one that
+/// never happened. It is a case of its own so the exhaustiveness both native
+/// SDKs were built around survives the crossing — collapsing it into
+/// PcFailure is what used to make the one double-charge risk look like an
+/// ordinary decline.
+///
+/// Generated class from Pigeon that represents data sent in messages.
+struct PcPending: PcPaymentResult {
+  /// The last transaction this session created, or null when the result was
+  /// lost before one was known.
+  var transactionId: String? = nil
+  /// The RAW wire name (`poll_timeout`, `result_lost`, `server_verify`), not a
+  /// parsed enum, for the same reason `PcFailure.recovery` is raw.
+  var reason: String
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> PcPending? {
+    let transactionId: String? = nilOrValue(pigeonVar_list[0])
+    let reason = pigeonVar_list[1] as! String
+
+    return PcPending(
+      transactionId: transactionId,
+      reason: reason
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      transactionId,
+      reason,
+    ]
+  }
+  static func == (lhs: PcPending, rhs: PcPending) -> Bool {
+    if Swift.type(of: lhs) != Swift.type(of: rhs) {
+      return false
+    }
+    return PayCrossApiPigeonInternal.deepEquals(lhs.transactionId, rhs.transactionId) && PayCrossApiPigeonInternal.deepEquals(lhs.reason, rhs.reason)
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine("PcPending")
+    PayCrossApiPigeonInternal.deepHash(value: transactionId, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: reason, hasher: &hasher)
+  }
+
+  public var description: String {
+    return "PcPending(transactionId: \(String(describing: transactionId)), reason: \(String(describing: reason)))"
+  }
+}
+
 private class PayCrossApiPigeonCodecReader: FlutterStandardReader {
   override func readValue(ofType type: UInt8) -> Any? {
     switch type {
@@ -620,6 +673,8 @@ private class PayCrossApiPigeonCodecReader: FlutterStandardReader {
       return PcFailure.fromList(self.readValue() as! [Any?])
     case 136:
       return PcCancelled.fromList(self.readValue() as! [Any?])
+    case 137:
+      return PcPending.fromList(self.readValue() as! [Any?])
     default:
       return super.readValue(ofType: type)
     }
@@ -651,6 +706,9 @@ private class PayCrossApiPigeonCodecWriter: FlutterStandardWriter {
       super.writeValue(value.toList())
     } else if let value = value as? PcCancelled {
       super.writeByte(136)
+      super.writeValue(value.toList())
+    } else if let value = value as? PcPending {
+      super.writeByte(137)
       super.writeValue(value.toList())
     } else {
       super.writeValue(value)

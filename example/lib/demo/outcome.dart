@@ -28,21 +28,27 @@ String humanOutcome(PayCrossResult outcome) => switch (outcome) {
   PayCrossFailure(:final transactionId, :final recovery) =>
     'Refused — recovery ${recoveryToken(recovery)}'
         '${transactionId == null ? '' : ', transaction $transactionId'}',
+  // Not "Outcome unknown": the runner reads that prefix as a build made
+  // without the automation define, and this screen is the one place where a
+  // genuine unresolved payment would then be reported as a rig mistake.
+  PayCrossPending(:final transactionId, :final reason, :final reasonRaw) =>
+    'Unresolved — reconcile server-side, reason '
+        '${pendingReasonToken(reason, reasonRaw)}'
+        '${transactionId == null ? '' : ', transaction $transactionId'}',
   PayCrossCancelled() => 'Payment cancelled.',
 };
 
 /// An integration mistake, which arrives as a thrown exception.
+///
+/// Every code left here is a mistake in this app's own code. The unknown
+/// outcome that used to need a branch of its own is a [PayCrossPending] result
+/// now, and reads through [humanOutcome].
 ///
 /// The message half goes through the minter's mask first. It comes from the
 /// native SDK, which makes no promise about what it quotes, and what this
 /// function returns is stored in History and copied into the bug-report
 /// block -- so it gets the same treatment a response body gets, and the same
 /// 400-character cut so one runaway message cannot become the whole report.
-String humanError(PayCrossIntegrationError problem) {
-  final said = maskAndTrim(problem.message);
-  return problem.code == PayCrossErrorCode.resultUnknown
-      // Distinct from a refusal on purpose: the payment may have gone
-      // through, so the merchant reconciles rather than re-charging.
-      ? 'Unknown outcome — reconcile server-side. $said'
-      : 'Integration problem (${problem.code.name}) — $said';
-}
+String humanError(PayCrossIntegrationError problem) =>
+    'Integration problem (${problem.code.name}) — '
+    '${maskAndTrim(problem.message)}';

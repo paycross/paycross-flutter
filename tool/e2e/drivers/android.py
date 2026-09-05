@@ -380,8 +380,9 @@ class AndroidDriver(Driver):
         # The same shape, for the same reason, one setting along. This one is
         # worse to inherit than airplane mode: the plugin's detach path fires
         # on EVERY cell that follows, so each of them reports
-        # `error:resultUnknown` and each looks like an SDK finding rather than
-        # like the one rig fault it is.
+        # `result:pending:result_lost:` and each looks like an SDK finding
+        # rather than like the one rig fault it is. Older runs show the same
+        # fault as `error:resultUnknown`; plugin 0.4.0 made it an outcome.
         if (
             self._shell(
                 ["shell", "settings get global always_finish_activities"]
@@ -649,8 +650,10 @@ class AndroidDriver(Driver):
         With it on, MainActivity is destroyed the moment the SDK's
         PaymentActivity comes to the front, so the plugin's
         `onDetachedFromActivity` fires and finishes the pending call with
-        `paycross_result_unknown` (PayCrossPlugin.kt:82-94) while the sheet
-        is still up and the shopper can still pay.
+        `paycross_result_unknown` (PayCrossPlugin.kt:84-96) while the sheet
+        is still up and the shopper can still pay. That code no longer reaches
+        the merchant as an exception: Dart turns it into a pending result, so
+        the label to look for is `result:pending:result_lost:`.
 
         Read back, because a setting that silently did not take would make
         the cell measure an ordinary payment. And left on it poisons every

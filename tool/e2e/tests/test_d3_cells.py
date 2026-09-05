@@ -49,9 +49,9 @@ ANDROID_ONLY = {
 #:
 #: What that leaves unmeasured is named in the report rather than papered
 #: over: the plugin's `onDetachedFromActivity` path, which finishes a pending
-#: call with `paycross_result_unknown` (PayCrossPlugin.kt:82-93), and the
+#: call with `paycross_result_unknown` (PayCrossPlugin.kt:84-95), and the
 #: `finishPending` that then drops the real result because `pending` is
-#: already null (:217-223). Neither has been exercised on a device.
+#: already null (:215-220). Neither has been exercised on a device.
 NO_CELL_FOR = {"dont_keep_activities"}
 
 EXPECTED_IDS = {

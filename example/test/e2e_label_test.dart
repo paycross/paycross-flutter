@@ -82,6 +82,78 @@ void main() {
         'result:cancelled',
       );
     });
+
+    test('pending carries the reason and the transaction id', () {
+      expect(
+        labelForResult(
+          const PayCrossPending(
+            transactionId: 'txn_3',
+            reason: PayCrossPendingReason.pollTimeout,
+            reasonRaw: 'poll_timeout',
+          ),
+        ),
+        'result:pending:poll_timeout:txn_3',
+      );
+    });
+
+    /// A lost result is the case with nothing to name, so the field is empty
+    /// rather than the label being a different shape.
+    test('pending with no transaction ends in an empty field', () {
+      expect(
+        labelForResult(
+          const PayCrossPending(
+            reason: PayCrossPendingReason.resultLost,
+            reasonRaw: 'result_lost',
+          ),
+        ),
+        'result:pending:result_lost:',
+      );
+    });
+
+    test('an unreadable reason carries its raw value', () {
+      expect(
+        labelForResult(
+          const PayCrossPending(
+            transactionId: 'txn_3',
+            reason: PayCrossPendingReason.unrecognized,
+            reasonRaw: 'later_value',
+          ),
+        ),
+        'result:pending:unrecognized(later_value):txn_3',
+      );
+    });
+  });
+
+  group('pendingReasonToken', () {
+    test('spells every case as the wire name the SDK sent', () {
+      expect(
+        pendingReasonToken(PayCrossPendingReason.pollTimeout, 'poll_timeout'),
+        'poll_timeout',
+      );
+      expect(
+        pendingReasonToken(PayCrossPendingReason.resultLost, 'result_lost'),
+        'result_lost',
+      );
+      expect(
+        pendingReasonToken(PayCrossPendingReason.serverVerify, 'server_verify'),
+        'server_verify',
+      );
+    });
+
+    /// Round-trips the vocabulary the plugin parses, so the label and the
+    /// wire cannot drift apart without a test saying so.
+    test('round-trips every canonical wire name the plugin parses', () {
+      for (final name in const [
+        'poll_timeout',
+        'result_lost',
+        'server_verify',
+      ]) {
+        expect(
+          pendingReasonToken(PayCrossPendingReason.fromWireName(name), name),
+          name,
+        );
+      }
+    });
   });
 
   group('labelForError', () {
@@ -109,6 +181,9 @@ void main() {
         PayCrossErrorCode.noActivity: 'error:noActivity',
         PayCrossErrorCode.noPresenter: 'error:noPresenter',
         PayCrossErrorCode.invalidToken: 'error:invalidToken',
+        // Deprecated and no longer thrown, but still a member of the enum for
+        // one minor, so the map below still has to cover it.
+        // ignore: deprecated_member_use
         PayCrossErrorCode.resultUnknown: 'error:resultUnknown',
         PayCrossErrorCode.unknown: 'error:unknown',
       };

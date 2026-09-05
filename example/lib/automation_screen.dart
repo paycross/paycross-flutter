@@ -52,15 +52,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               PayCrossFailure(:final recovery) when recovery.isRetryable =>
                 'Declined, retryable — $recovery',
               PayCrossFailure(:final recovery) => 'Declined — $recovery',
+              // Distinct from a decline on purpose: the payment may have gone
+              // through, so the merchant reconciles rather than re-charging.
+              // The wording keeps the "Outcome unknown" prefix the matrix
+              // runner uses to recognise a build made without the define.
+              PayCrossPending(:final transactionId, :final reasonRaw) =>
+                'Outcome unknown ($reasonRaw) — reconcile server-side'
+                    '${transactionId == null ? '' : ': $transactionId'}',
               PayCrossCancelled() => 'Cancelled',
             };
     } on PayCrossIntegrationError catch (e) {
       describe = widget.e2e
           ? labelForError(e)
-          : e.code == PayCrossErrorCode.resultUnknown
-          // Distinct from a failure on purpose: the payment may have gone
-          // through, so the merchant reconciles rather than re-charging.
-          ? 'Outcome unknown — reconcile server-side. ${e.message}'
           : 'Integration error (${e.code.name}) — ${e.message}';
     }
 

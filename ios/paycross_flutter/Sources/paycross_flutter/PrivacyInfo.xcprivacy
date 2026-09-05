@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	paycross_flutter audit (Sources/paycross_flutter/**/*.swift), 2026-09-05:
+	no UserDefaults, no file timestamps, no ProcessInfo uptime, no boot time
+	and no free-space query, so NSPrivacyAccessedAPITypes is empty. That list
+	is the one Apple calls required-reason APIs.
+
+	NSPrivacyCollectedDataTypes is empty because this target collects nothing.
+	It presents the native SDK's own payment sheet and translates one result
+	back; the card, name, email and phone fields are gathered by the PayCross
+	and PayCrossCore modules, which declare those types in their own
+	manifests. Apple aggregates across every manifest in the app, so restating
+	them here would not add a disclosure. It would claim a second collector
+	for one collection.
+	-->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>

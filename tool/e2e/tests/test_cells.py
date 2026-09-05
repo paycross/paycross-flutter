@@ -370,6 +370,10 @@ def test_rejects_bad_merchant_values_in_an_override(tmp_path):
         "result:failure:do_not_retry:txn_1",
         "result:failure:contact_support:txn_1",
         "result:failure:unrecognized(weird:raw):txn_1",
+        "result:pending:poll_timeout:txn_1",
+        "result:pending:result_lost:",
+        "result:pending:server_verify:txn_1",
+        "result:pending:unrecognized(weird:raw):txn_1",
         "result:cancelled",
         "error:sessionExpired",
     ],
@@ -386,6 +390,12 @@ def test_accepts_every_frozen_label_form(tmp_path, label):
         "result:succes:txn_1",
         "result:failure:banana:txn_1",
         "result:failure:retry",
+        "result:pending:banana:txn_1",
+        # The recovery token, not a pending reason: the plugin maps this
+        # recovery to `server_verify` before a label is ever rendered, so a
+        # cell written against the old spelling must fail loudly.
+        "result:pending:verify_before_retry:txn_1",
+        "result:pending:poll_timeout",
         "result:cancelled:txn_1",
         "error:session_expired",
         "result:success:txn 1",

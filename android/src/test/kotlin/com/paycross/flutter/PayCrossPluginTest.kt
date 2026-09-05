@@ -4,7 +4,9 @@ import com.paycross.flutter.generated.FlutterError
 import com.paycross.flutter.generated.PcCancelled
 import com.paycross.flutter.generated.PcFailure
 import com.paycross.flutter.generated.PcPaymentResult
+import com.paycross.flutter.generated.PcPending
 import com.paycross.sdk.PayCrossResult
+import com.paycross.sdk.PendingReason
 import com.paycross.sdk.Recovery
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -102,5 +104,54 @@ internal class PayCrossPluginTest {
         val pigeon = PayCrossResult.Cancelled(transactionId = null).toPigeon()
 
         assertNull((pigeon as PcCancelled).transactionId)
+    }
+
+    @Test
+    fun pending_crossesAsItsOwnCaseWithTheWireReason() {
+        val pigeon = PayCrossResult.Pending(
+            transactionId = "tx-4",
+            reason = PendingReason.POLL_TIMEOUT
+        ).toPigeon()
+
+        // Its own case, not a Failure: this is the outcome where reading a
+        // decline and offering a retry can charge the shopper twice.
+        assertEquals("tx-4", (pigeon as PcPending).transactionId)
+        assertEquals("poll_timeout", pigeon.reason)
+    }
+
+    @Test
+    fun everyPendingReasonCrossesAsItsWireName() {
+        // The vocabulary is agreed verbatim with the iOS SDK and with Dart's
+        // parser. A member whose wire name drifts is a wire break, so it is
+        // pinned here rather than only by the enum's own spelling.
+        val expected = mapOf(
+            PendingReason.POLL_TIMEOUT to "poll_timeout",
+            PendingReason.RESULT_LOST to "result_lost",
+            PendingReason.SERVER_VERIFY to "server_verify"
+        )
+
+        for (reason in PendingReason.entries) {
+            val pigeon = PayCrossResult.Pending(
+                transactionId = null,
+                reason = reason
+            ).toPigeon() as PcPending
+
+            assertEquals(expected[reason], pigeon.reason, "$reason crossed as ${pigeon.reason}")
+        }
+        // A reason added to the SDK fails on the map above rather than
+        // reaching Dart as an unpinned string.
+        assertEquals(expected.keys, PendingReason.entries.toSet())
+    }
+
+    @Test
+    fun aLostResultPayload_isPendingRatherThanAnError() {
+        // The branch `deliver` takes when the Activity returns RESULT_OK with
+        // no payload. It used to fail the call with `paycross_result_unknown`,
+        // which reached merchants as a thrown exception rather than as the
+        // unresolved payment it is.
+        val pigeon = lostResult()
+
+        assertEquals("result_lost", pigeon.reason)
+        assertNull(pigeon.transactionId)
     }
 }

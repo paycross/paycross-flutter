@@ -389,8 +389,8 @@ void main() {
     await settle(
       'an integration problem',
       (_) async => throw const PayCrossIntegrationError(
-        PayCrossErrorCode.resultUnknown,
-        'The app was killed mid-flight.',
+        PayCrossErrorCode.noActivity,
+        'The plugin is not attached to an Activity.',
       ),
     );
     await settle(
