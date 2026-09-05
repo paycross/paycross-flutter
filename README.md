@@ -45,6 +45,15 @@ platform :ios, '16.0'
 Bump the deployment target in Xcode to match (Runner target → General → Minimum
 Deployments), then `cd ios && pod install`.
 
+### Swift Package Manager
+
+The plugin ships a `Package.swift` as well as a podspec, so it works on either
+iOS package manager. Flutter's Swift Package Manager support is off by default;
+turn it on with `flutter config --enable-swift-package-manager` and there is
+nothing else to do — the deployment target above still applies, and there is no
+`pod install` step. Both routes resolve the same native SDK release, so the
+choice does not change what your app links against.
+
 ## Quickstart
 
 Configure once, before taking a payment:

@@ -12,10 +12,19 @@ Pod::Spec.new do |s|
   s.author           = 'PayCross'
   s.source           = { :path => '.' }
 
-  # Classes/, not the template's paycross_flutter/Sources/ layout: the
-  # hand-written Swift and the Pigeon output sit side by side under Classes/,
-  # and the generated file has to be compiled with it.
-  s.source_files = 'Classes/**/*.swift'
+  # The same tree Package.swift compiles, so CocoaPods and Swift Package
+  # Manager cannot drift into building different sources. The glob is recursive
+  # because the Pigeon output sits in a generated/ subdirectory and has to be
+  # compiled with the hand-written Swift beside it.
+  s.source_files = 'paycross_flutter/Sources/paycross_flutter/**/*.swift'
+
+  # CocoaPods does not read Package.swift's `resources:`, so the privacy
+  # manifest is declared again here. Apple reads it out of the built bundle,
+  # and a pod that shipped without one would be rejected at App Store submission
+  # with nothing in the build log to point at.
+  s.resource_bundles = {
+    'paycross_flutter_privacy' => ['paycross_flutter/Sources/paycross_flutter/PrivacyInfo.xcprivacy']
+  }
 
   s.dependency 'Flutter'
   s.dependency 'PayCross', '0.4.0'

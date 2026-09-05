@@ -42,9 +42,9 @@ void main() {
         'ios/paycross_flutter.podspec',
         RegExp(r"^\s*s\.version\s*=\s*'(\S+)'", multiLine: true),
       ),
-      'ios/Classes/PayCrossPlugin.swift': _the(
+      'ios/paycross_flutter/Sources/paycross_flutter/PayCrossPlugin.swift': _the(
         'the Swift constant',
-        'ios/Classes/PayCrossPlugin.swift',
+        'ios/paycross_flutter/Sources/paycross_flutter/PayCrossPlugin.swift',
         RegExp(r'pluginVersion\s*=\s*"(\S+)"'),
       ),
       'android/src/main/kotlin/com/paycross/flutter/PayCrossPlugin.kt': _the(

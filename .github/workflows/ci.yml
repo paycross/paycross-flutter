@@ -70,8 +70,8 @@ jobs:
           # files git already tracks, so output landing in a NEW file — a
           # renamed class, a generator that starts splitting its output — would
           # sit there untracked and the check would pass.
-          git add -A lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/Classes/generated
-          if ! git diff --cached --exit-code -- lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/Classes/generated; then
+          git add -A lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/paycross_flutter/Sources/paycross_flutter/generated
+          if ! git diff --cached --exit-code -- lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/paycross_flutter/Sources/paycross_flutter/generated; then
             echo "::error::Pigeon output is stale. Run: dart run pigeon --input pigeons/paycross_api.dart && dart format lib/src/generated"
             exit 1
           fi
