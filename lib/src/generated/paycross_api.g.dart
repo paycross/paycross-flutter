@@ -407,6 +407,7 @@ class PcSuccess extends PcPaymentResult {
     required this.transactionId,
     required this.status,
     required this.amount,
+    this.savedCardToken,
   });
 
   /// Empty in the edge case where the session was already complete and the
@@ -419,8 +420,12 @@ class PcSuccess extends PcPaymentResult {
 
   PcAmount amount;
 
+  /// The vault token of the card this payment saved, when the session asked
+  /// for one to be saved. Null otherwise.
+  String? savedCardToken;
+
   List<Object?> _toList() {
-    return <Object?>[transactionId, status, amount];
+    return <Object?>[transactionId, status, amount, savedCardToken];
   }
 
   Object encode() {
@@ -433,6 +438,7 @@ class PcSuccess extends PcPaymentResult {
       transactionId: result[0]! as String,
       status: result[1]! as String,
       amount: result[2]! as PcAmount,
+      savedCardToken: result[3] as String?,
     );
   }
 
@@ -447,7 +453,8 @@ class PcSuccess extends PcPaymentResult {
     }
     return _deepEquals(transactionId, other.transactionId) &&
         _deepEquals(status, other.status) &&
-        _deepEquals(amount, other.amount);
+        _deepEquals(amount, other.amount) &&
+        _deepEquals(savedCardToken, other.savedCardToken);
   }
 
   @override
@@ -456,7 +463,7 @@ class PcSuccess extends PcPaymentResult {
 
   @override
   String toString() {
-    return 'PcSuccess(transactionId: $transactionId, status: $status, amount: $amount)';
+    return 'PcSuccess(transactionId: $transactionId, status: $status, amount: $amount, savedCardToken: $savedCardToken)';
   }
 }
 

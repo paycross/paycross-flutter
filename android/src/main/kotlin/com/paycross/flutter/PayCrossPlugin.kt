@@ -290,7 +290,8 @@ internal fun PayCrossResult.toPigeon(): PcPaymentResult = when (this) {
     is PayCrossResult.Success -> PcSuccess(
         transactionId = transactionId,
         status = status,
-        amount = PcAmount(minorUnits = amount, currencyCode = currency)
+        amount = PcAmount(minorUnits = amount, currencyCode = currency),
+        savedCardToken = savedCardToken
     )
 
     is PayCrossResult.Failure -> PcFailure(

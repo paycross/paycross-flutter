@@ -180,6 +180,7 @@ abstract final class PayCross {
         minorUnits: raw.amount.minorUnits,
         currencyCode: raw.amount.currencyCode,
       ),
+      savedCardToken: raw.savedCardToken,
     ),
     g.PcPending() => PayCrossPending(
       transactionId: raw.transactionId,

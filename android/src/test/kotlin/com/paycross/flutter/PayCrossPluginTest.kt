@@ -5,6 +5,7 @@ import com.paycross.flutter.generated.PcCancelled
 import com.paycross.flutter.generated.PcFailure
 import com.paycross.flutter.generated.PcPaymentResult
 import com.paycross.flutter.generated.PcPending
+import com.paycross.flutter.generated.PcSuccess
 import com.paycross.sdk.PayCrossResult
 import com.paycross.sdk.PendingReason
 import com.paycross.sdk.Recovery
@@ -54,6 +55,35 @@ internal class PayCrossPluginTest {
         // The Android SDK declares no version constant; the plugin reports
         // null rather than fabricating one.
         assertNull(info.nativeSdkVersion)
+    }
+
+    @Test
+    fun success_carriesTheTokenOfACardThisPaymentSaved() {
+        val pigeon = PayCrossResult.Success(
+            transactionId = "tx-5",
+            status = "success",
+            amount = 1250L,
+            currency = "EUR",
+            savedCardToken = "tok"
+        ).toPigeon() as PcSuccess
+
+        // The merchant's only route to the vault reference: the sheet that
+        // saved the card is the SDK's own, so nothing else crosses it.
+        assertEquals("tok", pigeon.savedCardToken)
+    }
+
+    @Test
+    fun success_withoutASavedCard_carriesNoToken() {
+        val pigeon = PayCrossResult.Success(
+            transactionId = "tx-6",
+            status = "success",
+            amount = 1250L,
+            currency = "EUR"
+        ).toPigeon() as PcSuccess
+
+        // Saving is asked for at session creation, so most payments save
+        // nothing and this must stay null rather than becoming "".
+        assertNull(pigeon.savedCardToken)
     }
 
     @Test

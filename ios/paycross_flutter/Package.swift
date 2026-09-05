@@ -32,7 +32,7 @@ let package = Package(
         // puts breaking changes in the minor. The podspec pins the same
         // release exactly, so the two package managers cannot resolve a
         // merchant onto different native code.
-        .package(url: "https://github.com/paycross/payment-ios-sdk.git", .upToNextMinor(from: "0.4.0")),
+        .package(url: "https://github.com/paycross/payment-ios-sdk.git", .upToNextMinor(from: "0.5.0")),
     ],
     targets: [
         .target(

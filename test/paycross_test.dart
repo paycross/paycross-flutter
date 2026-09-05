@@ -81,6 +81,40 @@ void main() {
       expect(result.hasTransactionReference, isFalse);
     });
 
+    /// The token the merchant stores against their customer. It is the only
+    /// place the vault reference reaches Dart -- the sheet that saved the card
+    /// is the native SDK's, and nothing else in this API names it.
+    test('success carries the token of a card this payment saved', () async {
+      PayCross.debugHostApi = (FakeHost(
+        result: g.PcSuccess(
+          transactionId: 'txn_2',
+          status: 'success',
+          amount: _amount(),
+          savedCardToken: 'tok_1',
+        ),
+      ));
+
+      final result = await PayCross.presentPayment('token') as PayCrossSuccess;
+
+      expect(result.savedCardToken, 'tok_1');
+    });
+
+    /// The ordinary case. Saving is asked for at session creation, so most
+    /// payments save nothing and the field must not invent a value.
+    test('success saves no card when the session did not ask', () async {
+      PayCross.debugHostApi = (FakeHost(
+        result: g.PcSuccess(
+          transactionId: 'txn_3',
+          status: 'success',
+          amount: _amount(),
+        ),
+      ));
+
+      final result = await PayCross.presentPayment('token') as PayCrossSuccess;
+
+      expect(result.savedCardToken, isNull);
+    });
+
     test('cancellation maps to PayCrossCancelled', () async {
       PayCross.debugHostApi = (FakeHost(result: g.PcCancelled()));
       expect(await PayCross.presentPayment('token'), isA<PayCrossCancelled>());

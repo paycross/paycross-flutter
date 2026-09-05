@@ -103,6 +103,21 @@ screen, including the error handling below. It ships as **PayCross Demo — the
 internal QA app ([`example/`](example/README.md))**, which mints its own
 sandbox sessions and runs named payment scenarios.
 
+### Saved cards
+
+A card is saved because the **session** asked for it: `save_card_config` on
+session creation, not a client call. When a payment saves one,
+`PayCrossSuccess.savedCardToken` carries the vault reference — the same value
+the merchant API returns as `stored_credentials.saved_token`. Store it against
+your customer; it is what you send to charge that card again. It is null on
+every payment that saved nothing.
+
+Showing a shopper the cards they already saved is a session option too:
+`saved_cards.show` lists them, `saved_cards.preselect` opens the sheet with one
+chosen, and `saved_cards.allow_removal` lets the shopper delete one. The native
+sheets render all of it, so there is nothing to build and nothing to call from
+Dart. CVC is always asked for on a saved card.
+
 ### Session tokens
 
 `presentPayment` takes no amount, currency or customer. All of that is carried

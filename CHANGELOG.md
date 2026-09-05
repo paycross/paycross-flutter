@@ -1,3 +1,25 @@
+## Unreleased
+
+Additive in Dart. No existing call or `switch` needs a change.
+
+* `PayCrossSuccess.savedCardToken` is the vault reference for a card the
+  payment just saved, and null on every payment that saved none — including one
+  made with a card that was already stored. It is the same value the merchant
+  API returns as `stored_credentials.saved_token`, and it is what you send to
+  charge that card again, so store it against your customer. Until now a
+  merchant who offered "save this card" had no way to learn the token from the
+  SDK at all. Saving is asked for at session creation with `save_card_config`;
+  nothing on this side turns it on.
+* Requires the native iOS SDK at PayCross 0.5.0, up from 0.4.0, and the native
+  Android SDK at paycross-android 0.6.0, up from 0.5.0. Both add the token
+  above, and both add two saved-card behaviours the sheets render on their own:
+  `saved_cards.allow_removal` puts a confirmed delete on each stored card, and
+  `saved_cards.preselect` opens the sheet with the most recently used one
+  chosen. Both are session options and default to off, so a session minted
+  before the backend shipped them reads as off, and there is nothing to call
+  from Dart for either. A saved card still asks for its CVC on every payment.
+* The demo app names the saved-card token on an approved payment.
+
 ## 0.4.0
 
 Source-incompatible. `PayCrossResult` gains a case, so an exhaustive `switch`

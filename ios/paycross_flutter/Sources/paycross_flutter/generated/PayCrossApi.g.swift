@@ -465,6 +465,9 @@ struct PcSuccess: PcPaymentResult {
   /// "success", "authorized", …
   var status: String
   var amount: PcAmount
+  /// The vault token of the card this payment saved, when the session asked
+  /// for one to be saved. Null otherwise.
+  var savedCardToken: String? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -472,11 +475,13 @@ struct PcSuccess: PcPaymentResult {
     let transactionId = pigeonVar_list[0] as! String
     let status = pigeonVar_list[1] as! String
     let amount = pigeonVar_list[2] as! PcAmount
+    let savedCardToken: String? = nilOrValue(pigeonVar_list[3])
 
     return PcSuccess(
       transactionId: transactionId,
       status: status,
-      amount: amount
+      amount: amount,
+      savedCardToken: savedCardToken
     )
   }
   func toList() -> [Any?] {
@@ -484,13 +489,14 @@ struct PcSuccess: PcPaymentResult {
       transactionId,
       status,
       amount,
+      savedCardToken,
     ]
   }
   static func == (lhs: PcSuccess, rhs: PcSuccess) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return PayCrossApiPigeonInternal.deepEquals(lhs.transactionId, rhs.transactionId) && PayCrossApiPigeonInternal.deepEquals(lhs.status, rhs.status) && PayCrossApiPigeonInternal.deepEquals(lhs.amount, rhs.amount)
+    return PayCrossApiPigeonInternal.deepEquals(lhs.transactionId, rhs.transactionId) && PayCrossApiPigeonInternal.deepEquals(lhs.status, rhs.status) && PayCrossApiPigeonInternal.deepEquals(lhs.amount, rhs.amount) && PayCrossApiPigeonInternal.deepEquals(lhs.savedCardToken, rhs.savedCardToken)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -498,10 +504,11 @@ struct PcSuccess: PcPaymentResult {
     PayCrossApiPigeonInternal.deepHash(value: transactionId, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: status, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: amount, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: savedCardToken, hasher: &hasher)
   }
 
   public var description: String {
-    return "PcSuccess(transactionId: \(String(describing: transactionId)), status: \(String(describing: status)), amount: \(String(describing: amount)))"
+    return "PcSuccess(transactionId: \(String(describing: transactionId)), status: \(String(describing: status)), amount: \(String(describing: amount)), savedCardToken: \(String(describing: savedCardToken)))"
   }
 }
 

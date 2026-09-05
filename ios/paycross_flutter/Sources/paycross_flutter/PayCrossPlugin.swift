@@ -192,14 +192,15 @@ private extension PcTestCardPrefill {
 extension PaymentResult {
     func toPigeon() -> PcPaymentResult {
         switch self {
-        case let .succeeded(transactionID, status, amount):
+        case let .succeeded(transactionID, status, amount, savedCardToken):
             return PcSuccess(
                 transactionId: transactionID,
                 status: status,
                 amount: PcAmount(
                     minorUnits: amount.minorUnits,
                     currencyCode: amount.currencyCode
-                )
+                ),
+                savedCardToken: savedCardToken
             )
 
         case let .failed(transactionID, recovery):

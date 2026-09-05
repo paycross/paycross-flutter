@@ -49,6 +49,7 @@ class PayCrossSuccess extends PayCrossResult {
     required this.transactionId,
     required this.status,
     required this.amount,
+    this.savedCardToken,
   });
 
   /// Empty in the edge case where the session was already complete and the
@@ -61,11 +62,24 @@ class PayCrossSuccess extends PayCrossResult {
 
   final PayCrossAmount amount;
 
+  /// The vault reference for the card this payment saved. Store it against
+  /// your customer: it is what you send to charge that card again, and it is
+  /// the same value the PayCross merchant API returns as
+  /// `stored_credentials.saved_token`.
+  ///
+  /// Null on every payment that stored no new card — the session did not ask
+  /// for one (`save_card_config` is set when the session is created, not from
+  /// here), or the shopper paid with a card that was already on file. A
+  /// payment on a stored card carries no token, so do not read a null here as
+  /// the card having been forgotten.
+  final String? savedCardToken;
+
   /// False in the already-complete-session case above.
   bool get hasTransactionReference => transactionId.isNotEmpty;
 
   @override
-  String toString() => 'PayCrossSuccess($transactionId, $status, $amount)';
+  String toString() =>
+      'PayCrossSuccess($transactionId, $status, $amount, $savedCardToken)';
 }
 
 /// The payment did not complete. Not an error — see [PayCrossResult].

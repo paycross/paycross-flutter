@@ -155,6 +155,7 @@ class PcSuccess extends PcPaymentResult {
     required this.transactionId,
     required this.status,
     required this.amount,
+    this.savedCardToken,
   });
 
   /// Empty in the edge case where the session was already complete and the
@@ -166,6 +167,10 @@ class PcSuccess extends PcPaymentResult {
   String status;
 
   PcAmount amount;
+
+  /// The vault token of the card this payment saved, when the session asked
+  /// for one to be saved. Null otherwise.
+  String? savedCardToken;
 }
 
 class PcFailure extends PcPaymentResult {

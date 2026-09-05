@@ -492,7 +492,12 @@ data class PcSuccess (
   val transactionId: String,
   /** "success", "authorized", … */
   val status: String,
-  val amount: PcAmount
+  val amount: PcAmount,
+  /**
+   * The vault token of the card this payment saved, when the session asked
+   * for one to be saved. Null otherwise.
+   */
+  val savedCardToken: String? = null
 ) : PcPaymentResult()
  {
   companion object {
@@ -500,7 +505,8 @@ data class PcSuccess (
       val transactionId = pigeonVar_list[0] as String
       val status = pigeonVar_list[1] as String
       val amount = pigeonVar_list[2] as PcAmount
-      return PcSuccess(transactionId, status, amount)
+      val savedCardToken = pigeonVar_list[3] as String?
+      return PcSuccess(transactionId, status, amount, savedCardToken)
     }
   }
   fun toList(): List<Any?> {
@@ -508,6 +514,7 @@ data class PcSuccess (
       transactionId,
       status,
       amount,
+      savedCardToken,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -518,7 +525,7 @@ data class PcSuccess (
       return true
     }
     val other = other as PcSuccess
-    return PayCrossApiPigeonUtils.deepEquals(this.transactionId, other.transactionId) && PayCrossApiPigeonUtils.deepEquals(this.status, other.status) && PayCrossApiPigeonUtils.deepEquals(this.amount, other.amount)
+    return PayCrossApiPigeonUtils.deepEquals(this.transactionId, other.transactionId) && PayCrossApiPigeonUtils.deepEquals(this.status, other.status) && PayCrossApiPigeonUtils.deepEquals(this.amount, other.amount) && PayCrossApiPigeonUtils.deepEquals(this.savedCardToken, other.savedCardToken)
   }
 
   override fun hashCode(): Int {
@@ -526,10 +533,11 @@ data class PcSuccess (
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.transactionId)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.status)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.amount)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.savedCardToken)
     return result
   }
   override fun toString(): String {
-    return "PcSuccess(transactionId=$transactionId, status=$status, amount=$amount)"
+    return "PcSuccess(transactionId=$transactionId, status=$status, amount=$amount, savedCardToken=$savedCardToken)"
   }
 }
 
