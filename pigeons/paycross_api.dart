@@ -198,6 +198,26 @@ class PcCancelled extends PcPaymentResult {
   String? transactionId;
 }
 
+/// The outcome was never observed. The payment MAY have succeeded.
+///
+/// Neither a success nor a decline: no verdict was ever seen, and a payment
+/// that completed and shifted liability is indistinguishable from one that
+/// never happened. It is a case of its own so the exhaustiveness both native
+/// SDKs were built around survives the crossing — collapsing it into
+/// PcFailure is what used to make the one double-charge risk look like an
+/// ordinary decline.
+class PcPending extends PcPaymentResult {
+  PcPending({this.transactionId, required this.reason});
+
+  /// The last transaction this session created, or null when the result was
+  /// lost before one was known.
+  String? transactionId;
+
+  /// The RAW wire name (`poll_timeout`, `result_lost`, `server_verify`), not a
+  /// parsed enum, for the same reason `PcFailure.recovery` is raw.
+  String reason;
+}
+
 @HostApi()
 abstract class PayCrossHostApi {
   /// Applies configuration to the native SDK.

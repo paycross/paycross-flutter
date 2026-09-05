@@ -631,6 +631,66 @@ data class PcCancelled (
     return "PcCancelled(transactionId=$transactionId)"
   }
 }
+
+/**
+ * The outcome was never observed. The payment MAY have succeeded.
+ *
+ * Neither a success nor a decline: no verdict was ever seen, and a payment
+ * that completed and shifted liability is indistinguishable from one that
+ * never happened. It is a case of its own so the exhaustiveness both native
+ * SDKs were built around survives the crossing — collapsing it into
+ * PcFailure is what used to make the one double-charge risk look like an
+ * ordinary decline.
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class PcPending (
+  /**
+   * The last transaction this session created, or null when the result was
+   * lost before one was known.
+   */
+  val transactionId: String? = null,
+  /**
+   * The RAW wire name (`poll_timeout`, `result_lost`, `server_verify`), not a
+   * parsed enum, for the same reason `PcFailure.recovery` is raw.
+   */
+  val reason: String
+) : PcPaymentResult()
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): PcPending {
+      val transactionId = pigeonVar_list[0] as String?
+      val reason = pigeonVar_list[1] as String
+      return PcPending(transactionId, reason)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      transactionId,
+      reason,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as PcPending
+    return PayCrossApiPigeonUtils.deepEquals(this.transactionId, other.transactionId) && PayCrossApiPigeonUtils.deepEquals(this.reason, other.reason)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.transactionId)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.reason)
+    return result
+  }
+  override fun toString(): String {
+    return "PcPending(transactionId=$transactionId, reason=$reason)"
+  }
+}
 private open class PayCrossApiPigeonCodec : StandardMessageCodec() {
   override fun readValueOfType(type: Byte, buffer: ByteBuffer): Any? {
     return when (type) {
@@ -674,6 +734,11 @@ private open class PayCrossApiPigeonCodec : StandardMessageCodec() {
           PcCancelled.fromList(it)
         }
       }
+      137.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          PcPending.fromList(it)
+        }
+      }
       else -> super.readValueOfType(type, buffer)
     }
   }
@@ -709,6 +774,10 @@ private open class PayCrossApiPigeonCodec : StandardMessageCodec() {
       }
       is PcCancelled -> {
         stream.write(136)
+        writeValue(stream, value.toList())
+      }
+      is PcPending -> {
+        stream.write(137)
         writeValue(stream, value.toList())
       }
       else -> super.writeValue(stream, value)

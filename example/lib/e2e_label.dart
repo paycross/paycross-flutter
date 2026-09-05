@@ -9,12 +9,14 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 ///
 ///     result:success:<txn>
 ///     result:failure:<recovery>:<txn>
+///     result:pending:<reason>:<txn>
 ///     result:cancelled
 ///     error:<PayCrossErrorCode.name>
 ///
 /// `<txn>` may be empty: a failure before a transaction existed carries none,
-/// and a success on an already-complete session with no transaction to resume
-/// carries none either.
+/// a success on an already-complete session with no transaction to resume
+/// carries none either, and a pending outcome whose result was lost before a
+/// transaction was known carries none.
 ///
 /// Because of that, `result:success:` is a strict prefix of every other
 /// success label, and `result:failure:<recovery>:` of every failure label with
@@ -30,6 +32,9 @@ String labelForResult(PayCrossResult result) => switch (result) {
   PayCrossSuccess(:final transactionId) => 'result:success:$transactionId',
   PayCrossFailure(:final transactionId, :final recovery) =>
     'result:failure:${recoveryToken(recovery)}:${transactionId ?? ''}',
+  PayCrossPending(:final transactionId, :final reason, :final reasonRaw) =>
+    'result:pending:${pendingReasonToken(reason, reasonRaw)}:'
+        '${transactionId ?? ''}',
   PayCrossCancelled() => 'result:cancelled',
 };
 
@@ -60,3 +65,20 @@ String recoveryToken(PayCrossRecovery recovery) => switch (recovery) {
   RecoveryVerifyBeforeRetry() => 'verify_before_retry',
   RecoveryUnrecognized(:final value) => 'unrecognized($value)',
 };
+
+/// Renders a [PayCrossPendingReason] back as the wire name the SDK sent.
+///
+/// Reads the enum rather than [PayCrossPending.reasonRaw] so the label carries
+/// what the plugin *understood*, which is what a cell file is asserting. The
+/// raw string only surfaces for a reason this version cannot read, where the
+/// enum has nothing to say.
+///
+/// Exhaustive on purpose: a reason added to the vocabulary becomes a compile
+/// error here rather than a silently wrong label in a signed-off cell.
+String pendingReasonToken(PayCrossPendingReason reason, String raw) =>
+    switch (reason) {
+      PayCrossPendingReason.pollTimeout => 'poll_timeout',
+      PayCrossPendingReason.resultLost => 'result_lost',
+      PayCrossPendingReason.serverVerify => 'server_verify',
+      PayCrossPendingReason.unrecognized => 'unrecognized($raw)',
+    };

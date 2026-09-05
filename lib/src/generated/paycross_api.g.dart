@@ -563,6 +563,64 @@ class PcCancelled extends PcPaymentResult {
   }
 }
 
+/// The outcome was never observed. The payment MAY have succeeded.
+///
+/// Neither a success nor a decline: no verdict was ever seen, and a payment
+/// that completed and shifted liability is indistinguishable from one that
+/// never happened. It is a case of its own so the exhaustiveness both native
+/// SDKs were built around survives the crossing — collapsing it into
+/// PcFailure is what used to make the one double-charge risk look like an
+/// ordinary decline.
+class PcPending extends PcPaymentResult {
+  PcPending({this.transactionId, required this.reason});
+
+  /// The last transaction this session created, or null when the result was
+  /// lost before one was known.
+  String? transactionId;
+
+  /// The RAW wire name (`poll_timeout`, `result_lost`, `server_verify`), not a
+  /// parsed enum, for the same reason `PcFailure.recovery` is raw.
+  String reason;
+
+  List<Object?> _toList() {
+    return <Object?>[transactionId, reason];
+  }
+
+  Object encode() {
+    return _toList();
+  }
+
+  static PcPending decode(Object result) {
+    result as List<Object?>;
+    return PcPending(
+      transactionId: result[0] as String?,
+      reason: result[1]! as String,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! PcPending || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(transactionId, other.transactionId) &&
+        _deepEquals(reason, other.reason);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'PcPending(transactionId: $transactionId, reason: $reason)';
+  }
+}
+
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
   @override
@@ -594,6 +652,9 @@ class _PigeonCodec extends StandardMessageCodec {
     } else if (value is PcCancelled) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
+    } else if (value is PcPending) {
+      buffer.putUint8(137);
+      writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
     }
@@ -619,6 +680,8 @@ class _PigeonCodec extends StandardMessageCodec {
         return PcFailure.decode(readValue(buffer)!);
       case 136:
         return PcCancelled.decode(readValue(buffer)!);
+      case 137:
+        return PcPending.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
     }

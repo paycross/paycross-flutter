@@ -211,6 +211,18 @@ extension PaymentResult {
                 recovery: recovery.apiValue
             )
 
+        case let .pending(transactionID, reason):
+            // Its own case, not a `.failed` with a verify-before-retry
+            // recovery. That reading is what made the one outcome that can
+            // charge a shopper twice arrive in Dart looking like a decline.
+            return PcPending(
+                transactionId: transactionID,
+                // The enum's raw value is the wire vocabulary itself, agreed
+                // verbatim with the Android SDK, so there is no second
+                // spelling here to drift from it.
+                reason: reason.rawValue
+            )
+
         case let .cancelled(transactionID):
             return PcCancelled(transactionId: transactionID)
         }

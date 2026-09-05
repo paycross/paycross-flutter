@@ -108,9 +108,129 @@ void main() {
 
       expect(result.transactionId, isNull);
     });
+
+    /// The outcome that can charge a shopper twice. It is its own result case
+    /// rather than a decline, so an exhaustive switch cannot fall into the
+    /// "declined, offer a retry" branch with it.
+    test('a pending outcome maps to PayCrossPending with its reason', () async {
+      PayCross.debugHostApi = (FakeHost(
+        result: g.PcPending(transactionId: 'txn_1', reason: 'poll_timeout'),
+      ));
+
+      final result = await PayCross.presentPayment('token');
+
+      expect(result, isA<PayCrossPending>());
+      final pending = result as PayCrossPending;
+      expect(pending.reason, PayCrossPendingReason.pollTimeout);
+      expect(pending.transactionId, 'txn_1');
+    });
+
+    /// Same reason recovery crosses as a string: a reason added to the wire
+    /// vocabulary later must not be rewritten into one this version knows.
+    test('an unknown pending reason is preserved as unrecognized', () async {
+      PayCross.debugHostApi = (FakeHost(
+        result: g.PcPending(transactionId: 'txn_1', reason: 'later_value'),
+      ));
+
+      final pending = await PayCross.presentPayment('token') as PayCrossPending;
+
+      expect(pending.reason, PayCrossPendingReason.unrecognized);
+      expect(pending.reasonRaw, 'later_value');
+    });
+
+    /// Defensive. Both native SDKs send this outcome as a pending result from
+    /// 0.4.0 / 0.5.0, but a merchant can be running an older native SDK behind
+    /// a newer plugin, and this is the one recovery where reading a decline
+    /// instead of an unknown outcome ends in a double charge.
+    test('a failure whose raw recovery is verify_before_retry is pending, not '
+        'a decline', () async {
+      PayCross.debugHostApi = (FakeHost(
+        result: g.PcFailure(
+          transactionId: 'txn_2',
+          recovery: 'verify_before_retry',
+        ),
+      ));
+
+      final result = await PayCross.presentPayment('token');
+
+      expect(result, isA<PayCrossPending>());
+      final pending = result as PayCrossPending;
+      expect(pending.reason, PayCrossPendingReason.serverVerify);
+      expect(pending.transactionId, 'txn_2');
+      expect(pending.reasonRaw, 'verify_before_retry');
+    });
+
+    /// A lost result is not an integration mistake: the payment may have been
+    /// authorized. It returns as a value so the merchant's own switch has to
+    /// decide what to do about it, instead of landing in a catch block that
+    /// most integrations write once and forget.
+    test('a lost result is a pending outcome, not an exception', () async {
+      PayCross.debugHostApi = (FakeHost(
+        error: PlatformException(
+          code: 'paycross_result_unknown',
+          message: 'engine detached',
+        ),
+      ));
+
+      final result = await PayCross.presentPayment('token');
+
+      expect(result, isA<PayCrossPending>());
+      final pending = result as PayCrossPending;
+      expect(pending.reason, PayCrossPendingReason.resultLost);
+      expect(pending.reasonRaw, 'result_lost');
+      expect(pending.transactionId, isNull);
+    });
+  });
+
+  group('pending reason parsing', () {
+    /// The wire vocabulary, agreed verbatim with both native SDKs. Renaming a
+    /// value here is a wire break, not a rename, so it is pinned by a test
+    /// rather than only by the enum's own spelling.
+    test('the three wire names map to their cases', () {
+      expect(
+        PayCrossPendingReason.fromWireName('poll_timeout'),
+        PayCrossPendingReason.pollTimeout,
+      );
+      expect(
+        PayCrossPendingReason.fromWireName('result_lost'),
+        PayCrossPendingReason.resultLost,
+      );
+      expect(
+        PayCrossPendingReason.fromWireName('server_verify'),
+        PayCrossPendingReason.serverVerify,
+      );
+    });
+
+    test('names are trimmed and lowercased, matching recovery parsing', () {
+      expect(
+        PayCrossPendingReason.fromWireName('  POLL_TIMEOUT '),
+        PayCrossPendingReason.pollTimeout,
+      );
+    });
+
+    /// Unlike recovery, an absent reason has no safe default to fall back on:
+    /// there is no "the server said nothing" reading of an unknown outcome.
+    test('anything else is unrecognized', () {
+      expect(
+        PayCrossPendingReason.fromWireName('later_value'),
+        PayCrossPendingReason.unrecognized,
+      );
+      expect(
+        PayCrossPendingReason.fromWireName(''),
+        PayCrossPendingReason.unrecognized,
+      );
+      expect(
+        PayCrossPendingReason.fromWireName(null),
+        PayCrossPendingReason.unrecognized,
+      );
+    });
   });
 
   group('recovery parsing', () {
+    /// Round-trips the token through the platform channel, which is what a
+    /// merchant actually sees. `verify_before_retry` cannot be read this way
+    /// any more — it maps to `PayCrossPending`, not to a failure — so that one
+    /// token is parsed directly below.
     Future<PayCrossRecovery> parse(String raw) async {
       PayCross.debugHostApi = (FakeHost(
         result: g.PcFailure(transactionId: 'txn_1', recovery: raw),
@@ -125,15 +245,17 @@ void main() {
       expect(await parse('restart'), isA<RecoveryRestart>());
       expect(await parse('do_not_retry'), isA<RecoveryDoNotRetry>());
       expect(
-        await parse('verify_before_retry'),
+        PayCrossRecovery.fromApiValue('verify_before_retry'),
         isA<RecoveryVerifyBeforeRetry>(),
       );
     });
 
-    /// The one recovery where retrying can charge a shopper twice: the poll ran
-    /// out of time, so the payment may have succeeded and shifted liability.
-    test('verify_before_retry is known, and is not retryable', () async {
-      final recovery = await parse('verify_before_retry');
+    /// The parser still knows the token, and still refuses to call it
+    /// retryable. What changed is where it lands: a result carrying it is a
+    /// pending outcome now, so no merchant reaches this case through
+    /// `presentPayment`. The rule is kept because the parser is public API.
+    test('verify_before_retry is known, and is not retryable', () {
+      final recovery = PayCrossRecovery.fromApiValue('verify_before_retry');
 
       expect(recovery, isA<RecoveryVerifyBeforeRetry>());
       expect(recovery, isNot(isA<RecoveryUnrecognized>()));
@@ -169,14 +291,13 @@ void main() {
     test('only retry and change_method are retryable', () async {
       expect((await parse('retry')).isRetryable, isTrue);
       expect((await parse('change_method')).isRetryable, isTrue);
-      for (final token in [
-        'restart',
-        'contact_support',
-        'do_not_retry',
-        'verify_before_retry',
-      ]) {
+      for (final token in ['restart', 'contact_support', 'do_not_retry']) {
         expect((await parse(token)).isRetryable, isFalse, reason: token);
       }
+      expect(
+        PayCrossRecovery.fromApiValue('verify_before_retry').isRetryable,
+        isFalse,
+      );
     });
   });
 
@@ -196,28 +317,6 @@ void main() {
             (e) => e.code,
             'code',
             PayCrossErrorCode.noActivity,
-          ),
-        ),
-      );
-    });
-
-    /// Distinct from a failure on purpose: the payment may have succeeded, so
-    /// the merchant must reconcile rather than re-charge.
-    test('a lost result surfaces as resultUnknown', () async {
-      PayCross.debugHostApi = (FakeHost(
-        error: PlatformException(
-          code: 'paycross_result_unknown',
-          message: 'engine detached',
-        ),
-      ));
-
-      await expectLater(
-        PayCross.presentPayment('token'),
-        throwsA(
-          isA<PayCrossIntegrationError>().having(
-            (e) => e.code,
-            'code',
-            PayCrossErrorCode.resultUnknown,
           ),
         ),
       );

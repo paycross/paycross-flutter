@@ -63,6 +63,14 @@ void main() {
         const PayCrossFailure(recovery: RecoveryUnrecognized('call_the_bank')),
       ),
       humanOutcome(const PayCrossCancelled()),
+      for (final reason in PayCrossPendingReason.values)
+        humanOutcome(
+          PayCrossPending(
+            transactionId: 'txn_1',
+            reason: reason,
+            reasonRaw: 'a_reason',
+          ),
+        ),
       for (final code in PayCrossErrorCode.values)
         humanError(PayCrossIntegrationError(code, 'a message')),
     ];
@@ -81,17 +89,33 @@ void main() {
     }
   });
 
-  test('an unknown outcome is distinct from a refusal', () {
-    final unknown = humanError(
-      const PayCrossIntegrationError(
-        PayCrossErrorCode.resultUnknown,
-        'The app was killed mid-flight.',
+  test('an unresolved outcome is distinct from a refusal', () {
+    final unknown = humanOutcome(
+      const PayCrossPending(
+        transactionId: 'txn_4',
+        reason: PayCrossPendingReason.pollTimeout,
+        reasonRaw: 'poll_timeout',
       ),
     );
 
     // The payment may have gone through: reconcile, do not re-charge.
     expect(unknown, contains('reconcile'));
+    expect(unknown, contains('txn_4'));
     expect(unknown, isNot(contains('Refused')));
+  });
+
+  /// The reason a pending outcome that never got an id still has to render:
+  /// a lost result is exactly the case with nothing to name.
+  test('an unresolved outcome with no transaction says so cleanly', () {
+    expect(
+      humanOutcome(
+        const PayCrossPending(
+          reason: PayCrossPendingReason.resultLost,
+          reasonRaw: 'result_lost',
+        ),
+      ),
+      'Unresolved — reconcile server-side, reason result_lost',
+    );
   });
 
   /// A real-shaped JWT: the mask keys off `eyJ` plus two dot-separated
@@ -116,22 +140,6 @@ void main() {
     expect(text, isNot(contains(jwt)));
     expect(text, contains('<redacted>'));
   });
-
-  test(
-    'the unknown-outcome message is scrubbed too, not just the other one',
-    () {
-      // Two branches, one rule -- and this is the branch a real incident takes.
-      final text = humanError(
-        const PayCrossIntegrationError(
-          PayCrossErrorCode.resultUnknown,
-          'killed while holding $jwt',
-        ),
-      );
-
-      expect(text, isNot(contains(jwt)));
-      expect(text, contains('reconcile'));
-    },
-  );
 
   test('a runaway native message is cut short rather than pasted whole', () {
     final text = humanError(

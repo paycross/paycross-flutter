@@ -65,6 +65,8 @@ switch (result) {
     // Declined, but the shopper may try again in the same session.
   case PayCrossFailure():
     // Declined, terminal for this session.
+  case PayCrossPending(:final transactionId):
+    // Outcome unknown. Reconcile server-side before charging again.
   case PayCrossCancelled(:final transactionId):
     // The shopper dismissed the sheet. Dismissing it does not cancel the
     // authorization, so transactionId names the attempt they left behind,
@@ -74,6 +76,18 @@ switch (result) {
 
 The switch is exhaustive: `PayCrossResult` is sealed, so a result case added in
 a future version is a compile error rather than a silently unhandled outcome.
+
+### The unresolved outcome
+
+`PayCrossPending` is neither a success nor a decline: the SDK never saw a
+verdict. A payment that completed and shifted liability looks exactly like one
+that never happened, so this is the only outcome where charging again can
+charge the shopper twice. Reconcile server-side against `transactionId` — which
+is null only when the result was lost before a transaction was known — and
+never retry blindly or show the shopper a decline. `reason` says why the
+outcome is unknown (`pollTimeout`, `resultLost`, `serverVerify`), and
+`reasonRaw` carries the wire name verbatim for a reason this version cannot
+read. Every reason means the same thing for what you must do next.
 
 The [example app](example/lib/main.dart) is this quickstart as a runnable
 screen, including the error handling below. It ships as **PayCross Demo — the
@@ -107,12 +121,11 @@ prefill with production throws `testPrefillInProduction`.
 ## Errors
 
 A decline is **not** an error — it arrives as `PayCrossFailure` with a
-`PayCrossRecovery` hint. Check `recovery.isRetryable` rather than matching on
-cases: it is a whitelist, so anything the SDK could not read fails closed. Two
-recoveries are worth naming, because both mean "do not simply charge again":
-`RecoveryVerifyBeforeRetry`, where the status poll ran out of time and the
-payment may in fact have succeeded, and `RecoveryUnrecognized`, which carries
-the server's own token for a value this version does not know.
+`PayCrossRecovery` hint, and an outcome the SDK never observed is not an error
+either — it arrives as `PayCrossPending`. Check `recovery.isRetryable` rather
+than matching on cases: it is a whitelist, so anything the SDK could not read
+fails closed. `RecoveryUnrecognized` is worth naming, because it carries the
+server's own token for a value this version does not know and is not retryable.
 
 Thrown errors are always `PayCrossIntegrationError`, meaning the SDK was asked
 to do something it cannot:
@@ -125,10 +138,10 @@ to do something it cannot:
 | `noActivity` | Android: the plugin is not attached to an Activity, or the host Activity uses a launchMode that cannot receive results. |
 | `noPresenter` | iOS: no view controller to present from. |
 | `invalidToken` | The session token was empty. |
-| `resultUnknown` | The payment's outcome is genuinely unknown — the engine or Activity was destroyed mid-flight. It **may have succeeded**; reconcile server-side rather than re-charging. |
+| `resultUnknown` | **Deprecated, no longer thrown.** A lost result is a `PayCrossPending` with reason `resultLost` since 0.4.0. The enum member stays for one minor so an existing `switch` still compiles. |
 | `unknown` | Anything the plugin did not recognise. |
 
-Every code except `resultUnknown` points at a fixable mistake in merchant code.
+Every code here points at a fixable mistake in merchant code.
 
 ## Google Pay
 
