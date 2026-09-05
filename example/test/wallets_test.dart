@@ -9,12 +9,14 @@ void main() {
   });
 
   test('an empty identifier reads as unconfigured', () {
-    // The Live Google merchant id is still the owner's to supply. Until they
-    // do the constant is empty, and the app must read that as "no wallet"
-    // rather than as an identifier -- an id Google does not know produces a
-    // rejected request rather than a sheet.
     expect(walletIdOrNull(''), isNull);
-    expect(walletIdOrNull(liveGooglePayMerchantId), isNull);
+  });
+
+  test('the Live Google identifier is configured', () {
+    // Google refuses a production request without the console profile's id,
+    // so a Live Google Pay sheet that never opens is the symptom of this
+    // constant regressing to empty.
+    expect(walletIdOrNull(liveGooglePayMerchantId), liveGooglePayMerchantId);
   });
 
   test('the Live Apple identifier is configured', () {

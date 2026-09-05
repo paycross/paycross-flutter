@@ -1,4 +1,4 @@
-## Unreleased
+## 0.4.0
 
 Source-incompatible. `PayCrossResult` gains a case, so an exhaustive `switch`
 in merchant code needs a branch for it.

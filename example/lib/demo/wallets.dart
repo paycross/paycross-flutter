@@ -48,13 +48,9 @@ const String liveApplePayMerchantId = 'merchant.pay-cross.com.prod';
 /// The Test id is not a constant at all -- a colleague types it into Settings
 /// or passes it as a define -- because sandbox works without one.
 ///
-/// Empty until the owner supplies it. The empty string rather than a spelled
-/// stand-in: this app retired that convention deliberately, and
-/// `copy_test.dart`'s `retiredIdentityMachinery` sweep fails any `.dart` file
-/// under `lib/` that spells the stand-in token out, or that describes a value
-/// as still being one. Empty-means-unset is the idiom the rest of the app
-/// already uses.
-const String liveGooglePayMerchantId = '';
+/// The Google Pay & Wallet Console profile that owns the cleared hosted
+/// checkout domain; Google requires it on production requests.
+const String liveGooglePayMerchantId = 'BCR2DN5T52B53JQD';
 
 /// An identifier, or null where there is not one yet.
 ///
