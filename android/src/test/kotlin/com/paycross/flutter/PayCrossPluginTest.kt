@@ -51,7 +51,7 @@ internal class PayCrossPluginTest {
     fun versionInfo_reportsPluginVersionAndNoNativeVersion() {
         val info = PayCrossPlugin().versionInfo()
 
-        assertEquals("0.4.0", info.pluginVersion)
+        assertEquals("0.5.0", info.pluginVersion)
         // The Android SDK declares no version constant; the plugin reports
         // null rather than fabricating one.
         assertNull(info.nativeSdkVersion)
