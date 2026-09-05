@@ -113,11 +113,11 @@ class PayCrossPending extends PayCrossResult {
   /// is still loggable rather than lost to
   /// [PayCrossPendingReason.unrecognized].
   ///
-  /// Usually the wire name a native SDK sent, verbatim. Two cases have no such
-  /// value to carry, and the plugin fills in the canonical name instead: a
-  /// result lost on the way out of a native SDK, which is `result_lost`, and a
-  /// failure still carrying the older `verify_before_retry` recovery, where the
-  /// recovery token itself is kept because it is what actually arrived.
+  /// Usually the wire name a native SDK sent, verbatim. A failure still
+  /// carrying the older `verify_before_retry` recovery keeps that recovery
+  /// token, because it is what actually arrived. One case has no value to
+  /// carry: a result lost on the way out of a native SDK, where the plugin
+  /// fills in the canonical `result_lost`.
   final String reasonRaw;
 
   @override
