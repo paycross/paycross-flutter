@@ -1936,6 +1936,27 @@ void main() {
       );
     });
 
+    /// A section this far down a long ListView is unreachable in practice
+    /// without one: the alternative is swiping through every credential field
+    /// to get to it.
+    testWidgets('its heading is a heading', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+      await _revealLanguageToggle(tester);
+
+      expect(
+        tester
+            .getSemantics(find.byKey(const ValueKey('languageHeading')))
+            .flagsCollection
+            .isHeader,
+        isTrue,
+      );
+      semantics.dispose();
+    });
+
     /// It is the sheet's language, not the environment's, so it is offered on
     /// both sides of the switch -- unlike the wallet id, which is Test only.
     testWidgets('is offered in Live as well as Test', (tester) async {

@@ -790,9 +790,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // the shopper's language rather than one merchant's configuration,
           // and it is the same person reading the sheet on either side of the
           // switch.
-          const Text(
-            'Payment sheet language',
-            style: TextStyle(fontWeight: FontWeight.bold),
+          // A real heading, so a screen reader can jump to this section
+          // rather than swiping through every credential field to reach it.
+          // The note below stays a node of its own, read after the control it
+          // describes: a hint on a SegmentedButton would have to be attached
+          // to the group rather than to a segment, and that is not something
+          // this change can verify without a device.
+          Semantics(
+            header: true,
+            child: const Text(
+              'Payment sheet language',
+              key: ValueKey('languageHeading'),
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
           ),
           const SizedBox(height: 8),
           SegmentedButton<DemoLanguage>(
