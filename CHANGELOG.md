@@ -1,4 +1,4 @@
-## Unreleased
+## 0.5.0
 
 Additive in Dart. No existing call or `switch` needs a change.
 

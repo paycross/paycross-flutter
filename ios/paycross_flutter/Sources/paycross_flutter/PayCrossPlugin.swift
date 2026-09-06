@@ -138,7 +138,7 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
     // actor -- which is precisely what Swift 6 refuses to let us assume away.
     private static let state = PluginState()
 
-    private static let pluginVersion = "0.4.0"
+    private static let pluginVersion = "0.5.0"
 
     private static let errorNotConfigured = "paycross_not_configured"
     private static let errorBusy = "paycross_busy"
