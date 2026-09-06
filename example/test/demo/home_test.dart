@@ -1565,7 +1565,7 @@ void main() {
       // run after that one stayed themed, and nothing on screen said why.
       final applied = <PayCrossAppearance?>[];
       final gate = Completer<void>();
-      var held0pen = true;
+      var heldOpen = true;
       final state = DemoEnvironmentState(
         configure:
             ({
@@ -1577,8 +1577,8 @@ void main() {
               applied.add(appearance);
               // Only the first call parks: the restore has to be able to run
               // to completion, which is the whole thing under test.
-              if (held0pen) {
-                held0pen = false;
+              if (heldOpen) {
+                heldOpen = false;
                 await gate.future;
               }
             },
