@@ -5,6 +5,7 @@ import 'automation_screen.dart';
 import 'demo/deeplink.dart';
 import 'demo/environment.dart';
 import 'demo/home.dart';
+import 'demo/language.dart';
 import 'demo/minter.dart';
 import 'demo/presets.dart';
 import 'demo/secrets.dart';
@@ -19,6 +20,17 @@ const String _googlePayMerchantId = String.fromEnvironment(
   'PAYCROSS_E2E_GOOGLE_PAY_MERCHANT_ID',
 );
 
+/// The language the payment sheet is pinned to, as a BCP 47 tag.
+///
+/// Read only by the automation build, where there is no Settings screen to
+/// choose one on: it is how a matrix cell asks for a French sheet. Empty
+/// means "not supplied", which is the native ladder's first rung left empty
+/// rather than a request for English.
+///
+/// The demo build ignores this and reads the choice a colleague made in
+/// Settings instead.
+const String _locale = String.fromEnvironment('PAYCROSS_LOCALE');
+
 /// The secure store `main` reads the saved merchant id from.
 ///
 /// A variable rather than a parameter: `main` is the entrypoint and cannot
@@ -27,6 +39,13 @@ const String _googlePayMerchantId = String.fromEnvironment(
 /// the same reason -- a seam a test replaces, and nothing else touches.
 @visibleForTesting
 SecretStore mainSecretStore = const SecretStore();
+
+/// The preference store `main` reads the chosen sheet language from.
+///
+/// A variable for the same reason [mainSecretStore] is one, and read in the
+/// same guarded arm.
+@visibleForTesting
+LanguageStore mainLanguageStore = const LanguageStore();
 
 /// Runs a real payment against sandbox with no backend of your own.
 ///
@@ -43,6 +62,12 @@ Future<void> main() async {
   final merchantId = kE2e
       ? (_googlePayMerchantId.isEmpty ? null : _googlePayMerchantId)
       : await _storedGooglePayMerchantId();
+  // The same shape, and behind the same conditional: under the define this is
+  // the constant branch too, so the frozen build still awaits exactly one
+  // thing -- the configure call below.
+  final locale = kE2e
+      ? (_locale.isEmpty ? null : _locale)
+      : await _storedLocale();
   // Awaited so a fast first tap on Pay cannot race the configure call.
   await PayCross.configure(
     environment: PayCrossEnvironment.sandbox,
@@ -53,11 +78,16 @@ Future<void> main() async {
     // present a sheet for an identifier the entitlement does not list. It
     // costs no await, so the frozen automation build below is unaffected.
     applePayMerchantId: testApplePayMerchantId,
+    // Passed through untouched. Both native SDKs own the ladder this is the
+    // first rung of, and both skip a tag they cannot read rather than
+    // throwing, so a typo in the define costs a cell nothing.
+    locale: locale,
   );
   runApp(
     ExampleApp(
       googlePayMerchantId: merchantId,
       applePayMerchantId: testApplePayMerchantId,
+      locale: locale,
     ),
   );
 }
@@ -77,11 +107,22 @@ Future<String?> _storedGooglePayMerchantId() async {
   }
 }
 
+/// The sheet language a colleague chose in Settings, as a tag, or null.
+///
+/// Read here and nowhere else, which is why Settings tells the reader that a
+/// change takes effect next launch. Not wrapped in a `try` of its own,
+/// unlike the merchant id above: `LanguageStore.read` already answers
+/// [DemoLanguage.system] on any failure, and it is the guard because that is
+/// the one place that knows an unreadable store and an unset one mean the
+/// same thing here.
+Future<String?> _storedLocale() async => (await mainLanguageStore.read()).tag;
+
 class ExampleApp extends StatelessWidget {
   const ExampleApp({
     super.key,
     this.googlePayMerchantId,
     this.applePayMerchantId,
+    this.locale,
   });
 
   /// What `configure` was given at launch, carried down so that returning
@@ -91,6 +132,11 @@ class ExampleApp extends StatelessWidget {
   /// The same, for Apple Pay. Carried rather than read from the constant at
   /// the far end so that both wallets travel the one path.
   final String? applePayMerchantId;
+
+  /// The sheet language `configure` was given at launch, carried down for the
+  /// reason the wallet identifiers are: re-pointing the SDK replaces the whole
+  /// configuration, so every later call has to send it again.
+  final String? locale;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -109,6 +155,7 @@ class ExampleApp extends StatelessWidget {
         : (context, child) => LiveModeScope(
             googlePayMerchantId: googlePayMerchantId,
             applePayMerchantId: applePayMerchantId,
+            locale: locale,
             child: child!,
           ),
     home: kE2e ? const CheckoutScreen() : const DemoHome(),

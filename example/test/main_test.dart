@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/home.dart';
+import 'package:paycross_demo/demo/language.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/run.dart';
@@ -68,6 +69,16 @@ class _SlowBackend implements SecretBackend {
   Future<void> delete(String key) async {}
 }
 
+/// A language backend whose reads throw, standing in for a device whose
+/// preference store is unavailable at launch.
+class _ThrowingLanguageBackend implements LanguageBackend {
+  @override
+  Future<String?> read() async => throw StateError('no preferences');
+
+  @override
+  Future<void> write(String value) async => throw StateError('no preferences');
+}
+
 /// A store whose reads throw, standing in for a device whose Keychain or
 /// KeyStore is unavailable at launch.
 class _ThrowingBackend implements SecretBackend {
@@ -88,13 +99,23 @@ void main() {
   setUp(() {
     host = _RecordingHost();
     PayCross.debugHostApi = host;
+    // Every test that calls `app.main()` needs a language store that answers.
+    // `SharedPreferences` under `flutter test` has no platform behind it, and
+    // a platform store with nothing behind it does not fail -- it never
+    // answers, which is what `preset_store.dart` and `history.dart` both put
+    // a bound on their writes for. `main` awaits this read before `runApp`,
+    // so an unanswering one hangs the whole test file rather than failing it.
+    app.mainLanguageStore = LanguageStore(backend: InMemoryLanguageBackend());
     // `runInFlight` is top-level, so a test that ends while a read is still in
     // flight leaves it set and the next test silently cannot start a run at
     // all. Reset rather than tearDown: it also covers a test that dies.
     runInFlight = false;
   });
 
-  tearDown(() => app.mainSecretStore = const SecretStore());
+  tearDown(() {
+    app.mainSecretStore = const SecretStore();
+    app.mainLanguageStore = const LanguageStore();
+  });
 
   testWidgets('the demo build configures with the stored merchant id', (
     tester,
@@ -159,6 +180,50 @@ void main() {
 
     expect(host.lastConfiguration?.applePayMerchantId, testApplePayMerchantId);
     expect(host.lastConfiguration?.environment, g.PcEnvironment.sandbox);
+  });
+
+  testWidgets('the demo build configures with the stored language', (
+    tester,
+  ) async {
+    final backend = InMemoryLanguageBackend();
+    await LanguageStore(backend: backend).write(DemoLanguage.french);
+    app.mainSecretStore = SecretStore(backend: InMemorySecretBackend());
+    app.mainLanguageStore = LanguageStore(backend: backend);
+
+    await app.main();
+    await tester.pump();
+
+    expect(host.lastConfiguration?.locale, 'fr');
+  });
+
+  /// Null rather than 'en'. The native ladder's first rung is left empty, so
+  /// the payment session's own locale decides and the device after it -- which
+  /// is what a merchant who writes no locale code gets.
+  testWidgets('a store with no language configures with null', (tester) async {
+    app.mainSecretStore = SecretStore(backend: InMemorySecretBackend());
+    app.mainLanguageStore = LanguageStore(backend: InMemoryLanguageBackend());
+
+    await app.main();
+    await tester.pump();
+
+    expect(host.lastConfiguration, isNotNull);
+    expect(host.lastConfiguration?.locale, isNull);
+  });
+
+  /// The read happens before `runApp`, so a preference store that is
+  /// unavailable must cost the sheet its language and not the app its launch.
+  testWidgets('a language store that throws configures with null', (
+    tester,
+  ) async {
+    app.mainSecretStore = SecretStore(backend: InMemorySecretBackend());
+    app.mainLanguageStore = LanguageStore(backend: _ThrowingLanguageBackend());
+
+    await app.main();
+    await tester.pump();
+
+    expect(host.lastConfiguration, isNotNull);
+    expect(host.lastConfiguration?.locale, isNull);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('a run link reaches a run down the same path a tile does', (
@@ -472,6 +537,10 @@ void main() {
 
     expect(handedOn, contains('googlePayMerchantId: merchantId'));
     expect(handedOn, contains('applePayMerchantId: testApplePayMerchantId'));
+    // And the language, for the same reason: this copy is the one every
+    // re-point the state makes reads back, so dropping it here leaves the
+    // sheet French at launch and English from the first environment switch.
+    expect(handedOn, contains('locale: locale'));
   });
 
   test('the frozen build still awaits one thing and reads no storage', () {
@@ -499,18 +568,23 @@ void main() {
         .join('\n');
     final collapsed = code.replaceAll(RegExp(r'\s+'), ' ');
 
-    // Two in the source, one of them behind the automation conditional, so
-    // exactly one runs in the frozen build. A third would fail here whichever
+    // Three in the source, two of them behind the automation conditional, so
+    // exactly one runs in the frozen build. A fourth would fail here whichever
     // arm it landed on, which is the point -- this counts rather than
     // matching, because the await worth catching is the one nobody predicted.
-    expect('await '.allMatches(collapsed).length, 2);
+    expect('await '.allMatches(collapsed).length, 3);
     expect(collapsed, contains('await PayCross.configure('));
+    // The leading colon is the proof of the guard: both reads sit in the
+    // false arm of a `kE2e ? … : …`, so neither is reached by the frozen
+    // build at all.
     expect(collapsed, contains(': await _storedGooglePayMerchantId();'));
+    expect(collapsed, contains(': await _storedLocale();'));
 
-    // And the storage read is reached only through that guarded arm. A direct
-    // read here would be a second await, but it would also be a read on a
-    // device whose keychain the automation runner never unlocks.
+    // And the storage reads are reached only through those guarded arms. A
+    // direct read here would be another await, but it would also be a read on
+    // a device whose keychain the automation runner never unlocks.
     expect(code, isNot(contains('mainSecretStore')));
+    expect(code, isNot(contains('mainLanguageStore')));
   });
 
   test('the automation build installs no environment scope', () {

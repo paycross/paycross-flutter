@@ -1512,6 +1512,7 @@ void main() {
               String? googlePayMerchantId,
               String? applePayMerchantId,
               PayCrossAppearance? appearance,
+              String? locale,
             }) async {
               applied.add(appearance);
             },
@@ -1573,6 +1574,7 @@ void main() {
               String? googlePayMerchantId,
               String? applePayMerchantId,
               PayCrossAppearance? appearance,
+              String? locale,
             }) async {
               applied.add(appearance);
               // Only the first call parks: the restore has to be able to run
@@ -1638,6 +1640,7 @@ void main() {
               String? googlePayMerchantId,
               String? applePayMerchantId,
               PayCrossAppearance? appearance,
+              String? locale,
             }) async {
               applied.add(appearance);
             },
