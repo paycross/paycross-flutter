@@ -570,6 +570,7 @@ class PcConfiguration {
     this.googlePayMerchantId,
     this.applePayMerchantId,
     this.appearance,
+    this.locale,
   });
 
   PcEnvironment environment;
@@ -616,6 +617,20 @@ class PcConfiguration {
   /// How the sheet looks. Honoured on both platforms.
   PcAppearance? appearance;
 
+  /// The language the payment sheet draws in, as a BCP 47 tag.
+  ///
+  /// Crosses exactly as the merchant wrote it, or as null. Nothing on this
+  /// side resolves it, validates it or lower-cases it: both native SDKs
+  /// already own one resolution ladder each — the override, then the payment
+  /// session's own locale, then the device, then English — and a second
+  /// opinion in Dart could only ever disagree with them. A tag neither SDK
+  /// ships strings for falls through that ladder, and a malformed one is
+  /// skipped, so no value here can make either sheet throw.
+  ///
+  /// Null means "not overridden", which is the ladder's first rung being
+  /// empty rather than a request for English.
+  String? locale;
+
   List<Object?> _toList() {
     return <Object?>[
       environment,
@@ -624,6 +639,7 @@ class PcConfiguration {
       googlePayMerchantId,
       applePayMerchantId,
       appearance,
+      locale,
     ];
   }
 
@@ -640,6 +656,7 @@ class PcConfiguration {
       googlePayMerchantId: result[3] as String?,
       applePayMerchantId: result[4] as String?,
       appearance: result[5] as PcAppearance?,
+      locale: result[6] as String?,
     );
   }
 
@@ -657,7 +674,8 @@ class PcConfiguration {
         _deepEquals(testCardPrefill, other.testCardPrefill) &&
         _deepEquals(googlePayMerchantId, other.googlePayMerchantId) &&
         _deepEquals(applePayMerchantId, other.applePayMerchantId) &&
-        _deepEquals(appearance, other.appearance);
+        _deepEquals(appearance, other.appearance) &&
+        _deepEquals(locale, other.locale);
   }
 
   @override
@@ -666,7 +684,7 @@ class PcConfiguration {
 
   @override
   String toString() {
-    return 'PcConfiguration(environment: $environment, brandColorArgb: $brandColorArgb, testCardPrefill: $testCardPrefill, googlePayMerchantId: $googlePayMerchantId, applePayMerchantId: $applePayMerchantId, appearance: $appearance)';
+    return 'PcConfiguration(environment: $environment, brandColorArgb: $brandColorArgb, testCardPrefill: $testCardPrefill, googlePayMerchantId: $googlePayMerchantId, applePayMerchantId: $applePayMerchantId, appearance: $appearance, locale: $locale)';
   }
 }
 

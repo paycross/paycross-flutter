@@ -189,6 +189,7 @@ class PcConfiguration {
     this.googlePayMerchantId,
     this.applePayMerchantId,
     this.appearance,
+    this.locale,
   });
 
   PcEnvironment environment;
@@ -234,6 +235,20 @@ class PcConfiguration {
 
   /// How the sheet looks. Honoured on both platforms.
   PcAppearance? appearance;
+
+  /// The language the payment sheet draws in, as a BCP 47 tag.
+  ///
+  /// Crosses exactly as the merchant wrote it, or as null. Nothing on this
+  /// side resolves it, validates it or lower-cases it: both native SDKs
+  /// already own one resolution ladder each — the override, then the payment
+  /// session's own locale, then the device, then English — and a second
+  /// opinion in Dart could only ever disagree with them. A tag neither SDK
+  /// ships strings for falls through that ladder, and a malformed one is
+  /// skipped, so no value here can make either sheet throw.
+  ///
+  /// Null means "not overridden", which is the ladder's first rung being
+  /// empty rather than a request for English.
+  String? locale;
 }
 
 class PcVersionInfo {

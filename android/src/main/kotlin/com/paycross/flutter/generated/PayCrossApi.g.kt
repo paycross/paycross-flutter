@@ -664,7 +664,22 @@ data class PcConfiguration (
    */
   val applePayMerchantId: String? = null,
   /** How the sheet looks. Honoured on both platforms. */
-  val appearance: PcAppearance? = null
+  val appearance: PcAppearance? = null,
+  /**
+   * The language the payment sheet draws in, as a BCP 47 tag.
+   *
+   * Crosses exactly as the merchant wrote it, or as null. Nothing on this
+   * side resolves it, validates it or lower-cases it: both native SDKs
+   * already own one resolution ladder each — the override, then the payment
+   * session's own locale, then the device, then English — and a second
+   * opinion in Dart could only ever disagree with them. A tag neither SDK
+   * ships strings for falls through that ladder, and a malformed one is
+   * skipped, so no value here can make either sheet throw.
+   *
+   * Null means "not overridden", which is the ladder's first rung being
+   * empty rather than a request for English.
+   */
+  val locale: String? = null
 )
  {
   companion object {
@@ -675,7 +690,8 @@ data class PcConfiguration (
       val googlePayMerchantId = pigeonVar_list[3] as String?
       val applePayMerchantId = pigeonVar_list[4] as String?
       val appearance = pigeonVar_list[5] as PcAppearance?
-      return PcConfiguration(environment, brandColorArgb, testCardPrefill, googlePayMerchantId, applePayMerchantId, appearance)
+      val locale = pigeonVar_list[6] as String?
+      return PcConfiguration(environment, brandColorArgb, testCardPrefill, googlePayMerchantId, applePayMerchantId, appearance, locale)
     }
   }
   fun toList(): List<Any?> {
@@ -686,6 +702,7 @@ data class PcConfiguration (
       googlePayMerchantId,
       applePayMerchantId,
       appearance,
+      locale,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -696,7 +713,7 @@ data class PcConfiguration (
       return true
     }
     val other = other as PcConfiguration
-    return PayCrossApiPigeonUtils.deepEquals(this.environment, other.environment) && PayCrossApiPigeonUtils.deepEquals(this.brandColorArgb, other.brandColorArgb) && PayCrossApiPigeonUtils.deepEquals(this.testCardPrefill, other.testCardPrefill) && PayCrossApiPigeonUtils.deepEquals(this.googlePayMerchantId, other.googlePayMerchantId) && PayCrossApiPigeonUtils.deepEquals(this.applePayMerchantId, other.applePayMerchantId) && PayCrossApiPigeonUtils.deepEquals(this.appearance, other.appearance)
+    return PayCrossApiPigeonUtils.deepEquals(this.environment, other.environment) && PayCrossApiPigeonUtils.deepEquals(this.brandColorArgb, other.brandColorArgb) && PayCrossApiPigeonUtils.deepEquals(this.testCardPrefill, other.testCardPrefill) && PayCrossApiPigeonUtils.deepEquals(this.googlePayMerchantId, other.googlePayMerchantId) && PayCrossApiPigeonUtils.deepEquals(this.applePayMerchantId, other.applePayMerchantId) && PayCrossApiPigeonUtils.deepEquals(this.appearance, other.appearance) && PayCrossApiPigeonUtils.deepEquals(this.locale, other.locale)
   }
 
   override fun hashCode(): Int {
@@ -707,10 +724,11 @@ data class PcConfiguration (
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.googlePayMerchantId)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.applePayMerchantId)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.appearance)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.locale)
     return result
   }
   override fun toString(): String {
-    return "PcConfiguration(environment=$environment, brandColorArgb=$brandColorArgb, testCardPrefill=$testCardPrefill, googlePayMerchantId=$googlePayMerchantId, applePayMerchantId=$applePayMerchantId, appearance=$appearance)"
+    return "PcConfiguration(environment=$environment, brandColorArgb=$brandColorArgb, testCardPrefill=$testCardPrefill, googlePayMerchantId=$googlePayMerchantId, applePayMerchantId=$applePayMerchantId, appearance=$appearance, locale=$locale)"
   }
 }
 
