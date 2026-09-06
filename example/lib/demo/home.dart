@@ -145,12 +145,18 @@ Future<void> runPreset(
   // this.
   final environment = LiveModeScope.readOf(context);
   final themed = preset.appearance;
-  if (themed != null) {
-    await environment?.applyTestAppearance(themed);
-    if (!context.mounted) return;
-  }
 
+  // The try opens BEFORE the appearance is applied, not after. A `return`
+  // between the apply and the try -- which is what an unmounted context does
+  // here -- would skip the restore and leave every tile run afterwards themed,
+  // and the person running them would have no way to tell that from the SDK
+  // ignoring an appearance they never set.
   try {
+    if (themed != null) {
+      await environment?.applyTestAppearance(themed);
+      if (!context.mounted) return;
+    }
+
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         // One mint closure, built once and handed to whichever screen is

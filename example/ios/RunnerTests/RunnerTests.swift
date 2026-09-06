@@ -58,6 +58,54 @@ class RunnerTests: XCTestCase {
         XCTAssertNil((pigeon as? PcCancelled)?.transactionId)
     }
 
+    func testAnAppearanceCrossesEveryFieldAndTruncatesColoursSafely() {
+        // The colours arrive as unsigned packed ARGB in an Int64. An exact
+        // UInt32(_:) traps at runtime on anything outside 0...0xFFFFFFFF, and a
+        // platform channel is not a place to take a trap, so the mapping
+        // truncates -- the same low-32-bit truncation Android's toInt() does.
+        // 0x80 alpha proves the top byte survives: a packing that dropped it
+        // would still look right for every opaque colour checked by hand.
+        let native = PcAppearance(
+            light: PcColors(brand: 0xFF1E_88E5, component: 0x80FF_FFFF),
+            dark: PcColors(brand: 0xFF64_B5F6),
+            themeMode: .dark,
+            shapes: PcShapes(cornerRadius: 16, buttonCornerRadius: 28, borderWidth: 2),
+            primaryButton: PcPrimaryButton(background: 0xFF1E_88E5, height: 56),
+            typography: PcTypography(sizeScaleFactor: 1.1)
+        ).toNative()
+
+        XCTAssertEqual(native.light.brand, PayCrossColor(argb: 0xFF1E_88E5))
+        XCTAssertEqual(native.light.component, PayCrossColor(argb: 0x80FF_FFFF))
+        XCTAssertEqual(native.dark.brand, PayCrossColor(argb: 0xFF64_B5F6))
+        XCTAssertEqual(native.themeMode, .dark)
+        XCTAssertEqual(native.shapes.cornerRadius, 16)
+        XCTAssertEqual(native.shapes.buttonCornerRadius, 28)
+        XCTAssertEqual(native.shapes.borderWidth, 2)
+        XCTAssertEqual(native.primaryButton.background, PayCrossColor(argb: 0xFF1E_88E5))
+        XCTAssertEqual(native.primaryButton.height, 56)
+        XCTAssertEqual(native.typography.sizeScaleFactor, 1.1)
+    }
+
+    func testAnEmptyAppearanceSubstitutesEmptyStructsRatherThanInventingValues() {
+        // The SDK's sub-structs are non-optional, so a nil on the wire has to
+        // become something. An empty struct is the right something: every role
+        // in it is nil, which is what the sheet reads as "keep the platform
+        // default" -- the same thing the nil meant. A default-constructed
+        // struct carrying real values would silently theme a sheet nobody
+        // asked to theme.
+        let native = PcAppearance(themeMode: .system).toNative()
+
+        XCTAssertNil(native.light.brand)
+        XCTAssertNil(native.light.surface)
+        XCTAssertNil(native.dark.brand)
+        XCTAssertNil(native.shapes.cornerRadius)
+        XCTAssertNil(native.shapes.borderWidth)
+        XCTAssertNil(native.primaryButton.background)
+        XCTAssertNil(native.primaryButton.height)
+        XCTAssertNil(native.typography.sizeScaleFactor)
+        XCTAssertEqual(native.themeMode, .system)
+    }
+
     func testFailureCarriesTheRecoveryToken() {
         let pigeon = PaymentResult.failed(
             transactionID: "tx-1",

@@ -760,10 +760,10 @@ void main() {
       expect(host.lastConfiguration?.appearance, isNull);
     });
 
-    /// Both set is a migration half-done, and it has exactly one sensible
-    /// reading: the newer, richer parameter wins. The old one is sent as null
-    /// rather than alongside, so neither native has to hold a second opinion
-    /// about which colour is the brand.
+    /// Both set, and the appearance has an opinion about the brand: the newer,
+    /// richer parameter wins. The old one is sent as null rather than
+    /// alongside, so neither native has to hold a second opinion about which
+    /// colour is the brand.
     test(
       'appearance wins over brandColorArgb, which crosses as null',
       () async {
@@ -780,6 +780,137 @@ void main() {
         expect(host.lastConfiguration?.appearance?.light?.brand, 0xFF6750A4);
       },
     );
+
+    /// The half-finished migration, and the case that used to lose a colour: a
+    /// merchant adds two corner radii to a `configure` call that still passes
+    /// `brandColorArgb`, and the appearance wins with nothing to say about the
+    /// brand. Dropping it there would take the merchant's brand colour away as
+    /// the reward for adopting the new API.
+    test(
+      'a brandColorArgb merges into an appearance that names no brand',
+      () async {
+        final host = FakeHost();
+        PayCross.debugHostApi = (host);
+
+        await PayCross.configure(
+          environment: PayCrossEnvironment.sandbox,
+          // ignore: deprecated_member_use_from_same_package
+          brandColorArgb: 0xFF6750A4,
+          appearance: const PayCrossAppearance(
+            shapes: PayCrossShapes(cornerRadius: 16),
+          ),
+        );
+
+        final crossed = host.lastConfiguration!.appearance!;
+        expect(crossed.light?.brand, 0xFF6750A4);
+        expect(crossed.dark?.brand, 0xFF6750A4);
+        // Still not sent alongside: the colour is inside the appearance now, and
+        // two brand colours on the wire is the thing this avoids.
+        expect(host.lastConfiguration?.brandColorArgb, isNull);
+        // Merged, not replaced. What the appearance did say survives.
+        expect(crossed.shapes?.cornerRadius, 16);
+      },
+    );
+
+    /// A palette that already names a brand is an opinion, and the merge must
+    /// not overwrite it. One palette naming one is enough: a merchant who set
+    /// a light brand and left dark to the platform chose that, and filling
+    /// dark from the legacy value would be inventing a decision.
+    test('a palette that names a brand is left alone', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        // ignore: deprecated_member_use_from_same_package
+        brandColorArgb: 0xFFFF0000,
+        appearance: const PayCrossAppearance(
+          light: PayCrossColors(brand: Color(0xFF6750A4)),
+        ),
+      );
+
+      final crossed = host.lastConfiguration!.appearance!;
+      expect(crossed.light?.brand, 0xFF6750A4);
+      expect(crossed.dark, isNull);
+      expect(host.lastConfiguration?.brandColorArgb, isNull);
+    });
+
+    /// The merge fills the brand and nothing else. An `onBrand` the merchant
+    /// left null still has to reach the natives as null, because deriving it
+    /// from the brand's own luminance is their job and not this package's.
+    test('the merge fills brand only', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        // ignore: deprecated_member_use_from_same_package
+        brandColorArgb: 0xFF6750A4,
+        appearance: const PayCrossAppearance(
+          light: PayCrossColors(surface: Color(0xFFFAFAFA)),
+        ),
+      );
+
+      final light = host.lastConfiguration!.appearance!.light!;
+      expect(light.brand, 0xFF6750A4);
+      expect(light.surface, 0xFFFAFAFA);
+      expect(light.onBrand, isNull);
+      expect(light.text, isNull);
+    });
+
+    /// copyWith keeps what it is not given. The merge above is built on it, so
+    /// a copyWith that quietly cleared a role would take the rest of the
+    /// palette with it.
+    test('copyWith replaces only what it is given', () {
+      const original = PayCrossColors(
+        brand: Color(0xFF6750A4),
+        surface: Color(0xFFFAFAFA),
+      );
+
+      final copy = original.copyWith(surface: const Color(0xFF121212));
+
+      expect(copy.brand, const Color(0xFF6750A4));
+      expect(copy.surface, const Color(0xFF121212));
+
+      const appearance = PayCrossAppearance(
+        themeMode: PayCrossThemeMode.dark,
+        shapes: PayCrossShapes(cornerRadius: 16),
+      );
+      final wider = appearance.copyWith(light: original);
+      expect(wider.light, original);
+      expect(wider.themeMode, PayCrossThemeMode.dark);
+      expect(wider.shapes?.cornerRadius, 16);
+    });
+
+    /// The question the merge asks, pinned on its own so a change to it fails
+    /// here rather than as a colour nobody can explain.
+    test('hasBrand is true when either palette names one', () {
+      expect(const PayCrossAppearance().hasBrand, isFalse);
+      expect(
+        const PayCrossAppearance(
+          shapes: PayCrossShapes(cornerRadius: 16),
+        ).hasBrand,
+        isFalse,
+      );
+      expect(
+        const PayCrossAppearance(
+          light: PayCrossColors(surface: Color(0xFFFAFAFA)),
+        ).hasBrand,
+        isFalse,
+      );
+      expect(
+        const PayCrossAppearance(
+          light: PayCrossColors(brand: Color(0xFF6750A4)),
+        ).hasBrand,
+        isTrue,
+      );
+      expect(
+        const PayCrossAppearance(
+          dark: PayCrossColors(brand: Color(0xFF6750A4)),
+        ).hasBrand,
+        isTrue,
+      );
+    });
 
     /// Refused in Dart, before anything crosses. Both natives clamp too, for
     /// callers that reach them directly, but a clamp is a silent correction:

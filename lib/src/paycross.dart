@@ -57,9 +57,15 @@ abstract final class PayCross {
   /// [brandColorArgb] is deprecated in favour of
   /// `appearance: PayCrossAppearance.brand(color)`, which sets the same colour
   /// in both light and dark and opens the rest of the palette. It is still
-  /// honoured on its own, on both platforms. When both are given the
-  /// appearance wins and the brand colour is not sent, so neither native SDK
-  /// has to hold a second opinion about which colour is the brand.
+  /// honoured on its own, on both platforms.
+  ///
+  /// When both are given, the appearance decides only what it actually names.
+  /// If either palette sets `brand`, that wins outright. If neither does — an
+  /// appearance that is only shapes, or only a font scale, which is exactly
+  /// what a half-finished migration looks like — the legacy colour is merged
+  /// into `brand` in both palettes rather than dropped. Either way the legacy
+  /// value itself is not sent, so neither native SDK has to hold a second
+  /// opinion about which colour is the brand.
   ///
   /// The `@Deprecated` on it is documentation rather than a warning: Dart does
   /// not report a deprecated named parameter at a call site, so this note, the
@@ -87,7 +93,11 @@ abstract final class PayCross {
   /// flight.
   static Future<void> configure({
     required PayCrossEnvironment environment,
-    @Deprecated('Use appearance: PayCrossAppearance.brand(color)')
+    @Deprecated(
+      'Use appearance: PayCrossAppearance.brand(color). Passed beside an '
+      'appearance that names no brand, this colour is merged into both '
+      'palettes rather than dropped.',
+    )
     int? brandColorArgb,
     PayCrossTestCardPrefill? testCardPrefill,
     String? googlePayMerchantId,
@@ -105,7 +115,7 @@ abstract final class PayCross {
     // Before the channel call, and before the busy guard reports anything: an
     // appearance a sheet cannot draw is a mistake in merchant code, and it is
     // cheaper to name here than as a layout failure inside a native sheet.
-    final crossing = appearance?.toPigeon();
+    final crossing = _withLegacyBrand(appearance, brandColorArgb)?.toPigeon();
 
     return _guard(
       () => _api.configure(
@@ -188,6 +198,30 @@ abstract final class PayCross {
     return (
       pluginVersion: info.pluginVersion,
       nativeSdkVersion: info.nativeSdkVersion,
+    );
+  }
+
+  /// Folds a deprecated [brandColorArgb] into an appearance that names no
+  /// brand of its own.
+  ///
+  /// Without this, adding two corner radii to a `configure` call that still
+  /// used `brandColorArgb` would silently drop the merchant's brand colour:
+  /// the appearance would win, and it would win with nothing to say about the
+  /// brand. A half-migrated call is the normal state of a migration, and it
+  /// must not be the state that loses a colour.
+  static PayCrossAppearance? _withLegacyBrand(
+    PayCrossAppearance? appearance,
+    int? brandColorArgb,
+  ) {
+    if (appearance == null) return null;
+    if (brandColorArgb == null || appearance.hasBrand) return appearance;
+
+    final legacy = Color(brandColorArgb);
+    return appearance.copyWith(
+      light: (appearance.light ?? const PayCrossColors()).copyWith(
+        brand: legacy,
+      ),
+      dark: (appearance.dark ?? const PayCrossColors()).copyWith(brand: legacy),
     );
   }
 

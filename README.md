@@ -359,8 +359,21 @@ points on iOS — and are not converted between them.
 appearance: PayCrossAppearance.brand(Color(0xFF6750A4)),
 ```
 
-Setting both is not an error: the appearance wins, and the brand colour is not
-sent at all.
+Setting both is not an error, and it does not lose your colour. The appearance
+decides only what it actually names:
+
+* if either palette sets `brand`, that wins and `brandColorArgb` is ignored;
+* if neither does — an appearance that is only shapes, or only a font scale,
+  which is what a half-finished migration looks like — `brandColorArgb` is
+  merged into `brand` in **both** palettes.
+
+Either way the legacy value is not sent to the native SDKs on its own, so
+neither has to decide which of two brand colours is the real one.
+
+`PayCrossColors` and `PayCrossAppearance` both have a `copyWith` if you want to
+build a palette up in steps. Passing null to it keeps the value already there
+rather than clearing it, which is the usual Flutter bargain: construct a fresh
+palette to unset a role.
 
 ## License
 

@@ -101,6 +101,35 @@ class PayCrossColors {
   /// Error text, the error banner and an invalid field's border.
   final Color? error;
 
+  /// This palette with the named roles replaced.
+  ///
+  /// Passing null for a role keeps the one already there rather than clearing
+  /// it, which is the usual Flutter `copyWith` bargain: there is no way to
+  /// spell "unset this". Build a fresh [PayCrossColors] to clear a role.
+  PayCrossColors copyWith({
+    Color? brand,
+    Color? onBrand,
+    Color? surface,
+    Color? component,
+    Color? componentBorder,
+    Color? text,
+    Color? textSecondary,
+    Color? placeholder,
+    Color? icon,
+    Color? error,
+  }) => PayCrossColors(
+    brand: brand ?? this.brand,
+    onBrand: onBrand ?? this.onBrand,
+    surface: surface ?? this.surface,
+    component: component ?? this.component,
+    componentBorder: componentBorder ?? this.componentBorder,
+    text: text ?? this.text,
+    textSecondary: textSecondary ?? this.textSecondary,
+    placeholder: placeholder ?? this.placeholder,
+    icon: icon ?? this.icon,
+    error: error ?? this.error,
+  );
+
   g.PcColors _toPigeon() => g.PcColors(
     brand: brand?.toARGB32(),
     onBrand: onBrand?.toARGB32(),
@@ -286,6 +315,33 @@ class PayCrossAppearance {
 
   /// Type sizing. Null leaves every size alone.
   final PayCrossTypography? typography;
+
+  /// Whether either palette names a brand colour.
+  ///
+  /// The question `PayCross.configure` asks before deciding what to do with a
+  /// legacy `brandColorArgb` beside this appearance: an appearance with no
+  /// opinion about the brand must not be what silently discards one.
+  bool get hasBrand => light?.brand != null || dark?.brand != null;
+
+  /// This appearance with the named fields replaced.
+  ///
+  /// Passing null for a field keeps the one already there rather than clearing
+  /// it. See [PayCrossColors.copyWith].
+  PayCrossAppearance copyWith({
+    PayCrossColors? light,
+    PayCrossColors? dark,
+    PayCrossThemeMode? themeMode,
+    PayCrossShapes? shapes,
+    PayCrossPrimaryButton? primaryButton,
+    PayCrossTypography? typography,
+  }) => PayCrossAppearance(
+    light: light ?? this.light,
+    dark: dark ?? this.dark,
+    themeMode: themeMode ?? this.themeMode,
+    shapes: shapes ?? this.shapes,
+    primaryButton: primaryButton ?? this.primaryButton,
+    typography: typography ?? this.typography,
+  );
 }
 
 /// Packs an appearance for the channel, refusing the values no sheet can draw.

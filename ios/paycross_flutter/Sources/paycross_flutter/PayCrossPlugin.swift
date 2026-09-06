@@ -263,7 +263,10 @@ private extension PcThemeMode {
     }
 }
 
-private extension PcAppearance {
+// Internal rather than private, like `PaymentResult.toPigeon()` above it and
+// unlike the per-struct mappings it calls: this is the one entry point
+// RunnerTests reaches, and `@testable import` sees internal but not private.
+extension PcAppearance {
     func toNative() -> PayCrossAppearance {
         // The SDK's own sub-structs are non-optional and empty by default, and
         // an empty one means exactly what a null here means: every role in it

@@ -22,8 +22,25 @@ deprecated rather than removed.
 * `brandColorArgb` is **deprecated** in favour of
   `appearance: PayCrossAppearance.brand(color)`. It still works, and it now
   applies on iOS as well as Android — the iOS SDK had no brand-colour hook when
-  it was added, and now has one. When both are given the appearance wins and
-  the brand colour is not sent.
+  it was added, and now has one.
+
+  Passing both does not lose the colour. If either palette names `brand`, the
+  appearance wins outright; if neither does — an appearance that is only shapes
+  or only a font scale, which is what a half-finished migration looks like —
+  the legacy colour is merged into `brand` in both palettes. Either way it is
+  not sent to the natives on its own, so neither has to decide which of two
+  brand colours is the real one.
+
+  Note that Dart does not report a deprecated *named parameter* at a call site,
+  so nothing in your build will warn you. This entry and the README are the
+  deprecation.
+* `PayCrossColors.copyWith` and `PayCrossAppearance.copyWith`, for building a
+  palette up in steps. Passing null keeps the value already there rather than
+  clearing it; construct a fresh palette to unset a role.
+* `PayCrossAppearance.hasBrand` answers whether either palette names a brand
+  colour. It is the question the merge above asks, and it is public because it
+  is also the question a merchant asks before deciding whether their own
+  fallback is needed.
 * `PayCrossErrorCode.invalidAppearance` is a new code. `configure` throws it,
   before anything reaches a native SDK, for a `sizeScaleFactor` outside 0.8–1.3
   or a negative or non-finite radius, border width or height. Both native SDKs
