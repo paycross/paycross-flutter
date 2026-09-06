@@ -15,6 +15,7 @@ DemoEnvironmentState fakeEnvironment({
         required PayCrossEnvironment environment,
         String? googlePayMerchantId,
         String? applePayMerchantId,
+        PayCrossAppearance? appearance,
       }) async {},
   googlePayMerchantId: googlePayMerchantId,
   applePayMerchantId: applePayMerchantId,

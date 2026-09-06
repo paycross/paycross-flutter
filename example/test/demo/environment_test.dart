@@ -32,10 +32,16 @@ class _RecordingConfigure {
   /// attempted while the first is still in flight.
   Completer<void>? hold;
 
+  /// The appearance of each call, beside the two wallet lists and for the
+  /// same reason: a themed run that forgot to put the SDK back reads as a
+  /// list with a leftover in it rather than as a passing test.
+  final List<PayCrossAppearance?> appearances = <PayCrossAppearance?>[];
+
   Future<void> call({
     required PayCrossEnvironment environment,
     String? googlePayMerchantId,
     String? applePayMerchantId,
+    PayCrossAppearance? appearance,
   }) async {
     // Before the refusal, not after: this models a button being tapped while
     // the SDK call is in flight, and that happens whether the call goes on to
@@ -45,6 +51,7 @@ class _RecordingConfigure {
     calls.add(environment);
     merchantIds.add(googlePayMerchantId);
     appleMerchantIds.add(applePayMerchantId);
+    appearances.add(appearance);
     if (hold != null) await hold!.future;
   }
 }
@@ -734,6 +741,51 @@ void main() {
           contains('fixed for its lifetime'),
         ),
       );
+    });
+  });
+
+  group('a themed run', () {
+    const themed = PayCrossAppearance(
+      light: PayCrossColors(brand: Color(0xFF00875A)),
+    );
+
+    test('applies the appearance and puts the SDK back', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        googlePayMerchantId: 'BCR2DN4T2ABCDEFG',
+        applePayMerchantId: 'merchant.pay-cross.com',
+      );
+
+      await state.applyTestAppearance(themed);
+      await state.applyTestAppearance(null);
+
+      expect(configure.appearances, <PayCrossAppearance?>[themed, null]);
+      // Re-pointing replaces the whole configuration, so both wallet
+      // identifiers have to go back on every call. One left out is a wallet
+      // button that stops appearing until the app is relaunched, and the tile
+      // that broke it would be the one nobody suspects.
+      expect(configure.merchantIds, <String?>[
+        'BCR2DN4T2ABCDEFG',
+        'BCR2DN4T2ABCDEFG',
+      ]);
+      expect(configure.appleMerchantIds, <String?>[
+        'merchant.pay-cross.com',
+        'merchant.pay-cross.com',
+      ]);
+    });
+
+    test('is a sandbox call even when the app is in Live', () async {
+      // Unreachable in the app -- the preset tiles are not rendered in Live at
+      // all -- and pinned anyway, because "themed" and "production" is the one
+      // combination where a demo tile would spend real money.
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(configure: configure.call);
+      expect(await state.enterLive(liveConfirmationWord), isNull);
+
+      await state.applyTestAppearance(themed);
+
+      expect(configure.calls.last, PayCrossEnvironment.sandbox);
     });
   });
 }

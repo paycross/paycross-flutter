@@ -8,6 +8,14 @@
 /// must never reach a merchant as a breaking change.
 library;
 
+export 'src/appearance.dart'
+    show
+        PayCrossAppearance,
+        PayCrossColors,
+        PayCrossPrimaryButton,
+        PayCrossShapes,
+        PayCrossThemeMode,
+        PayCrossTypography;
 export 'src/environment.dart' show PayCrossEnvironment;
 export 'src/errors.dart' show PayCrossErrorCode, PayCrossIntegrationError;
 export 'src/paycross.dart' show PayCross;

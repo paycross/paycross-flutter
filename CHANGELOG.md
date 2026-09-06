@@ -1,3 +1,71 @@
+## Unreleased
+
+Additive in Dart. No existing call needs a change, and one parameter is
+deprecated rather than removed.
+
+* `PayCross.configure` takes a `PayCrossAppearance`, and it themes the native
+  sheets on **both** platforms. It carries a `PayCrossColors` palette for light
+  and one for dark — `brand`, `onBrand`, `surface`, `component`,
+  `componentBorder`, `text`, `textSecondary`, `placeholder`, `icon`, `error` —
+  a `PayCrossThemeMode` that pins the sheet to light or dark or follows the
+  device, `PayCrossShapes` for corner radii and border width, a
+  `PayCrossPrimaryButton` for the Pay button's colours, radius and height, and
+  `PayCrossTypography` for a font scale. Every role is nullable, and null means
+  "take the next source" rather than black.
+* Colours resolve per role: what you set, then the brand colour set on the
+  merchant account in the PayCross back office, then the platform default. The
+  back-office colour arrives with the session, so **it themes both sheets with
+  no code at all**. `onBrand` left null is derived from the brand's own
+  luminance, so a light brand cannot end up with an unreadable white label.
+* `PayCrossAppearance.brand(color)` sets one colour in both modes and leaves
+  everything else alone.
+* `brandColorArgb` is **deprecated** in favour of
+  `appearance: PayCrossAppearance.brand(color)`. It still works, and it now
+  applies on iOS as well as Android — the iOS SDK had no brand-colour hook when
+  it was added, and now has one.
+
+  Passing both does not lose the colour. If either palette names `brand`, the
+  appearance wins outright; if neither does — an appearance that is only shapes
+  or only a font scale, which is what a half-finished migration looks like —
+  the legacy colour is merged into `brand` in both palettes. Either way it is
+  not sent to the natives on its own, so neither has to decide which of two
+  brand colours is the real one.
+
+  Note that Dart does not report a deprecated *named parameter* at a call site,
+  so nothing in your build will warn you. This entry and the README are the
+  deprecation.
+* `PayCrossColors.copyWith` and `PayCrossAppearance.copyWith`, for building a
+  palette up in steps. Passing null keeps the value already there rather than
+  clearing it; construct a fresh palette to unset a role.
+* `PayCrossAppearance.hasBrand` answers whether either palette names a brand
+  colour. It is the question the merge above asks, and it is public because it
+  is also the question a merchant asks before deciding whether their own
+  fallback is needed.
+* `PayCrossErrorCode.invalidAppearance` is a new code. `configure` throws it,
+  before anything reaches a native SDK, for a `sizeScaleFactor` outside 0.8–1.3
+  or a negative or non-finite radius, border width or height. Both native SDKs
+  clamp the scale instead, for callers that reach them directly; this package
+  refuses, because a merchant who asked for 3.0 wanted something no sheet will
+  draw.
+* Layout, the card inputs' internals, the wallet buttons' colours and labels,
+  the 3-D Secure page and the error copy are fixed by design and no appearance
+  field reaches them. The wallet buttons' corner radius follows
+  `shapes.buttonCornerRadius`, and that is the only property of theirs this SDK
+  sets. A font family is not exposed in this release.
+* Requires the native Android SDK at paycross-android 0.7.0, up from 0.6.0, and
+  the native iOS SDK at PayCross 0.6.0, up from 0.5.0. Both add the appearance
+  model above, and both fix live defects with it:
+  * Android: text the sheet drew without an explicit colour was black in dark
+    mode — the amount, the saved-card titles, the CVV prompt and more — and the
+    Google Pay button kept Google's dark variant whatever the sheet's mode was,
+    which is the wrong variant on a dark surface.
+  * iOS: the Pay button drew its label and spinner in white whatever the accent
+    colour was, so on a light accent the amount vanished on the one control the
+    shopper has to press.
+* The example app has an "Appearance" tile that runs an ordinary payment with a
+  brand colour and the sheet pinned to dark, and puts the SDK back as it was
+  when the run ends.
+
 ## 0.5.0
 
 Additive in Dart. No existing call or `switch` needs a change.

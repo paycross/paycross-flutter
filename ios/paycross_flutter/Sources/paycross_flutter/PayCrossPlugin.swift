@@ -154,12 +154,15 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
         PayCrossAPI.configure(
             environment: configuration.environment.toNative(),
             testCardPrefill: configuration.testCardPrefill?.toNative(),
-            applePayMerchantIdentifier: configuration.applePayMerchantId
+            applePayMerchantIdentifier: configuration.applePayMerchantId,
+            appearance: configuration.appearance?.toNative()
+                // The deprecated parameter's whole remaining life on iOS. Dart
+                // sends it as null whenever an appearance is given, so the two
+                // cannot both arrive and this coalesce cannot pick wrong.
+                ?? configuration.brandColorArgb.map {
+                    .brand(PayCrossColor(argb: UInt32(truncatingIfNeeded: $0)))
+                }
         )
-        // brandColorArgb is deliberately ignored. The iOS SDK has no brand-colour
-        // hook; its only colour source is the window tint, and setting that here
-        // would inherit down the hierarchy and repaint the merchant's whole app.
-        //
         // googlePayMerchantId is deliberately ignored: Google Pay's in-app API is
         // Android and web only, so there is no iOS wallet for it to configure.
     }
@@ -185,6 +188,97 @@ private extension PcTestCardPrefill {
             expireYear: expireYear,
             cvv: cvv,
             saveCard: saveCard
+        )
+    }
+}
+
+/// Every colour crosses as an unsigned packed ARGB in an Int64.
+///
+/// `truncatingIfNeeded` rather than an exact conversion, and that is a safety
+/// choice rather than a style one: an exact `UInt32(_:)` traps at runtime on
+/// anything outside 0...0xFFFFFFFF, and a channel is not a place to take a
+/// trap. The truncation is the same one Android's `toInt()` performs, so one
+/// number means one colour on both platforms.
+private extension Int64 {
+    var asPayCrossColor: PayCrossColor {
+        PayCrossColor(argb: UInt32(truncatingIfNeeded: self))
+    }
+}
+
+private extension PcColors {
+    func toNative() -> PayCrossColors {
+        PayCrossColors(
+            brand: brand?.asPayCrossColor,
+            onBrand: onBrand?.asPayCrossColor,
+            surface: surface?.asPayCrossColor,
+            component: component?.asPayCrossColor,
+            componentBorder: componentBorder?.asPayCrossColor,
+            text: text?.asPayCrossColor,
+            textSecondary: textSecondary?.asPayCrossColor,
+            placeholder: placeholder?.asPayCrossColor,
+            icon: icon?.asPayCrossColor,
+            error: error?.asPayCrossColor
+        )
+    }
+}
+
+private extension PcShapes {
+    func toNative() -> PayCrossShapes {
+        PayCrossShapes(
+            cornerRadius: cornerRadius,
+            buttonCornerRadius: buttonCornerRadius,
+            borderWidth: borderWidth
+        )
+    }
+}
+
+private extension PcPrimaryButton {
+    func toNative() -> PayCrossPrimaryButton {
+        PayCrossPrimaryButton(
+            background: background?.asPayCrossColor,
+            textColor: textColor?.asPayCrossColor,
+            disabledBackground: disabledBackground?.asPayCrossColor,
+            disabledTextColor: disabledTextColor?.asPayCrossColor,
+            cornerRadius: cornerRadius,
+            height: height
+        )
+    }
+}
+
+private extension PcTypography {
+    func toNative() -> PayCrossTypography {
+        // Already refused outside 0.8...1.3 by the Dart facade. The SDK clamps
+        // as well, for callers that reach it without going through Dart.
+        PayCrossTypography(sizeScaleFactor: sizeScaleFactor)
+    }
+}
+
+private extension PcThemeMode {
+    func toNative() -> PayCrossThemeMode {
+        switch self {
+        case .system: return .system
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
+// Internal rather than private, like `PaymentResult.toPigeon()` above it and
+// unlike the per-struct mappings it calls: this is the one entry point
+// RunnerTests reaches, and `@testable import` sees internal but not private.
+extension PcAppearance {
+    func toNative() -> PayCrossAppearance {
+        // The SDK's own sub-structs are non-optional and empty by default, and
+        // an empty one means exactly what a null here means: every role in it
+        // falls through to the back-office brand colour and then to the
+        // platform. So the substitution changes nothing the sheet draws.
+        PayCrossAppearance(
+            light: light?.toNative() ?? PayCrossColors(),
+            dark: dark?.toNative() ?? PayCrossColors(),
+            themeMode: themeMode.toNative(),
+            shapes: shapes?.toNative() ?? PayCrossShapes(),
+            primaryButton: primaryButton?.toNative() ?? PayCrossPrimaryButton(),
+            typography: typography?.toNative() ?? PayCrossTypography()
         )
     }
 }

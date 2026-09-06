@@ -1,4 +1,7 @@
 import 'dart:convert';
+import 'dart:ui' show Color;
+
+import 'package:paycross_flutter/paycross_flutter.dart';
 
 /// The currencies the editor offers.
 ///
@@ -218,6 +221,7 @@ class Preset {
     this.id,
     this.cardHint,
     this.hint,
+    this.appearance,
   });
 
   /// What a saved edit to this preset is filed under, or null for a preset
@@ -250,6 +254,15 @@ class Preset {
 
   /// Anything that must happen first.
   final String? hint;
+
+  /// How the native sheet should look for this run, or null for the sheet as
+  /// it comes.
+  ///
+  /// Applied to the SDK just before the run and removed when it ends, so one
+  /// themed tile does not silently repaint every tile after it. Null on every
+  /// preset but one: the theming is what that tile exists to show, and every
+  /// other tile is about what the payment does rather than how it looks.
+  final PayCrossAppearance? appearance;
 }
 
 /// The scenarios on Home, in the order they are worth running.
@@ -311,6 +324,22 @@ final List<Preset> demoPresets = <Preset>[
     body: cofPaySavedBody,
     expected: 'Charged the stored card without retyping it.',
     hint: 'Run "Store card (COF)" first, or the card list will be empty.',
+  ),
+  Preset(
+    id: 'appearance',
+    name: 'Themed sheet (appearance)',
+    body: defaultBody(),
+    expected:
+        'The same approval as the first tile, on a sheet with a green brand '
+        'colour, rounder corners and dark mode pinned on whatever the phone '
+        'is set to. The sheet goes back to normal when the run ends.',
+    cardHint: '4111 1111 1117 0000',
+    appearance: const PayCrossAppearance(
+      light: PayCrossColors(brand: Color(0xFF00875A)),
+      dark: PayCrossColors(brand: Color(0xFF57D9A3)),
+      themeMode: PayCrossThemeMode.dark,
+      shapes: PayCrossShapes(cornerRadius: 16, buttonCornerRadius: 28),
+    ),
   ),
   Preset(
     id: 'google-pay',

@@ -22,6 +22,7 @@ import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_demo/demo/surface.dart';
 import 'package:paycross_demo/demo/test_cards_screen.dart';
 import 'package:paycross_demo/demo/web_run.dart';
+import 'package:paycross_flutter/paycross_flutter.dart';
 
 import '_environment.dart';
 import '_surface.dart';
@@ -1494,6 +1495,184 @@ void main() {
       expect(find.byType(RunScreen), findsOneWidget);
       expect(find.byType(WebCheckoutRunScreen), findsNothing);
       await _drainBookkeeping(tester);
+    });
+
+    testWidgets('a themed tile paints the sheet and puts it back', (
+      tester,
+    ) async {
+      // The whole reason the appearance lives on the preset rather than in
+      // `main`: one themed tile must not repaint every tile run after it, and
+      // the person running them would have no way to tell that from the SDK
+      // ignoring an appearance they never set.
+      final applied = <PayCrossAppearance?>[];
+      final state = DemoEnvironmentState(
+        configure:
+            ({
+              required PayCrossEnvironment environment,
+              String? googlePayMerchantId,
+              String? applePayMerchantId,
+              PayCrossAppearance? appearance,
+            }) async {
+              applied.add(appearance);
+            },
+      );
+      addTearDown(state.dispose);
+
+      final themed = demoPresets.firstWhere((p) => p.id == 'appearance');
+      expect(themed.appearance, isNotNull);
+
+      late BuildContext held;
+      await tester.pumpWidget(
+        appWithEnvironment(
+          state: state,
+          home: Builder(
+            builder: (context) {
+              held = context;
+              return const Scaffold();
+            },
+          ),
+        ),
+      );
+
+      final run = runPreset(
+        held,
+        themed,
+        themed.body,
+        store: await _configuredStore(),
+        mintWith: (_, _) async => _mintedWithPage(),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(RunScreen), findsOneWidget);
+      expect(applied, <PayCrossAppearance?>[themed.appearance]);
+
+      await _drainBookkeeping(tester);
+      Navigator.of(held).pop();
+      await tester.pumpAndSettle();
+      await run;
+
+      // Null, not "the appearance again": the SDK is put back the way `main`
+      // configured it rather than left holding the last theme anybody ran.
+      expect(applied, <PayCrossAppearance?>[themed.appearance, null]);
+    });
+
+    testWidgets('a themed run that bails after applying still restores', (
+      tester,
+    ) async {
+      // The window between applying the appearance and pushing the run screen.
+      // A `return` in there -- which is what an unmounted context does -- used
+      // to skip the restore, because the apply sat outside the try. Every tile
+      // run after that one stayed themed, and nothing on screen said why.
+      final applied = <PayCrossAppearance?>[];
+      final gate = Completer<void>();
+      var heldOpen = true;
+      final state = DemoEnvironmentState(
+        configure:
+            ({
+              required PayCrossEnvironment environment,
+              String? googlePayMerchantId,
+              String? applePayMerchantId,
+              PayCrossAppearance? appearance,
+            }) async {
+              applied.add(appearance);
+              // Only the first call parks: the restore has to be able to run
+              // to completion, which is the whole thing under test.
+              if (heldOpen) {
+                heldOpen = false;
+                await gate.future;
+              }
+            },
+      );
+      addTearDown(state.dispose);
+
+      final themed = demoPresets.firstWhere((p) => p.id == 'appearance');
+
+      late BuildContext held;
+      await tester.pumpWidget(
+        appWithEnvironment(
+          state: state,
+          home: Builder(
+            builder: (context) {
+              held = context;
+              return const Scaffold();
+            },
+          ),
+        ),
+      );
+
+      final run = runPreset(
+        held,
+        themed,
+        themed.body,
+        store: await _configuredStore(),
+        mintWith: (_, _) async => _mintedWithPage(),
+      );
+      // Far enough for the credential read to answer and the apply to be
+      // parked on the gate, and no further.
+      await tester.pump();
+      await tester.pump();
+      expect(applied, <PayCrossAppearance?>[themed.appearance]);
+
+      // The context runPreset is holding is gone from here on.
+      await tester.pumpWidget(const MaterialApp(home: Scaffold()));
+      gate.complete();
+      await tester.pumpAndSettle();
+      await run;
+
+      // No run screen was ever pushed, and the SDK is still put back.
+      expect(find.byType(RunScreen), findsNothing);
+      expect(applied, <PayCrossAppearance?>[themed.appearance, null]);
+    });
+
+    testWidgets('an unthemed tile does not touch the SDK configuration', (
+      tester,
+    ) async {
+      // The other half, and the one that would silently rot: if every run
+      // re-pointed the SDK, the restore above would be indistinguishable from
+      // a no-op and the test above would keep passing after the feature broke.
+      final applied = <PayCrossAppearance?>[];
+      final state = DemoEnvironmentState(
+        configure:
+            ({
+              required PayCrossEnvironment environment,
+              String? googlePayMerchantId,
+              String? applePayMerchantId,
+              PayCrossAppearance? appearance,
+            }) async {
+              applied.add(appearance);
+            },
+      );
+      addTearDown(state.dispose);
+
+      final plain = demoPresets.firstWhere((p) => p.appearance == null);
+
+      late BuildContext held;
+      await tester.pumpWidget(
+        appWithEnvironment(
+          state: state,
+          home: Builder(
+            builder: (context) {
+              held = context;
+              return const Scaffold();
+            },
+          ),
+        ),
+      );
+
+      final run = runPreset(
+        held,
+        plain,
+        plain.body,
+        store: await _configuredStore(),
+        mintWith: (_, _) async => _mintedWithPage(),
+      );
+      await tester.pumpAndSettle();
+      await _drainBookkeeping(tester);
+      Navigator.of(held).pop();
+      await tester.pumpAndSettle();
+      await run;
+
+      expect(applied, isEmpty);
     });
   });
 

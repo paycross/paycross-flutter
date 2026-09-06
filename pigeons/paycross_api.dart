@@ -67,6 +67,120 @@ class PcTestCardPrefill {
   bool saveCard;
 }
 
+/// Which palette the sheet draws with.
+///
+/// A pinned mode applies to the payment sheet only, and never to the host app.
+enum PcThemeMode { system, light, dark }
+
+/// One palette, used twice: once for light, once for dark.
+///
+/// Every role is a nullable packed ARGB int, for the reason
+/// [PcConfiguration.brandColorArgb] gives: null has to stay a real null,
+/// because 0x00000000 is transparent black — a legal colour rather than a
+/// sentinel — and null is what both natives read as "keep the platform
+/// default".
+class PcColors {
+  PcColors({
+    this.brand,
+    this.onBrand,
+    this.surface,
+    this.component,
+    this.componentBorder,
+    this.text,
+    this.textSecondary,
+    this.placeholder,
+    this.icon,
+    this.error,
+  });
+
+  int? brand;
+
+  /// Null derives it from [brand]'s own luminance on each native, so a light
+  /// brand gets a dark label. Deliberately not computed in Dart: the rule is
+  /// the same 0.179 WCAG crossover on both sides, and one copy of it that both
+  /// natives already ship beats a third.
+  int? onBrand;
+
+  int? surface;
+  int? component;
+  int? componentBorder;
+  int? text;
+  int? textSecondary;
+  int? placeholder;
+  int? icon;
+  int? error;
+}
+
+/// Corner radii and border thickness, in the platform's own units: dp on
+/// Android, points on iOS. Not converted, because neither is a pixel count and
+/// a merchant setting 16 wants the same visual weight on both.
+class PcShapes {
+  PcShapes({this.cornerRadius, this.buttonCornerRadius, this.borderWidth});
+
+  double? cornerRadius;
+  double? buttonCornerRadius;
+  double? borderWidth;
+}
+
+/// Pay button overrides. Each null falls back to the matching palette role.
+class PcPrimaryButton {
+  PcPrimaryButton({
+    this.background,
+    this.textColor,
+    this.disabledBackground,
+    this.disabledTextColor,
+    this.cornerRadius,
+    this.height,
+  });
+
+  int? background;
+  int? textColor;
+  int? disabledBackground;
+  int? disabledTextColor;
+  double? cornerRadius;
+  double? height;
+}
+
+/// Type sizing. A font family is deliberately not on the wire in this release:
+/// resolving one differs enough between the two platforms that a name crossing
+/// here would mean two different fallbacks for the same string.
+class PcTypography {
+  PcTypography({this.sizeScaleFactor});
+
+  /// Clamped to 0.8–1.3 by both natives. The Dart facade refuses anything
+  /// outside that range outright, so nothing out of range reaches this field.
+  double? sizeScaleFactor;
+}
+
+/// How the native payment sheet looks.
+///
+/// Colours resolve per role: what is set here, then the brand colour the
+/// merchant set in the back office, then the platform default. The back-office
+/// colour arrives with the session and never crosses this channel, so an
+/// absent appearance is not "no theming".
+class PcAppearance {
+  PcAppearance({
+    this.light,
+    this.dark,
+    required this.themeMode,
+    this.shapes,
+    this.primaryButton,
+    this.typography,
+  });
+
+  PcColors? light;
+  PcColors? dark;
+
+  /// Required, unlike every other field here, because Pigeon has no field
+  /// defaults: a nullable mode would make "follow the device" a decision each
+  /// native had to invent for itself. The Dart facade always writes this.
+  PcThemeMode themeMode;
+
+  PcShapes? shapes;
+  PcPrimaryButton? primaryButton;
+  PcTypography? typography;
+}
+
 class PcConfiguration {
   PcConfiguration({
     required this.environment,
@@ -74,6 +188,7 @@ class PcConfiguration {
     this.testCardPrefill,
     this.googlePayMerchantId,
     this.applePayMerchantId,
+    this.appearance,
   });
 
   PcEnvironment environment;
@@ -84,10 +199,10 @@ class PcConfiguration {
   /// Null means "platform default" and must stay a real null: 0x00000000 is
   /// transparent black, a legal colour rather than a sentinel.
   ///
-  /// Android only in v1 — the iOS SDK has no brand-colour hook, and its only
-  /// colour source is the host app's window tint, which the plugin must not set
-  /// because tintColor inherits down the hierarchy and would repaint the
-  /// merchant's entire app. iOS accepts and ignores this.
+  /// **Deprecated**, superseded by [appearance], which sets the same colour in
+  /// both modes and opens the rest of the palette. Both platforms honour it
+  /// while it lasts. The Dart facade sends this as null whenever an appearance
+  /// is given, so neither native has to decide which of two brand colours wins.
   int? brandColorArgb;
 
   PcTestCardPrefill? testCardPrefill;
@@ -116,6 +231,9 @@ class PcConfiguration {
   ///
   /// iOS only. Android has no Apple Pay, so it accepts and ignores this.
   String? applePayMerchantId;
+
+  /// How the sheet looks. Honoured on both platforms.
+  PcAppearance? appearance;
 }
 
 class PcVersionInfo {

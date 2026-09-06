@@ -263,10 +263,117 @@ suite can see distinguishes them once they reach iOS. Configure Apple Pay with
 `googlePayMerchantId` left null, run a payment on a real device, and confirm the
 button appears and the payment settles.
 
-## Branding
+## Appearance
 
-`brandColorArgb` in `PayCross.configure` currently applies on **Android only**;
-the iOS SDK exposes no brand-colour hook, so it is ignored there.
+The native sheets take a `PayCrossAppearance`: colours per mode, a theme mode,
+corner radii, the Pay button and a font scale. It applies on both platforms.
+
+```dart
+await PayCross.configure(
+  environment: PayCrossEnvironment.production,
+  appearance: const PayCrossAppearance(
+    light: PayCrossColors(
+      brand: Color(0xFF1E88E5),
+      surface: Color(0xFFFAFAFA),
+      component: Color(0xFFFFFFFF),
+      componentBorder: Color(0xFFDDDDDD),
+      text: Color(0xFF111111),
+      textSecondary: Color(0xFF666666),
+      placeholder: Color(0xFF999999),
+      icon: Color(0xFF444444),
+      error: Color(0xFFB3261E),
+    ),
+    dark: PayCrossColors(
+      brand: Color(0xFF64B5F6),
+      surface: Color(0xFF121212),
+      component: Color(0xFF1E1E1E),
+    ),
+    themeMode: PayCrossThemeMode.system,
+    shapes: PayCrossShapes(
+      cornerRadius: 16,
+      buttonCornerRadius: 28,
+      borderWidth: 1,
+    ),
+    primaryButton: PayCrossPrimaryButton(height: 56),
+    typography: PayCrossTypography(sizeScaleFactor: 1.1),
+  ),
+);
+```
+
+For one colour and nothing else, `PayCrossAppearance.brand(color)` fills the
+brand role in both palettes and leaves the rest alone.
+
+### Which colour wins
+
+Every role resolves in the same order:
+
+1. what you set in `PayCrossAppearance`,
+2. the brand colour set on the merchant account in the PayCross back office,
+   which arrives with the session and feeds the `brand` role in both modes,
+3. the platform default the sheet already draws.
+
+So **a brand colour set in the back office themes both sheets with no code at
+all**, and a null role is never "black" — it is "take the next source".
+
+`onBrand` is the one role with a rule of its own: left null, each SDK derives
+it from the brand colour's own luminance, so a light brand gets a dark label
+rather than an unreadable white one.
+
+`themeMode` pins the **sheet** and nothing else. It never touches the host
+app's own appearance.
+
+### What you cannot change
+
+Fixed by design, and passing an appearance does not reach any of it:
+
+* the sheet's layout,
+* the card inputs' internals — masking, formatting, validation, the keyboard,
+* the Apple Pay and Google Pay buttons' colours and labels, which Apple's and
+  Google's own guidelines specify. Their corner radius follows
+  `shapes.buttonCornerRadius`, and that is the only property of theirs this SDK
+  sets,
+* the 3-D Secure page, which is the issuer's own content,
+* the error copy.
+
+A font family is not exposed in this release.
+
+### Ranges
+
+`sizeScaleFactor` must be between **0.8 and 1.3** inclusive, and it multiplies
+the shopper's own text-size setting rather than replacing it. Every radius,
+border width and height must be finite and not negative; zero is legal and
+means a square corner, no border, or the platform's own height.
+
+Anything outside those bounds throws `PayCrossIntegrationError` with
+`PayCrossErrorCode.invalidAppearance` from `configure`, before it reaches
+either native SDK.
+
+Sizes are in the platform's own unit — density-independent pixels on Android,
+points on iOS — and are not converted between them.
+
+### Migrating from `brandColorArgb`
+
+`brandColorArgb` is deprecated and still works for now. Replace it with:
+
+```dart
+appearance: PayCrossAppearance.brand(Color(0xFF6750A4)),
+```
+
+Setting both is not an error, and it does not lose your colour. The appearance
+decides only what it actually names:
+
+* if either palette sets `brand`, that wins and `brandColorArgb` is ignored;
+* if neither does — an appearance that is only shapes, or only a font scale,
+  which is what a half-finished migration looks like — `brandColorArgb` is
+  merged into `brand` in **both** palettes.
+
+Either way the legacy value is not sent to the native SDKs on its own, so
+neither has to decide which of two brand colours is the real one.
+
+`PayCrossColors` and `PayCrossAppearance` both have a `copyWith` if you want to
+build a palette up in steps. Passing null to it keeps the value already there
+rather than clearing it, which is the usual Flutter bargain: construct a fresh
+palette to unset a role.
 
 ## License
 

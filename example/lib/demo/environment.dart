@@ -33,6 +33,7 @@ typedef ConfigureSdk =
       required PayCrossEnvironment environment,
       String? googlePayMerchantId,
       String? applePayMerchantId,
+      PayCrossAppearance? appearance,
     });
 
 /// The real one.
@@ -40,10 +41,12 @@ Future<void> configurePayCross({
   required PayCrossEnvironment environment,
   String? googlePayMerchantId,
   String? applePayMerchantId,
+  PayCrossAppearance? appearance,
 }) => PayCross.configure(
   environment: environment,
   googlePayMerchantId: googlePayMerchantId,
   applePayMerchantId: applePayMerchantId,
+  appearance: appearance,
 );
 
 /// Which environment the app is in, and the Live credentials while it is
@@ -212,6 +215,24 @@ class DemoEnvironmentState extends ChangeNotifier {
     _liveIdentity = identity;
     notifyListeners();
   }
+
+  /// Re-points the SDK at Test with [appearance], and with null to put it
+  /// back the way `main` configured it at launch.
+  ///
+  /// Sandbox is hard-coded rather than derived, and that is the guard: the
+  /// preset tiles this is called from are not rendered in Live at all, so a
+  /// call from one is always a Test call, and an environment read from the
+  /// state here would be a second way for a themed run to reach production.
+  ///
+  /// Re-pointing replaces the whole configuration, so both wallet identifiers
+  /// go back in each time — a merchant id left out of the way back is a
+  /// Google Pay button that stops appearing until the app is relaunched.
+  Future<void> applyTestAppearance(PayCrossAppearance? appearance) => configure(
+    environment: PayCrossEnvironment.sandbox,
+    googlePayMerchantId: googlePayMerchantId,
+    applePayMerchantId: applePayMerchantId,
+    appearance: appearance,
+  );
 
   /// Returns to Test, or returns why it did not.
   ///
