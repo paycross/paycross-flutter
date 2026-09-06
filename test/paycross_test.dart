@@ -753,7 +753,6 @@ void main() {
 
       await PayCross.configure(
         environment: PayCrossEnvironment.sandbox,
-        // ignore: deprecated_member_use_from_same_package
         brandColorArgb: 0xFF6750A4,
       );
 
@@ -773,7 +772,6 @@ void main() {
 
         await PayCross.configure(
           environment: PayCrossEnvironment.sandbox,
-          // ignore: deprecated_member_use_from_same_package
           brandColorArgb: 0xFFFF0000,
           appearance: PayCrossAppearance.brand(const Color(0xFF6750A4)),
         );

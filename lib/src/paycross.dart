@@ -61,6 +61,11 @@ abstract final class PayCross {
   /// appearance wins and the brand colour is not sent, so neither native SDK
   /// has to hold a second opinion about which colour is the brand.
   ///
+  /// The `@Deprecated` on it is documentation rather than a warning: Dart does
+  /// not report a deprecated named parameter at a call site, so this note, the
+  /// README and the release notes are the deprecation. The Android SDK says
+  /// the same about `brandColor`, which Kotlin cannot annotate at all.
+  ///
   /// [googlePayMerchantId] is Android-only. It is the merchant id from the
   /// Google Business Console, and Google **requires** it for
   /// [PayCrossEnvironment.production] Google Pay requests; sandbox works

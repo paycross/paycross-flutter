@@ -37,11 +37,14 @@ deprecated rather than removed.
   sets. A font family is not exposed in this release.
 * Requires the native Android SDK at paycross-android 0.7.0, up from 0.6.0, and
   the native iOS SDK at PayCross 0.6.0, up from 0.5.0. Both add the appearance
-  model above and both fix a live defect with it: Android's Google Pay button
-  used a dark theme whatever the sheet's mode was, which is the wrong variant
-  on a dark surface, and its sheet text is readable in dark mode; iOS's Pay
-  button drew its label and spinner in white whatever the brand colour was, so
-  a light brand made it unreadable.
+  model above, and both fix live defects with it:
+  * Android: text the sheet drew without an explicit colour was black in dark
+    mode — the amount, the saved-card titles, the CVV prompt and more — and the
+    Google Pay button kept Google's dark variant whatever the sheet's mode was,
+    which is the wrong variant on a dark surface.
+  * iOS: the Pay button drew its label and spinner in white whatever the accent
+    colour was, so on a light accent the amount vanished on the one control the
+    shopper has to press.
 * The example app has an "Appearance" tile that runs an ordinary payment with a
   brand colour and the sheet pinned to dark, and puts the SDK back as it was
   when the run ends.
