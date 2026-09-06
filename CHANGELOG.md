@@ -1,3 +1,42 @@
+## Unreleased
+
+Additive in Dart. No existing call needs a change.
+
+* `PayCross.configure` takes a `locale`, a BCP 47 tag such as `fr` or `fr-CA`
+  that pins the language the native payment sheets draw in. Both SDKs now ship
+  English and French. It applies to the sheet only; your app's own language is
+  untouched.
+* The language is the first of four candidates naming a language the SDKs
+  ship: your `locale`, then the payment session's own `locale`, then the
+  shopper's device languages, then English. Each is matched on its own — the
+  whole tag, then its primary subtag, so `fr-CA` gets French — and one that
+  matches nothing falls through to the next rather than ending the ladder. Null
+  is that first rung left empty, not a request for English.
+* The **amount** is not clamped to those two languages. It is formatted with
+  the first locale anyone named, region intact, so a German shopper reads an
+  English sheet over an amount written the way they expect.
+* This package passes the tag across exactly as written. It does not resolve,
+  validate or normalise it: both native SDKs already do, and they skip a
+  malformed tag rather than throwing on it, so nothing passed here can fail a
+  payment.
+* Every element the sheets draw carries a stable `paycross.*` test identifier,
+  and it is the same string on both platforms. **On Android they reach a
+  UiAutomator or Espresso tree only when the host app is debuggable**; on iOS
+  they are set in every build. Three names — `paycross.brand`,
+  `paycross.threeDSCancel` and `paycross.cancel` — are iOS-only, because
+  Android draws no element behind them. The README says how to cancel from an
+  Android test without one.
+* Both sheets gained an accessibility floor: every control is named, a decline
+  and a wait are announced, colour is never the only signal, and the text size
+  a shopper set is honoured.
+* Requires the native Android SDK at paycross-android 0.8.0, up from 0.7.0, and
+  the native iOS SDK at PayCross 0.7.0, up from 0.6.0. Those releases carry the
+  French strings, the resolution rule, the identifiers and the accessibility
+  work above.
+* The example app's Settings screen has a language setting — System, English or
+  French — stored across launches and read once at launch, like the Google Pay
+  merchant id beside it.
+
 ## 0.6.0
 
 Additive in Dart. No existing call needs a change, and one parameter is

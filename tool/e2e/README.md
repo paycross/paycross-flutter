@@ -701,8 +701,29 @@ Do **not** wrap that widget in `Semantics` and do not make it a `SelectableText`
 Both were verified on a live simulator to remove the node from the iOS
 accessibility tree entirely, which is where the runner reads it.
 
-One other define is read: `PAYCROSS_E2E_GOOGLE_PAY_MERCHANT_ID`, passed to
-`PayCross.configure` when non-empty.
+Two other defines are read, both passed to `PayCross.configure` when non-empty:
+
+* `PAYCROSS_E2E_GOOGLE_PAY_MERCHANT_ID` — the Google Pay merchant id.
+* `PAYCROSS_LOCALE` — a BCP 47 tag pinning the language the native sheet draws
+  in, which is how a cell runs against the French sheet:
+
+  ```
+  (cd example && flutter build apk --debug \
+     --dart-define=PAYCROSS_E2E=true --dart-define=PAYCROSS_LOCALE=fr)
+  ```
+
+  Both SDKs ship `en` and `fr`. A tag naming neither falls through to the
+  session's own locale, then the device, then English, and a malformed one is
+  skipped — so a typo here changes the words a cell reads but cannot fail the
+  build or the payment. **The predicates in `tree.py` match English copy**
+  (`sheet_rearmed` compares `Payment failed. Please try again.` word for word),
+  so a French cell needs its own predicates before it can assert on anything
+  the sheet says. The identifiers are unaffected: they are the same
+  `paycross.*` strings in every language.
+
+  The automation screen itself is untouched by this. It is frozen, it renders
+  no copy from the SDK, and its outcome label is the same string in both
+  languages.
 
 ### Observing a non-result
 
