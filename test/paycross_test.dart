@@ -586,5 +586,328 @@ void main() {
       expect(prefill.toString(), isNot(contains('4111')));
       expect(prefill.toString(), isNot(contains('123')));
     });
+
+    /// Every role, every shape, every button override and the scale, in one
+    /// call: the wire is the whole contract, and a field that silently stops
+    /// crossing is invisible until a merchant's sheet is the wrong colour.
+    ///
+    /// The colours are deliberately not all opaque. Alpha is the top byte of
+    /// the packed value, so a packing that dropped or reordered it would still
+    /// look right for every 0xFF colour anybody tests by hand.
+    test('every appearance field crosses', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        appearance: const PayCrossAppearance(
+          light: PayCrossColors(
+            brand: Color(0xFF1E88E5),
+            onBrand: Color(0xFFFFFFFF),
+            surface: Color(0xFFF7F7F7),
+            component: Color(0x80FFFFFF),
+            componentBorder: Color(0xFFD0D0D0),
+            text: Color(0xFF111111),
+            textSecondary: Color(0xFF666666),
+            placeholder: Color(0xFF999999),
+            icon: Color(0xFF444444),
+            error: Color(0xFFB3261E),
+          ),
+          dark: PayCrossColors(
+            brand: Color(0xFF64B5F6),
+            onBrand: Color(0xFF000000),
+            surface: Color(0xFF121212),
+            component: Color(0xFF1E1E1E),
+            componentBorder: Color(0xFF3A3A3A),
+            text: Color(0xFFEEEEEE),
+            textSecondary: Color(0xFFAAAAAA),
+            placeholder: Color(0xFF777777),
+            icon: Color(0xFFCCCCCC),
+            error: Color(0xFFF2B8B5),
+          ),
+          themeMode: PayCrossThemeMode.dark,
+          shapes: PayCrossShapes(
+            cornerRadius: 16,
+            buttonCornerRadius: 28,
+            borderWidth: 2,
+          ),
+          primaryButton: PayCrossPrimaryButton(
+            background: Color(0xFF1E88E5),
+            textColor: Color(0xFFFFFFFF),
+            disabledBackground: Color(0x611E88E5),
+            disabledTextColor: Color(0x61FFFFFF),
+            cornerRadius: 24,
+            height: 56,
+          ),
+          typography: PayCrossTypography(sizeScaleFactor: 1.1),
+        ),
+      );
+
+      final crossed = host.lastConfiguration?.appearance;
+      expect(crossed, isNotNull);
+
+      final light = crossed!.light!;
+      expect(light.brand, 0xFF1E88E5);
+      expect(light.onBrand, 0xFFFFFFFF);
+      expect(light.surface, 0xFFF7F7F7);
+      expect(light.component, 0x80FFFFFF);
+      expect(light.componentBorder, 0xFFD0D0D0);
+      expect(light.text, 0xFF111111);
+      expect(light.textSecondary, 0xFF666666);
+      expect(light.placeholder, 0xFF999999);
+      expect(light.icon, 0xFF444444);
+      expect(light.error, 0xFFB3261E);
+
+      final dark = crossed.dark!;
+      expect(dark.brand, 0xFF64B5F6);
+      expect(dark.onBrand, 0xFF000000);
+      expect(dark.surface, 0xFF121212);
+      expect(dark.component, 0xFF1E1E1E);
+      expect(dark.componentBorder, 0xFF3A3A3A);
+      expect(dark.text, 0xFFEEEEEE);
+      expect(dark.textSecondary, 0xFFAAAAAA);
+      expect(dark.placeholder, 0xFF777777);
+      expect(dark.icon, 0xFFCCCCCC);
+      expect(dark.error, 0xFFF2B8B5);
+
+      expect(crossed.themeMode, g.PcThemeMode.dark);
+      expect(crossed.shapes?.cornerRadius, 16);
+      expect(crossed.shapes?.buttonCornerRadius, 28);
+      expect(crossed.shapes?.borderWidth, 2);
+      expect(crossed.primaryButton?.background, 0xFF1E88E5);
+      expect(crossed.primaryButton?.textColor, 0xFFFFFFFF);
+      expect(crossed.primaryButton?.disabledBackground, 0x611E88E5);
+      expect(crossed.primaryButton?.disabledTextColor, 0x61FFFFFF);
+      expect(crossed.primaryButton?.cornerRadius, 24);
+      expect(crossed.primaryButton?.height, 56);
+      expect(crossed.typography?.sizeScaleFactor, 1.1);
+    });
+
+    /// A role nobody set must arrive as a real null rather than as a zero:
+    /// 0x00000000 is transparent black, a legal colour, and the natives read
+    /// null as "keep the platform default".
+    test('unset roles cross as null, not as zero', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        appearance: const PayCrossAppearance(
+          light: PayCrossColors(brand: Color(0xFF1E88E5)),
+        ),
+      );
+
+      final crossed = host.lastConfiguration!.appearance!;
+      expect(crossed.light?.brand, 0xFF1E88E5);
+      expect(crossed.light?.surface, isNull);
+      expect(crossed.light?.onBrand, isNull);
+      expect(crossed.dark, isNull);
+      expect(crossed.shapes, isNull);
+      expect(crossed.primaryButton, isNull);
+      expect(crossed.typography, isNull);
+    });
+
+    /// The whole migration path off the deprecated brandColorArgb: one colour,
+    /// both modes, platform defaults for everything else.
+    test('the brand factory fills both palettes', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        appearance: PayCrossAppearance.brand(const Color(0xFF6750A4)),
+      );
+
+      final crossed = host.lastConfiguration!.appearance!;
+      expect(crossed.light?.brand, 0xFF6750A4);
+      expect(crossed.dark?.brand, 0xFF6750A4);
+      expect(crossed.light?.surface, isNull);
+      expect(crossed.dark?.surface, isNull);
+    });
+
+    /// Pigeon has no field defaults, so a themeMode the merchant never named
+    /// has to be written by the Dart wrapper. Without this the natives would
+    /// receive whatever the generated code initialises, and "follow the
+    /// device" would stop being the default the moment anyone set a colour.
+    test('themeMode defaults to system on the wire', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        appearance: PayCrossAppearance.brand(const Color(0xFF6750A4)),
+      );
+
+      expect(
+        host.lastConfiguration?.appearance?.themeMode,
+        g.PcThemeMode.system,
+      );
+    });
+
+    /// The deprecated parameter still works for a whole minor release. A
+    /// merchant who has not migrated must not lose their brand colour to the
+    /// deprecation.
+    test('brandColorArgb alone still crosses', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        // ignore: deprecated_member_use_from_same_package
+        brandColorArgb: 0xFF6750A4,
+      );
+
+      expect(host.lastConfiguration?.brandColorArgb, 0xFF6750A4);
+      expect(host.lastConfiguration?.appearance, isNull);
+    });
+
+    /// Both set is a migration half-done, and it has exactly one sensible
+    /// reading: the newer, richer parameter wins. The old one is sent as null
+    /// rather than alongside, so neither native has to hold a second opinion
+    /// about which colour is the brand.
+    test(
+      'appearance wins over brandColorArgb, which crosses as null',
+      () async {
+        final host = FakeHost();
+        PayCross.debugHostApi = (host);
+
+        await PayCross.configure(
+          environment: PayCrossEnvironment.sandbox,
+          // ignore: deprecated_member_use_from_same_package
+          brandColorArgb: 0xFFFF0000,
+          appearance: PayCrossAppearance.brand(const Color(0xFF6750A4)),
+        );
+
+        expect(host.lastConfiguration?.brandColorArgb, isNull);
+        expect(host.lastConfiguration?.appearance?.light?.brand, 0xFF6750A4);
+      },
+    );
+
+    /// Refused in Dart, before anything crosses. Both natives clamp too, for
+    /// callers that reach them directly, but a clamp is a silent correction:
+    /// a Flutter merchant who typed 3.0 wanted something the sheet will never
+    /// do, and should be told rather than quietly given 1.3.
+    test('a size scale outside 0.8-1.3 is refused before it crosses', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      for (final bad in <double>[
+        0.79,
+        1.31,
+        0,
+        -1,
+        double.nan,
+        double.infinity,
+      ]) {
+        await expectLater(
+          PayCross.configure(
+            environment: PayCrossEnvironment.sandbox,
+            appearance: PayCrossAppearance(
+              typography: PayCrossTypography(sizeScaleFactor: bad),
+            ),
+          ),
+          throwsA(
+            isA<PayCrossIntegrationError>().having(
+              (e) => e.code,
+              'code',
+              PayCrossErrorCode.invalidAppearance,
+            ),
+          ),
+          reason: 'sizeScaleFactor $bad should be refused',
+        );
+      }
+
+      expect(host.lastConfiguration, isNull);
+    });
+
+    /// The bounds themselves are legal. A test that only proved the refusal
+    /// would pass just as well against a wrapper that refused everything.
+    test('the size scale bounds are accepted', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      for (final good in <double>[0.8, 1, 1.3]) {
+        await PayCross.configure(
+          environment: PayCrossEnvironment.sandbox,
+          appearance: PayCrossAppearance(
+            typography: PayCrossTypography(sizeScaleFactor: good),
+          ),
+        );
+        expect(
+          host.lastConfiguration?.appearance?.typography?.sizeScaleFactor,
+          good,
+        );
+      }
+    });
+
+    /// A negative radius is not a style, it is a mistake, and a native that
+    /// took one would draw nothing or crash a layout pass deep inside the
+    /// sheet where the message names none of this.
+    test(
+      'a negative or non-finite length is refused before it crosses',
+      () async {
+        final host = FakeHost();
+        PayCross.debugHostApi = (host);
+
+        final bad = <PayCrossAppearance>[
+          const PayCrossAppearance(shapes: PayCrossShapes(cornerRadius: -1)),
+          const PayCrossAppearance(
+            shapes: PayCrossShapes(buttonCornerRadius: -0.5),
+          ),
+          const PayCrossAppearance(shapes: PayCrossShapes(borderWidth: -2)),
+          PayCrossAppearance(
+            shapes: const PayCrossShapes(cornerRadius: double.nan),
+          ),
+          const PayCrossAppearance(
+            primaryButton: PayCrossPrimaryButton(cornerRadius: -1),
+          ),
+          const PayCrossAppearance(
+            primaryButton: PayCrossPrimaryButton(height: -1),
+          ),
+          PayCrossAppearance(
+            primaryButton: const PayCrossPrimaryButton(height: double.infinity),
+          ),
+        ];
+
+        for (final appearance in bad) {
+          await expectLater(
+            PayCross.configure(
+              environment: PayCrossEnvironment.sandbox,
+              appearance: appearance,
+            ),
+            throwsA(
+              isA<PayCrossIntegrationError>().having(
+                (e) => e.code,
+                'code',
+                PayCrossErrorCode.invalidAppearance,
+              ),
+            ),
+          );
+        }
+
+        expect(host.lastConfiguration, isNull);
+      },
+    );
+
+    /// Zero is a real value for all three: a zero radius is a square corner
+    /// and a zero border width is no border. Only negatives are the mistake.
+    test('zero lengths are accepted', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        appearance: const PayCrossAppearance(
+          shapes: PayCrossShapes(
+            cornerRadius: 0,
+            buttonCornerRadius: 0,
+            borderWidth: 0,
+          ),
+        ),
+      );
+
+      expect(host.lastConfiguration?.appearance?.shapes?.cornerRadius, 0);
+      expect(host.lastConfiguration?.appearance?.shapes?.borderWidth, 0);
+    });
   });
 }

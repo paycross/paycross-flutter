@@ -212,6 +212,23 @@ enum class PcEnvironment(val raw: Int) {
 }
 
 /**
+ * Which palette the sheet draws with.
+ *
+ * A pinned mode applies to the payment sheet only, and never to the host app.
+ */
+enum class PcThemeMode(val raw: Int) {
+  SYSTEM(0),
+  LIGHT(1),
+  DARK(2);
+
+  companion object {
+    fun ofRaw(raw: Int): PcThemeMode? {
+      return values().firstOrNull { it.raw == raw }
+    }
+  }
+}
+
+/**
  * Prefills the native card form for manual test runs.
  *
  * CARRIES A PAN AND A CVV, and is the only card data that ever crosses this
@@ -283,6 +300,325 @@ data class PcTestCardPrefill (
   }
 }
 
+/**
+ * One palette, used twice: once for light, once for dark.
+ *
+ * Every role is a nullable packed ARGB int, for the reason
+ * [PcConfiguration.brandColorArgb] gives: null has to stay a real null,
+ * because 0x00000000 is transparent black — a legal colour rather than a
+ * sentinel — and null is what both natives read as "keep the platform
+ * default".
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class PcColors (
+  val brand: Long? = null,
+  /**
+   * Null derives it from [brand]'s own luminance on each native, so a light
+   * brand gets a dark label. Deliberately not computed in Dart: the rule is
+   * the same 0.179 WCAG crossover on both sides, and one copy of it that both
+   * natives already ship beats a third.
+   */
+  val onBrand: Long? = null,
+  val surface: Long? = null,
+  val component: Long? = null,
+  val componentBorder: Long? = null,
+  val text: Long? = null,
+  val textSecondary: Long? = null,
+  val placeholder: Long? = null,
+  val icon: Long? = null,
+  val error: Long? = null
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): PcColors {
+      val brand = pigeonVar_list[0] as Long?
+      val onBrand = pigeonVar_list[1] as Long?
+      val surface = pigeonVar_list[2] as Long?
+      val component = pigeonVar_list[3] as Long?
+      val componentBorder = pigeonVar_list[4] as Long?
+      val text = pigeonVar_list[5] as Long?
+      val textSecondary = pigeonVar_list[6] as Long?
+      val placeholder = pigeonVar_list[7] as Long?
+      val icon = pigeonVar_list[8] as Long?
+      val error = pigeonVar_list[9] as Long?
+      return PcColors(brand, onBrand, surface, component, componentBorder, text, textSecondary, placeholder, icon, error)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      brand,
+      onBrand,
+      surface,
+      component,
+      componentBorder,
+      text,
+      textSecondary,
+      placeholder,
+      icon,
+      error,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as PcColors
+    return PayCrossApiPigeonUtils.deepEquals(this.brand, other.brand) && PayCrossApiPigeonUtils.deepEquals(this.onBrand, other.onBrand) && PayCrossApiPigeonUtils.deepEquals(this.surface, other.surface) && PayCrossApiPigeonUtils.deepEquals(this.component, other.component) && PayCrossApiPigeonUtils.deepEquals(this.componentBorder, other.componentBorder) && PayCrossApiPigeonUtils.deepEquals(this.text, other.text) && PayCrossApiPigeonUtils.deepEquals(this.textSecondary, other.textSecondary) && PayCrossApiPigeonUtils.deepEquals(this.placeholder, other.placeholder) && PayCrossApiPigeonUtils.deepEquals(this.icon, other.icon) && PayCrossApiPigeonUtils.deepEquals(this.error, other.error)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.brand)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.onBrand)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.surface)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.component)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.componentBorder)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.text)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.textSecondary)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.placeholder)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.icon)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.error)
+    return result
+  }
+  override fun toString(): String {
+    return "PcColors(brand=$brand, onBrand=$onBrand, surface=$surface, component=$component, componentBorder=$componentBorder, text=$text, textSecondary=$textSecondary, placeholder=$placeholder, icon=$icon, error=$error)"
+  }
+}
+
+/**
+ * Corner radii and border thickness, in the platform's own units: dp on
+ * Android, points on iOS. Not converted, because neither is a pixel count and
+ * a merchant setting 16 wants the same visual weight on both.
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class PcShapes (
+  val cornerRadius: Double? = null,
+  val buttonCornerRadius: Double? = null,
+  val borderWidth: Double? = null
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): PcShapes {
+      val cornerRadius = pigeonVar_list[0] as Double?
+      val buttonCornerRadius = pigeonVar_list[1] as Double?
+      val borderWidth = pigeonVar_list[2] as Double?
+      return PcShapes(cornerRadius, buttonCornerRadius, borderWidth)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      cornerRadius,
+      buttonCornerRadius,
+      borderWidth,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as PcShapes
+    return PayCrossApiPigeonUtils.deepEquals(this.cornerRadius, other.cornerRadius) && PayCrossApiPigeonUtils.deepEquals(this.buttonCornerRadius, other.buttonCornerRadius) && PayCrossApiPigeonUtils.deepEquals(this.borderWidth, other.borderWidth)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.cornerRadius)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.buttonCornerRadius)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.borderWidth)
+    return result
+  }
+  override fun toString(): String {
+    return "PcShapes(cornerRadius=$cornerRadius, buttonCornerRadius=$buttonCornerRadius, borderWidth=$borderWidth)"
+  }
+}
+
+/**
+ * Pay button overrides. Each null falls back to the matching palette role.
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class PcPrimaryButton (
+  val background: Long? = null,
+  val textColor: Long? = null,
+  val disabledBackground: Long? = null,
+  val disabledTextColor: Long? = null,
+  val cornerRadius: Double? = null,
+  val height: Double? = null
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): PcPrimaryButton {
+      val background = pigeonVar_list[0] as Long?
+      val textColor = pigeonVar_list[1] as Long?
+      val disabledBackground = pigeonVar_list[2] as Long?
+      val disabledTextColor = pigeonVar_list[3] as Long?
+      val cornerRadius = pigeonVar_list[4] as Double?
+      val height = pigeonVar_list[5] as Double?
+      return PcPrimaryButton(background, textColor, disabledBackground, disabledTextColor, cornerRadius, height)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      background,
+      textColor,
+      disabledBackground,
+      disabledTextColor,
+      cornerRadius,
+      height,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as PcPrimaryButton
+    return PayCrossApiPigeonUtils.deepEquals(this.background, other.background) && PayCrossApiPigeonUtils.deepEquals(this.textColor, other.textColor) && PayCrossApiPigeonUtils.deepEquals(this.disabledBackground, other.disabledBackground) && PayCrossApiPigeonUtils.deepEquals(this.disabledTextColor, other.disabledTextColor) && PayCrossApiPigeonUtils.deepEquals(this.cornerRadius, other.cornerRadius) && PayCrossApiPigeonUtils.deepEquals(this.height, other.height)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.background)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.textColor)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.disabledBackground)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.disabledTextColor)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.cornerRadius)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.height)
+    return result
+  }
+  override fun toString(): String {
+    return "PcPrimaryButton(background=$background, textColor=$textColor, disabledBackground=$disabledBackground, disabledTextColor=$disabledTextColor, cornerRadius=$cornerRadius, height=$height)"
+  }
+}
+
+/**
+ * Type sizing. A font family is deliberately not on the wire in this release:
+ * resolving one differs enough between the two platforms that a name crossing
+ * here would mean two different fallbacks for the same string.
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class PcTypography (
+  /**
+   * Clamped to 0.8–1.3 by both natives. The Dart facade refuses anything
+   * outside that range outright, so nothing out of range reaches this field.
+   */
+  val sizeScaleFactor: Double? = null
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): PcTypography {
+      val sizeScaleFactor = pigeonVar_list[0] as Double?
+      return PcTypography(sizeScaleFactor)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      sizeScaleFactor,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as PcTypography
+    return PayCrossApiPigeonUtils.deepEquals(this.sizeScaleFactor, other.sizeScaleFactor)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.sizeScaleFactor)
+    return result
+  }
+  override fun toString(): String {
+    return "PcTypography(sizeScaleFactor=$sizeScaleFactor)"
+  }
+}
+
+/**
+ * How the native payment sheet looks.
+ *
+ * Colours resolve per role: what is set here, then the brand colour the
+ * merchant set in the back office, then the platform default. The back-office
+ * colour arrives with the session and never crosses this channel, so an
+ * absent appearance is not "no theming".
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class PcAppearance (
+  val light: PcColors? = null,
+  val dark: PcColors? = null,
+  /**
+   * Required, unlike every other field here, because Pigeon has no field
+   * defaults: a nullable mode would make "follow the device" a decision each
+   * native had to invent for itself. The Dart facade always writes this.
+   */
+  val themeMode: PcThemeMode,
+  val shapes: PcShapes? = null,
+  val primaryButton: PcPrimaryButton? = null,
+  val typography: PcTypography? = null
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): PcAppearance {
+      val light = pigeonVar_list[0] as PcColors?
+      val dark = pigeonVar_list[1] as PcColors?
+      val themeMode = pigeonVar_list[2] as PcThemeMode
+      val shapes = pigeonVar_list[3] as PcShapes?
+      val primaryButton = pigeonVar_list[4] as PcPrimaryButton?
+      val typography = pigeonVar_list[5] as PcTypography?
+      return PcAppearance(light, dark, themeMode, shapes, primaryButton, typography)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      light,
+      dark,
+      themeMode,
+      shapes,
+      primaryButton,
+      typography,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as PcAppearance
+    return PayCrossApiPigeonUtils.deepEquals(this.light, other.light) && PayCrossApiPigeonUtils.deepEquals(this.dark, other.dark) && PayCrossApiPigeonUtils.deepEquals(this.themeMode, other.themeMode) && PayCrossApiPigeonUtils.deepEquals(this.shapes, other.shapes) && PayCrossApiPigeonUtils.deepEquals(this.primaryButton, other.primaryButton) && PayCrossApiPigeonUtils.deepEquals(this.typography, other.typography)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.light)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.dark)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.themeMode)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.shapes)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.primaryButton)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.typography)
+    return result
+  }
+  override fun toString(): String {
+    return "PcAppearance(light=$light, dark=$dark, themeMode=$themeMode, shapes=$shapes, primaryButton=$primaryButton, typography=$typography)"
+  }
+}
+
 /** Generated class from Pigeon that represents data sent in messages. */
 data class PcConfiguration (
   val environment: PcEnvironment,
@@ -293,10 +629,10 @@ data class PcConfiguration (
    * Null means "platform default" and must stay a real null: 0x00000000 is
    * transparent black, a legal colour rather than a sentinel.
    *
-   * Android only in v1 — the iOS SDK has no brand-colour hook, and its only
-   * colour source is the host app's window tint, which the plugin must not set
-   * because tintColor inherits down the hierarchy and would repaint the
-   * merchant's entire app. iOS accepts and ignores this.
+   * **Deprecated**, superseded by [appearance], which sets the same colour in
+   * both modes and opens the rest of the palette. Both platforms honour it
+   * while it lasts. The Dart facade sends this as null whenever an appearance
+   * is given, so neither native has to decide which of two brand colours wins.
    */
   val brandColorArgb: Long? = null,
   val testCardPrefill: PcTestCardPrefill? = null,
@@ -326,7 +662,9 @@ data class PcConfiguration (
    *
    * iOS only. Android has no Apple Pay, so it accepts and ignores this.
    */
-  val applePayMerchantId: String? = null
+  val applePayMerchantId: String? = null,
+  /** How the sheet looks. Honoured on both platforms. */
+  val appearance: PcAppearance? = null
 )
  {
   companion object {
@@ -336,7 +674,8 @@ data class PcConfiguration (
       val testCardPrefill = pigeonVar_list[2] as PcTestCardPrefill?
       val googlePayMerchantId = pigeonVar_list[3] as String?
       val applePayMerchantId = pigeonVar_list[4] as String?
-      return PcConfiguration(environment, brandColorArgb, testCardPrefill, googlePayMerchantId, applePayMerchantId)
+      val appearance = pigeonVar_list[5] as PcAppearance?
+      return PcConfiguration(environment, brandColorArgb, testCardPrefill, googlePayMerchantId, applePayMerchantId, appearance)
     }
   }
   fun toList(): List<Any?> {
@@ -346,6 +685,7 @@ data class PcConfiguration (
       testCardPrefill,
       googlePayMerchantId,
       applePayMerchantId,
+      appearance,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -356,7 +696,7 @@ data class PcConfiguration (
       return true
     }
     val other = other as PcConfiguration
-    return PayCrossApiPigeonUtils.deepEquals(this.environment, other.environment) && PayCrossApiPigeonUtils.deepEquals(this.brandColorArgb, other.brandColorArgb) && PayCrossApiPigeonUtils.deepEquals(this.testCardPrefill, other.testCardPrefill) && PayCrossApiPigeonUtils.deepEquals(this.googlePayMerchantId, other.googlePayMerchantId) && PayCrossApiPigeonUtils.deepEquals(this.applePayMerchantId, other.applePayMerchantId)
+    return PayCrossApiPigeonUtils.deepEquals(this.environment, other.environment) && PayCrossApiPigeonUtils.deepEquals(this.brandColorArgb, other.brandColorArgb) && PayCrossApiPigeonUtils.deepEquals(this.testCardPrefill, other.testCardPrefill) && PayCrossApiPigeonUtils.deepEquals(this.googlePayMerchantId, other.googlePayMerchantId) && PayCrossApiPigeonUtils.deepEquals(this.applePayMerchantId, other.applePayMerchantId) && PayCrossApiPigeonUtils.deepEquals(this.appearance, other.appearance)
   }
 
   override fun hashCode(): Int {
@@ -366,10 +706,11 @@ data class PcConfiguration (
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.testCardPrefill)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.googlePayMerchantId)
     result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.applePayMerchantId)
+    result = 31 * result + PayCrossApiPigeonUtils.deepHash(this.appearance)
     return result
   }
   override fun toString(): String {
-    return "PcConfiguration(environment=$environment, brandColorArgb=$brandColorArgb, testCardPrefill=$testCardPrefill, googlePayMerchantId=$googlePayMerchantId, applePayMerchantId=$applePayMerchantId)"
+    return "PcConfiguration(environment=$environment, brandColorArgb=$brandColorArgb, testCardPrefill=$testCardPrefill, googlePayMerchantId=$googlePayMerchantId, applePayMerchantId=$applePayMerchantId, appearance=$appearance)"
   }
 }
 
@@ -708,41 +1049,71 @@ private open class PayCrossApiPigeonCodec : StandardMessageCodec() {
         }
       }
       130.toByte() -> {
-        return (readValue(buffer) as? List<Any?>)?.let {
-          PcTestCardPrefill.fromList(it)
+        return (readValue(buffer) as Long?)?.let {
+          PcThemeMode.ofRaw(it.toInt())
         }
       }
       131.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PcConfiguration.fromList(it)
+          PcTestCardPrefill.fromList(it)
         }
       }
       132.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PcVersionInfo.fromList(it)
+          PcColors.fromList(it)
         }
       }
       133.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PcAmount.fromList(it)
+          PcShapes.fromList(it)
         }
       }
       134.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PcSuccess.fromList(it)
+          PcPrimaryButton.fromList(it)
         }
       }
       135.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PcFailure.fromList(it)
+          PcTypography.fromList(it)
         }
       }
       136.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PcCancelled.fromList(it)
+          PcAppearance.fromList(it)
         }
       }
       137.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          PcConfiguration.fromList(it)
+        }
+      }
+      138.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          PcVersionInfo.fromList(it)
+        }
+      }
+      139.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          PcAmount.fromList(it)
+        }
+      }
+      140.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          PcSuccess.fromList(it)
+        }
+      }
+      141.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          PcFailure.fromList(it)
+        }
+      }
+      142.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          PcCancelled.fromList(it)
+        }
+      }
+      143.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
           PcPending.fromList(it)
         }
@@ -756,36 +1127,60 @@ private open class PayCrossApiPigeonCodec : StandardMessageCodec() {
         stream.write(129)
         writeValue(stream, value.raw.toLong())
       }
-      is PcTestCardPrefill -> {
+      is PcThemeMode -> {
         stream.write(130)
-        writeValue(stream, value.toList())
+        writeValue(stream, value.raw.toLong())
       }
-      is PcConfiguration -> {
+      is PcTestCardPrefill -> {
         stream.write(131)
         writeValue(stream, value.toList())
       }
-      is PcVersionInfo -> {
+      is PcColors -> {
         stream.write(132)
         writeValue(stream, value.toList())
       }
-      is PcAmount -> {
+      is PcShapes -> {
         stream.write(133)
         writeValue(stream, value.toList())
       }
-      is PcSuccess -> {
+      is PcPrimaryButton -> {
         stream.write(134)
         writeValue(stream, value.toList())
       }
-      is PcFailure -> {
+      is PcTypography -> {
         stream.write(135)
         writeValue(stream, value.toList())
       }
-      is PcCancelled -> {
+      is PcAppearance -> {
         stream.write(136)
         writeValue(stream, value.toList())
       }
-      is PcPending -> {
+      is PcConfiguration -> {
         stream.write(137)
+        writeValue(stream, value.toList())
+      }
+      is PcVersionInfo -> {
+        stream.write(138)
+        writeValue(stream, value.toList())
+      }
+      is PcAmount -> {
+        stream.write(139)
+        writeValue(stream, value.toList())
+      }
+      is PcSuccess -> {
+        stream.write(140)
+        writeValue(stream, value.toList())
+      }
+      is PcFailure -> {
+        stream.write(141)
+        writeValue(stream, value.toList())
+      }
+      is PcCancelled -> {
+        stream.write(142)
+        writeValue(stream, value.toList())
+      }
+      is PcPending -> {
+        stream.write(143)
         writeValue(stream, value.toList())
       }
       else -> super.writeValue(stream, value)

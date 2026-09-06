@@ -177,6 +177,7 @@ void main() {
         PayCrossErrorCode.notConfigured: 'error:notConfigured',
         PayCrossErrorCode.testPrefillInProduction:
             'error:testPrefillInProduction',
+        PayCrossErrorCode.invalidAppearance: 'error:invalidAppearance',
         PayCrossErrorCode.busy: 'error:busy',
         PayCrossErrorCode.noActivity: 'error:noActivity',
         PayCrossErrorCode.noPresenter: 'error:noPresenter',

@@ -5,22 +5,34 @@ import android.content.Intent
 import com.paycross.flutter.generated.PayCrossHostApi
 import com.paycross.flutter.generated.FlutterError
 import com.paycross.flutter.generated.PcAmount
+import com.paycross.flutter.generated.PcAppearance
 import com.paycross.flutter.generated.PcCancelled
+import com.paycross.flutter.generated.PcColors
 import com.paycross.flutter.generated.PcConfiguration
 import com.paycross.flutter.generated.PcEnvironment
 import com.paycross.flutter.generated.PcFailure
 import com.paycross.flutter.generated.PcPaymentResult
 import com.paycross.flutter.generated.PcPending
+import com.paycross.flutter.generated.PcPrimaryButton
+import com.paycross.flutter.generated.PcShapes
 import com.paycross.flutter.generated.PcSuccess
 import com.paycross.flutter.generated.PcTestCardPrefill
+import com.paycross.flutter.generated.PcThemeMode
+import com.paycross.flutter.generated.PcTypography
 import com.paycross.flutter.generated.PcVersionInfo
 import com.paycross.sdk.PayCross
+import com.paycross.sdk.PayCrossAppearance
+import com.paycross.sdk.PayCrossColors
 import com.paycross.sdk.PayCrossContract
 import com.paycross.sdk.PayCrossEnvironment
+import com.paycross.sdk.PayCrossPrimaryButton
 import com.paycross.sdk.PayCrossResult
+import com.paycross.sdk.PayCrossShapes
+import com.paycross.sdk.PayCrossTypography
 import com.paycross.sdk.PendingReason
 import com.paycross.sdk.Recovery
 import com.paycross.sdk.TestCardPrefill
+import com.paycross.sdk.ThemeMode
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -230,10 +242,11 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
             // thing it cannot infer. Google rejects a production request whose
             // merchantInfo lacks it, so it is passed straight through - null
             // being "not configured", which the SDK adds only when non-blank.
-            googlePayMerchantId = configuration.googlePayMerchantId
+            googlePayMerchantId = configuration.googlePayMerchantId,
             // applePayMerchantId is deliberately ignored: Apple Pay is iOS only,
             // so there is no Android wallet for it to configure. iOS forwards it
             // to the native SDK's applePayMerchantIdentifier.
+            appearance = configuration.appearance?.toNative()
         )
     }
 
@@ -284,6 +297,64 @@ private fun PcTestCardPrefill.toNative() = TestCardPrefill(
     expireYear = expireYear,
     cvv = cvv,
     saveCard = saveCard
+)
+
+/**
+ * Every colour arrives as an unsigned packed ARGB Long, and toInt()'s
+ * low-32-bit truncation is exactly the signed @ColorInt the SDK wants - the
+ * same conversion the deprecated brandColorArgb has always had.
+ *
+ * A null role stays null all the way down. It is not "black": the SDK reads it
+ * as "keep the platform default", and a zero substituted anywhere here would
+ * be transparent black, which is a colour rather than an absence.
+ */
+internal fun PcColors.toNative() = PayCrossColors(
+    brand = brand?.toInt(),
+    onBrand = onBrand?.toInt(),
+    surface = surface?.toInt(),
+    component = component?.toInt(),
+    componentBorder = componentBorder?.toInt(),
+    text = text?.toInt(),
+    textSecondary = textSecondary?.toInt(),
+    placeholder = placeholder?.toInt(),
+    icon = icon?.toInt(),
+    error = error?.toInt()
+)
+
+internal fun PcShapes.toNative() = PayCrossShapes(
+    cornerRadius = cornerRadius?.toFloat(),
+    buttonCornerRadius = buttonCornerRadius?.toFloat(),
+    borderWidth = borderWidth?.toFloat()
+)
+
+internal fun PcPrimaryButton.toNative() = PayCrossPrimaryButton(
+    background = background?.toInt(),
+    textColor = textColor?.toInt(),
+    disabledBackground = disabledBackground?.toInt(),
+    disabledTextColor = disabledTextColor?.toInt(),
+    cornerRadius = cornerRadius?.toFloat(),
+    height = height?.toFloat()
+)
+
+internal fun PcTypography.toNative() = PayCrossTypography(
+    // Already refused outside 0.8-1.3 by the Dart facade. The SDK clamps as
+    // well, for callers that reach it without going through Dart.
+    sizeScaleFactor = sizeScaleFactor?.toFloat()
+)
+
+internal fun PcThemeMode.toNative(): ThemeMode = when (this) {
+    PcThemeMode.SYSTEM -> ThemeMode.SYSTEM
+    PcThemeMode.LIGHT -> ThemeMode.LIGHT
+    PcThemeMode.DARK -> ThemeMode.DARK
+}
+
+internal fun PcAppearance.toNative() = PayCrossAppearance(
+    light = light?.toNative(),
+    dark = dark?.toNative(),
+    themeMode = themeMode.toNative(),
+    shapes = shapes?.toNative(),
+    primaryButton = primaryButton?.toNative(),
+    typography = typography?.toNative()
 )
 
 internal fun PayCrossResult.toPigeon(): PcPaymentResult = when (this) {

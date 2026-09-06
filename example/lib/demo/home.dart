@@ -139,26 +139,47 @@ Future<void> runPreset(
     ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
     return;
   }
-  await Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      // One mint closure, built once and handed to whichever screen is
-      // pushed: the two surfaces cannot end up sending different bodies,
-      // because there is only one thing here that sends anything.
-      builder: (_) => switch (surface) {
-        PaymentSurface.sdkSheet => RunScreen(
-          preset: preset,
-          body: body,
-          mintSession: (body) => mintWith(credentials, body),
-        ),
-        PaymentSurface.webCheckout => WebCheckoutRunScreen(
-          preset: preset,
-          body: body,
-          launch: launch,
-          mintSession: (body) => mintWith(credentials, body),
-        ),
-      },
-    ),
-  );
+  // Read without subscribing: this runs outside `build`, where registering a
+  // dependency would be a rebuild nobody asked for. Null in a widget test that
+  // mounts no scope, which is what makes an unthemed test unaffected by any of
+  // this.
+  final environment = LiveModeScope.readOf(context);
+  final themed = preset.appearance;
+  if (themed != null) {
+    await environment?.applyTestAppearance(themed);
+    if (!context.mounted) return;
+  }
+
+  try {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        // One mint closure, built once and handed to whichever screen is
+        // pushed: the two surfaces cannot end up sending different bodies,
+        // because there is only one thing here that sends anything.
+        builder: (_) => switch (surface) {
+          PaymentSurface.sdkSheet => RunScreen(
+            preset: preset,
+            body: body,
+            mintSession: (body) => mintWith(credentials, body),
+          ),
+          PaymentSurface.webCheckout => WebCheckoutRunScreen(
+            preset: preset,
+            body: body,
+            launch: launch,
+            mintSession: (body) => mintWith(credentials, body),
+          ),
+        },
+      ),
+    );
+  } finally {
+    // In a finally, and not after the await: a themed run that ended by
+    // throwing would otherwise leave every later tile themed, and the person
+    // running them would have no way to tell that from the SDK ignoring the
+    // appearance they did not set.
+    if (themed != null) {
+      await environment?.applyTestAppearance(null);
+    }
+  }
 }
 
 /// The key one built-in tile's "edited" marker carries.

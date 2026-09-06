@@ -105,6 +105,11 @@ int _deepHash(Object? value) {
 /// each platform.
 enum PcEnvironment { sandbox, production }
 
+/// Which palette the sheet draws with.
+///
+/// A pinned mode applies to the payment sheet only, and never to the host app.
+enum PcThemeMode { system, light, dark }
+
 /// Prefills the native card form for manual test runs.
 ///
 /// CARRIES A PAN AND A CVV, and is the only card data that ever crosses this
@@ -193,6 +198,370 @@ class PcTestCardPrefill {
   }
 }
 
+/// One palette, used twice: once for light, once for dark.
+///
+/// Every role is a nullable packed ARGB int, for the reason
+/// [PcConfiguration.brandColorArgb] gives: null has to stay a real null,
+/// because 0x00000000 is transparent black — a legal colour rather than a
+/// sentinel — and null is what both natives read as "keep the platform
+/// default".
+class PcColors {
+  PcColors({
+    this.brand,
+    this.onBrand,
+    this.surface,
+    this.component,
+    this.componentBorder,
+    this.text,
+    this.textSecondary,
+    this.placeholder,
+    this.icon,
+    this.error,
+  });
+
+  int? brand;
+
+  /// Null derives it from [brand]'s own luminance on each native, so a light
+  /// brand gets a dark label. Deliberately not computed in Dart: the rule is
+  /// the same 0.179 WCAG crossover on both sides, and one copy of it that both
+  /// natives already ship beats a third.
+  int? onBrand;
+
+  int? surface;
+
+  int? component;
+
+  int? componentBorder;
+
+  int? text;
+
+  int? textSecondary;
+
+  int? placeholder;
+
+  int? icon;
+
+  int? error;
+
+  List<Object?> _toList() {
+    return <Object?>[
+      brand,
+      onBrand,
+      surface,
+      component,
+      componentBorder,
+      text,
+      textSecondary,
+      placeholder,
+      icon,
+      error,
+    ];
+  }
+
+  Object encode() {
+    return _toList();
+  }
+
+  static PcColors decode(Object result) {
+    result as List<Object?>;
+    return PcColors(
+      brand: result[0] as int?,
+      onBrand: result[1] as int?,
+      surface: result[2] as int?,
+      component: result[3] as int?,
+      componentBorder: result[4] as int?,
+      text: result[5] as int?,
+      textSecondary: result[6] as int?,
+      placeholder: result[7] as int?,
+      icon: result[8] as int?,
+      error: result[9] as int?,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! PcColors || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(brand, other.brand) &&
+        _deepEquals(onBrand, other.onBrand) &&
+        _deepEquals(surface, other.surface) &&
+        _deepEquals(component, other.component) &&
+        _deepEquals(componentBorder, other.componentBorder) &&
+        _deepEquals(text, other.text) &&
+        _deepEquals(textSecondary, other.textSecondary) &&
+        _deepEquals(placeholder, other.placeholder) &&
+        _deepEquals(icon, other.icon) &&
+        _deepEquals(error, other.error);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'PcColors(brand: $brand, onBrand: $onBrand, surface: $surface, component: $component, componentBorder: $componentBorder, text: $text, textSecondary: $textSecondary, placeholder: $placeholder, icon: $icon, error: $error)';
+  }
+}
+
+/// Corner radii and border thickness, in the platform's own units: dp on
+/// Android, points on iOS. Not converted, because neither is a pixel count and
+/// a merchant setting 16 wants the same visual weight on both.
+class PcShapes {
+  PcShapes({this.cornerRadius, this.buttonCornerRadius, this.borderWidth});
+
+  double? cornerRadius;
+
+  double? buttonCornerRadius;
+
+  double? borderWidth;
+
+  List<Object?> _toList() {
+    return <Object?>[cornerRadius, buttonCornerRadius, borderWidth];
+  }
+
+  Object encode() {
+    return _toList();
+  }
+
+  static PcShapes decode(Object result) {
+    result as List<Object?>;
+    return PcShapes(
+      cornerRadius: result[0] as double?,
+      buttonCornerRadius: result[1] as double?,
+      borderWidth: result[2] as double?,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! PcShapes || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(cornerRadius, other.cornerRadius) &&
+        _deepEquals(buttonCornerRadius, other.buttonCornerRadius) &&
+        _deepEquals(borderWidth, other.borderWidth);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'PcShapes(cornerRadius: $cornerRadius, buttonCornerRadius: $buttonCornerRadius, borderWidth: $borderWidth)';
+  }
+}
+
+/// Pay button overrides. Each null falls back to the matching palette role.
+class PcPrimaryButton {
+  PcPrimaryButton({
+    this.background,
+    this.textColor,
+    this.disabledBackground,
+    this.disabledTextColor,
+    this.cornerRadius,
+    this.height,
+  });
+
+  int? background;
+
+  int? textColor;
+
+  int? disabledBackground;
+
+  int? disabledTextColor;
+
+  double? cornerRadius;
+
+  double? height;
+
+  List<Object?> _toList() {
+    return <Object?>[
+      background,
+      textColor,
+      disabledBackground,
+      disabledTextColor,
+      cornerRadius,
+      height,
+    ];
+  }
+
+  Object encode() {
+    return _toList();
+  }
+
+  static PcPrimaryButton decode(Object result) {
+    result as List<Object?>;
+    return PcPrimaryButton(
+      background: result[0] as int?,
+      textColor: result[1] as int?,
+      disabledBackground: result[2] as int?,
+      disabledTextColor: result[3] as int?,
+      cornerRadius: result[4] as double?,
+      height: result[5] as double?,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! PcPrimaryButton || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(background, other.background) &&
+        _deepEquals(textColor, other.textColor) &&
+        _deepEquals(disabledBackground, other.disabledBackground) &&
+        _deepEquals(disabledTextColor, other.disabledTextColor) &&
+        _deepEquals(cornerRadius, other.cornerRadius) &&
+        _deepEquals(height, other.height);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'PcPrimaryButton(background: $background, textColor: $textColor, disabledBackground: $disabledBackground, disabledTextColor: $disabledTextColor, cornerRadius: $cornerRadius, height: $height)';
+  }
+}
+
+/// Type sizing. A font family is deliberately not on the wire in this release:
+/// resolving one differs enough between the two platforms that a name crossing
+/// here would mean two different fallbacks for the same string.
+class PcTypography {
+  PcTypography({this.sizeScaleFactor});
+
+  /// Clamped to 0.8–1.3 by both natives. The Dart facade refuses anything
+  /// outside that range outright, so nothing out of range reaches this field.
+  double? sizeScaleFactor;
+
+  List<Object?> _toList() {
+    return <Object?>[sizeScaleFactor];
+  }
+
+  Object encode() {
+    return _toList();
+  }
+
+  static PcTypography decode(Object result) {
+    result as List<Object?>;
+    return PcTypography(sizeScaleFactor: result[0] as double?);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! PcTypography || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(sizeScaleFactor, other.sizeScaleFactor);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'PcTypography(sizeScaleFactor: $sizeScaleFactor)';
+  }
+}
+
+/// How the native payment sheet looks.
+///
+/// Colours resolve per role: what is set here, then the brand colour the
+/// merchant set in the back office, then the platform default. The back-office
+/// colour arrives with the session and never crosses this channel, so an
+/// absent appearance is not "no theming".
+class PcAppearance {
+  PcAppearance({
+    this.light,
+    this.dark,
+    required this.themeMode,
+    this.shapes,
+    this.primaryButton,
+    this.typography,
+  });
+
+  PcColors? light;
+
+  PcColors? dark;
+
+  /// Required, unlike every other field here, because Pigeon has no field
+  /// defaults: a nullable mode would make "follow the device" a decision each
+  /// native had to invent for itself. The Dart facade always writes this.
+  PcThemeMode themeMode;
+
+  PcShapes? shapes;
+
+  PcPrimaryButton? primaryButton;
+
+  PcTypography? typography;
+
+  List<Object?> _toList() {
+    return <Object?>[light, dark, themeMode, shapes, primaryButton, typography];
+  }
+
+  Object encode() {
+    return _toList();
+  }
+
+  static PcAppearance decode(Object result) {
+    result as List<Object?>;
+    return PcAppearance(
+      light: result[0] as PcColors?,
+      dark: result[1] as PcColors?,
+      themeMode: result[2]! as PcThemeMode,
+      shapes: result[3] as PcShapes?,
+      primaryButton: result[4] as PcPrimaryButton?,
+      typography: result[5] as PcTypography?,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! PcAppearance || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(light, other.light) &&
+        _deepEquals(dark, other.dark) &&
+        _deepEquals(themeMode, other.themeMode) &&
+        _deepEquals(shapes, other.shapes) &&
+        _deepEquals(primaryButton, other.primaryButton) &&
+        _deepEquals(typography, other.typography);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'PcAppearance(light: $light, dark: $dark, themeMode: $themeMode, shapes: $shapes, primaryButton: $primaryButton, typography: $typography)';
+  }
+}
+
 class PcConfiguration {
   PcConfiguration({
     required this.environment,
@@ -200,6 +569,7 @@ class PcConfiguration {
     this.testCardPrefill,
     this.googlePayMerchantId,
     this.applePayMerchantId,
+    this.appearance,
   });
 
   PcEnvironment environment;
@@ -210,10 +580,10 @@ class PcConfiguration {
   /// Null means "platform default" and must stay a real null: 0x00000000 is
   /// transparent black, a legal colour rather than a sentinel.
   ///
-  /// Android only in v1 — the iOS SDK has no brand-colour hook, and its only
-  /// colour source is the host app's window tint, which the plugin must not set
-  /// because tintColor inherits down the hierarchy and would repaint the
-  /// merchant's entire app. iOS accepts and ignores this.
+  /// **Deprecated**, superseded by [appearance], which sets the same colour in
+  /// both modes and opens the rest of the palette. Both platforms honour it
+  /// while it lasts. The Dart facade sends this as null whenever an appearance
+  /// is given, so neither native has to decide which of two brand colours wins.
   int? brandColorArgb;
 
   PcTestCardPrefill? testCardPrefill;
@@ -243,6 +613,9 @@ class PcConfiguration {
   /// iOS only. Android has no Apple Pay, so it accepts and ignores this.
   String? applePayMerchantId;
 
+  /// How the sheet looks. Honoured on both platforms.
+  PcAppearance? appearance;
+
   List<Object?> _toList() {
     return <Object?>[
       environment,
@@ -250,6 +623,7 @@ class PcConfiguration {
       testCardPrefill,
       googlePayMerchantId,
       applePayMerchantId,
+      appearance,
     ];
   }
 
@@ -265,6 +639,7 @@ class PcConfiguration {
       testCardPrefill: result[2] as PcTestCardPrefill?,
       googlePayMerchantId: result[3] as String?,
       applePayMerchantId: result[4] as String?,
+      appearance: result[5] as PcAppearance?,
     );
   }
 
@@ -281,7 +656,8 @@ class PcConfiguration {
         _deepEquals(brandColorArgb, other.brandColorArgb) &&
         _deepEquals(testCardPrefill, other.testCardPrefill) &&
         _deepEquals(googlePayMerchantId, other.googlePayMerchantId) &&
-        _deepEquals(applePayMerchantId, other.applePayMerchantId);
+        _deepEquals(applePayMerchantId, other.applePayMerchantId) &&
+        _deepEquals(appearance, other.appearance);
   }
 
   @override
@@ -290,7 +666,7 @@ class PcConfiguration {
 
   @override
   String toString() {
-    return 'PcConfiguration(environment: $environment, brandColorArgb: $brandColorArgb, testCardPrefill: $testCardPrefill, googlePayMerchantId: $googlePayMerchantId, applePayMerchantId: $applePayMerchantId)';
+    return 'PcConfiguration(environment: $environment, brandColorArgb: $brandColorArgb, testCardPrefill: $testCardPrefill, googlePayMerchantId: $googlePayMerchantId, applePayMerchantId: $applePayMerchantId, appearance: $appearance)';
   }
 }
 
@@ -638,29 +1014,47 @@ class _PigeonCodec extends StandardMessageCodec {
     } else if (value is PcEnvironment) {
       buffer.putUint8(129);
       writeValue(buffer, value.index);
-    } else if (value is PcTestCardPrefill) {
+    } else if (value is PcThemeMode) {
       buffer.putUint8(130);
-      writeValue(buffer, value.encode());
-    } else if (value is PcConfiguration) {
+      writeValue(buffer, value.index);
+    } else if (value is PcTestCardPrefill) {
       buffer.putUint8(131);
       writeValue(buffer, value.encode());
-    } else if (value is PcVersionInfo) {
+    } else if (value is PcColors) {
       buffer.putUint8(132);
       writeValue(buffer, value.encode());
-    } else if (value is PcAmount) {
+    } else if (value is PcShapes) {
       buffer.putUint8(133);
       writeValue(buffer, value.encode());
-    } else if (value is PcSuccess) {
+    } else if (value is PcPrimaryButton) {
       buffer.putUint8(134);
       writeValue(buffer, value.encode());
-    } else if (value is PcFailure) {
+    } else if (value is PcTypography) {
       buffer.putUint8(135);
       writeValue(buffer, value.encode());
-    } else if (value is PcCancelled) {
+    } else if (value is PcAppearance) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
-    } else if (value is PcPending) {
+    } else if (value is PcConfiguration) {
       buffer.putUint8(137);
+      writeValue(buffer, value.encode());
+    } else if (value is PcVersionInfo) {
+      buffer.putUint8(138);
+      writeValue(buffer, value.encode());
+    } else if (value is PcAmount) {
+      buffer.putUint8(139);
+      writeValue(buffer, value.encode());
+    } else if (value is PcSuccess) {
+      buffer.putUint8(140);
+      writeValue(buffer, value.encode());
+    } else if (value is PcFailure) {
+      buffer.putUint8(141);
+      writeValue(buffer, value.encode());
+    } else if (value is PcCancelled) {
+      buffer.putUint8(142);
+      writeValue(buffer, value.encode());
+    } else if (value is PcPending) {
+      buffer.putUint8(143);
       writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
@@ -674,20 +1068,33 @@ class _PigeonCodec extends StandardMessageCodec {
         final value = readValue(buffer) as int?;
         return value == null ? null : PcEnvironment.values[value];
       case 130:
-        return PcTestCardPrefill.decode(readValue(buffer)!);
+        final value = readValue(buffer) as int?;
+        return value == null ? null : PcThemeMode.values[value];
       case 131:
-        return PcConfiguration.decode(readValue(buffer)!);
+        return PcTestCardPrefill.decode(readValue(buffer)!);
       case 132:
-        return PcVersionInfo.decode(readValue(buffer)!);
+        return PcColors.decode(readValue(buffer)!);
       case 133:
-        return PcAmount.decode(readValue(buffer)!);
+        return PcShapes.decode(readValue(buffer)!);
       case 134:
-        return PcSuccess.decode(readValue(buffer)!);
+        return PcPrimaryButton.decode(readValue(buffer)!);
       case 135:
-        return PcFailure.decode(readValue(buffer)!);
+        return PcTypography.decode(readValue(buffer)!);
       case 136:
-        return PcCancelled.decode(readValue(buffer)!);
+        return PcAppearance.decode(readValue(buffer)!);
       case 137:
+        return PcConfiguration.decode(readValue(buffer)!);
+      case 138:
+        return PcVersionInfo.decode(readValue(buffer)!);
+      case 139:
+        return PcAmount.decode(readValue(buffer)!);
+      case 140:
+        return PcSuccess.decode(readValue(buffer)!);
+      case 141:
+        return PcFailure.decode(readValue(buffer)!);
+      case 142:
+        return PcCancelled.decode(readValue(buffer)!);
+      case 143:
         return PcPending.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);

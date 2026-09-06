@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 
+import 'appearance.dart';
 import 'environment.dart';
 import 'errors.dart';
 import 'generated/paycross_api.g.dart' as g;
@@ -46,8 +47,19 @@ abstract final class PayCross {
 
   /// Points the SDK at an environment. Call once, before [presentPayment].
   ///
-  /// [brandColorArgb] currently applies on Android only; the iOS SDK exposes
-  /// no brand-colour hook, so it is ignored there.
+  /// [appearance] themes the native payment sheets on both platforms: colours
+  /// per mode, a pinned or system theme mode, corner radii, the Pay button and
+  /// a font scale. Every role left null keeps the next source — the brand
+  /// colour set in the PayCross back office, then the platform default — so
+  /// omitting it entirely is not "no theming" and a merchant who sets their
+  /// brand colour in the back office needs no code here at all.
+  ///
+  /// [brandColorArgb] is deprecated in favour of
+  /// `appearance: PayCrossAppearance.brand(color)`, which sets the same colour
+  /// in both light and dark and opens the rest of the palette. It is still
+  /// honoured on its own, on both platforms. When both are given the
+  /// appearance wins and the brand colour is not sent, so neither native SDK
+  /// has to hold a second opinion about which colour is the brand.
   ///
   /// [googlePayMerchantId] is Android-only. It is the merchant id from the
   /// Google Business Console, and Google **requires** it for
@@ -64,14 +76,18 @@ abstract final class PayCross {
   ///
   /// Throws [PayCrossIntegrationError] with
   /// [PayCrossErrorCode.testPrefillInProduction] if [testCardPrefill] is
-  /// supplied alongside [PayCrossEnvironment.production], or with
-  /// [PayCrossErrorCode.busy] if a payment is in flight.
+  /// supplied alongside [PayCrossEnvironment.production], with
+  /// [PayCrossErrorCode.invalidAppearance] if [appearance] holds a value no
+  /// sheet can draw, or with [PayCrossErrorCode.busy] if a payment is in
+  /// flight.
   static Future<void> configure({
     required PayCrossEnvironment environment,
+    @Deprecated('Use appearance: PayCrossAppearance.brand(color)')
     int? brandColorArgb,
     PayCrossTestCardPrefill? testCardPrefill,
     String? googlePayMerchantId,
     String? applePayMerchantId,
+    PayCrossAppearance? appearance,
   }) async {
     if (testCardPrefill != null &&
         environment == PayCrossEnvironment.production) {
@@ -81,13 +97,21 @@ abstract final class PayCross {
       );
     }
 
+    // Before the channel call, and before the busy guard reports anything: an
+    // appearance a sheet cannot draw is a mistake in merchant code, and it is
+    // cheaper to name here than as a layout failure inside a native sheet.
+    final crossing = appearance?.toPigeon();
+
     return _guard(
       () => _api.configure(
         g.PcConfiguration(
           environment: environment == PayCrossEnvironment.sandbox
               ? g.PcEnvironment.sandbox
               : g.PcEnvironment.production,
-          brandColorArgb: brandColorArgb,
+          // Dropped when an appearance is given: two brand colours on the wire
+          // would make the precedence a decision each native re-derived, and
+          // the two would eventually disagree.
+          brandColorArgb: appearance == null ? brandColorArgb : null,
           testCardPrefill: testCardPrefill == null
               ? null
               : g.PcTestCardPrefill(
@@ -100,6 +124,7 @@ abstract final class PayCross {
                 ),
           googlePayMerchantId: googlePayMerchantId,
           applePayMerchantId: applePayMerchantId,
+          appearance: crossing,
         ),
       ),
     );

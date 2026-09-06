@@ -195,6 +195,15 @@ enum PcEnvironment: Int, CaseIterable {
   case production = 1
 }
 
+/// Which palette the sheet draws with.
+///
+/// A pinned mode applies to the payment sheet only, and never to the host app.
+enum PcThemeMode: Int, CaseIterable {
+  case system = 0
+  case light = 1
+  case dark = 2
+}
+
 /// Prefills the native card form for manual test runs.
 ///
 /// CARRIES A PAN AND A CVV, and is the only card data that ever crosses this
@@ -268,6 +277,320 @@ struct PcTestCardPrefill: Hashable, CustomStringConvertible {
   }
 }
 
+/// One palette, used twice: once for light, once for dark.
+///
+/// Every role is a nullable packed ARGB int, for the reason
+/// [PcConfiguration.brandColorArgb] gives: null has to stay a real null,
+/// because 0x00000000 is transparent black — a legal colour rather than a
+/// sentinel — and null is what both natives read as "keep the platform
+/// default".
+///
+/// Generated class from Pigeon that represents data sent in messages.
+struct PcColors: Hashable, CustomStringConvertible {
+  var brand: Int64? = nil
+  /// Null derives it from [brand]'s own luminance on each native, so a light
+  /// brand gets a dark label. Deliberately not computed in Dart: the rule is
+  /// the same 0.179 WCAG crossover on both sides, and one copy of it that both
+  /// natives already ship beats a third.
+  var onBrand: Int64? = nil
+  var surface: Int64? = nil
+  var component: Int64? = nil
+  var componentBorder: Int64? = nil
+  var text: Int64? = nil
+  var textSecondary: Int64? = nil
+  var placeholder: Int64? = nil
+  var icon: Int64? = nil
+  var error: Int64? = nil
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> PcColors? {
+    let brand: Int64? = nilOrValue(pigeonVar_list[0])
+    let onBrand: Int64? = nilOrValue(pigeonVar_list[1])
+    let surface: Int64? = nilOrValue(pigeonVar_list[2])
+    let component: Int64? = nilOrValue(pigeonVar_list[3])
+    let componentBorder: Int64? = nilOrValue(pigeonVar_list[4])
+    let text: Int64? = nilOrValue(pigeonVar_list[5])
+    let textSecondary: Int64? = nilOrValue(pigeonVar_list[6])
+    let placeholder: Int64? = nilOrValue(pigeonVar_list[7])
+    let icon: Int64? = nilOrValue(pigeonVar_list[8])
+    let error: Int64? = nilOrValue(pigeonVar_list[9])
+
+    return PcColors(
+      brand: brand,
+      onBrand: onBrand,
+      surface: surface,
+      component: component,
+      componentBorder: componentBorder,
+      text: text,
+      textSecondary: textSecondary,
+      placeholder: placeholder,
+      icon: icon,
+      error: error
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      brand,
+      onBrand,
+      surface,
+      component,
+      componentBorder,
+      text,
+      textSecondary,
+      placeholder,
+      icon,
+      error,
+    ]
+  }
+  static func == (lhs: PcColors, rhs: PcColors) -> Bool {
+    if Swift.type(of: lhs) != Swift.type(of: rhs) {
+      return false
+    }
+    return PayCrossApiPigeonInternal.deepEquals(lhs.brand, rhs.brand) && PayCrossApiPigeonInternal.deepEquals(lhs.onBrand, rhs.onBrand) && PayCrossApiPigeonInternal.deepEquals(lhs.surface, rhs.surface) && PayCrossApiPigeonInternal.deepEquals(lhs.component, rhs.component) && PayCrossApiPigeonInternal.deepEquals(lhs.componentBorder, rhs.componentBorder) && PayCrossApiPigeonInternal.deepEquals(lhs.text, rhs.text) && PayCrossApiPigeonInternal.deepEquals(lhs.textSecondary, rhs.textSecondary) && PayCrossApiPigeonInternal.deepEquals(lhs.placeholder, rhs.placeholder) && PayCrossApiPigeonInternal.deepEquals(lhs.icon, rhs.icon) && PayCrossApiPigeonInternal.deepEquals(lhs.error, rhs.error)
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine("PcColors")
+    PayCrossApiPigeonInternal.deepHash(value: brand, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: onBrand, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: surface, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: component, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: componentBorder, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: text, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: textSecondary, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: placeholder, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: icon, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: error, hasher: &hasher)
+  }
+
+  public var description: String {
+    return "PcColors(brand: \(String(describing: brand)), onBrand: \(String(describing: onBrand)), surface: \(String(describing: surface)), component: \(String(describing: component)), componentBorder: \(String(describing: componentBorder)), text: \(String(describing: text)), textSecondary: \(String(describing: textSecondary)), placeholder: \(String(describing: placeholder)), icon: \(String(describing: icon)), error: \(String(describing: error)))"
+  }
+}
+
+/// Corner radii and border thickness, in the platform's own units: dp on
+/// Android, points on iOS. Not converted, because neither is a pixel count and
+/// a merchant setting 16 wants the same visual weight on both.
+///
+/// Generated class from Pigeon that represents data sent in messages.
+struct PcShapes: Hashable, CustomStringConvertible {
+  var cornerRadius: Double? = nil
+  var buttonCornerRadius: Double? = nil
+  var borderWidth: Double? = nil
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> PcShapes? {
+    let cornerRadius: Double? = nilOrValue(pigeonVar_list[0])
+    let buttonCornerRadius: Double? = nilOrValue(pigeonVar_list[1])
+    let borderWidth: Double? = nilOrValue(pigeonVar_list[2])
+
+    return PcShapes(
+      cornerRadius: cornerRadius,
+      buttonCornerRadius: buttonCornerRadius,
+      borderWidth: borderWidth
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      cornerRadius,
+      buttonCornerRadius,
+      borderWidth,
+    ]
+  }
+  static func == (lhs: PcShapes, rhs: PcShapes) -> Bool {
+    if Swift.type(of: lhs) != Swift.type(of: rhs) {
+      return false
+    }
+    return PayCrossApiPigeonInternal.deepEquals(lhs.cornerRadius, rhs.cornerRadius) && PayCrossApiPigeonInternal.deepEquals(lhs.buttonCornerRadius, rhs.buttonCornerRadius) && PayCrossApiPigeonInternal.deepEquals(lhs.borderWidth, rhs.borderWidth)
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine("PcShapes")
+    PayCrossApiPigeonInternal.deepHash(value: cornerRadius, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: buttonCornerRadius, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: borderWidth, hasher: &hasher)
+  }
+
+  public var description: String {
+    return "PcShapes(cornerRadius: \(String(describing: cornerRadius)), buttonCornerRadius: \(String(describing: buttonCornerRadius)), borderWidth: \(String(describing: borderWidth)))"
+  }
+}
+
+/// Pay button overrides. Each null falls back to the matching palette role.
+///
+/// Generated class from Pigeon that represents data sent in messages.
+struct PcPrimaryButton: Hashable, CustomStringConvertible {
+  var background: Int64? = nil
+  var textColor: Int64? = nil
+  var disabledBackground: Int64? = nil
+  var disabledTextColor: Int64? = nil
+  var cornerRadius: Double? = nil
+  var height: Double? = nil
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> PcPrimaryButton? {
+    let background: Int64? = nilOrValue(pigeonVar_list[0])
+    let textColor: Int64? = nilOrValue(pigeonVar_list[1])
+    let disabledBackground: Int64? = nilOrValue(pigeonVar_list[2])
+    let disabledTextColor: Int64? = nilOrValue(pigeonVar_list[3])
+    let cornerRadius: Double? = nilOrValue(pigeonVar_list[4])
+    let height: Double? = nilOrValue(pigeonVar_list[5])
+
+    return PcPrimaryButton(
+      background: background,
+      textColor: textColor,
+      disabledBackground: disabledBackground,
+      disabledTextColor: disabledTextColor,
+      cornerRadius: cornerRadius,
+      height: height
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      background,
+      textColor,
+      disabledBackground,
+      disabledTextColor,
+      cornerRadius,
+      height,
+    ]
+  }
+  static func == (lhs: PcPrimaryButton, rhs: PcPrimaryButton) -> Bool {
+    if Swift.type(of: lhs) != Swift.type(of: rhs) {
+      return false
+    }
+    return PayCrossApiPigeonInternal.deepEquals(lhs.background, rhs.background) && PayCrossApiPigeonInternal.deepEquals(lhs.textColor, rhs.textColor) && PayCrossApiPigeonInternal.deepEquals(lhs.disabledBackground, rhs.disabledBackground) && PayCrossApiPigeonInternal.deepEquals(lhs.disabledTextColor, rhs.disabledTextColor) && PayCrossApiPigeonInternal.deepEquals(lhs.cornerRadius, rhs.cornerRadius) && PayCrossApiPigeonInternal.deepEquals(lhs.height, rhs.height)
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine("PcPrimaryButton")
+    PayCrossApiPigeonInternal.deepHash(value: background, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: textColor, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: disabledBackground, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: disabledTextColor, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: cornerRadius, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: height, hasher: &hasher)
+  }
+
+  public var description: String {
+    return "PcPrimaryButton(background: \(String(describing: background)), textColor: \(String(describing: textColor)), disabledBackground: \(String(describing: disabledBackground)), disabledTextColor: \(String(describing: disabledTextColor)), cornerRadius: \(String(describing: cornerRadius)), height: \(String(describing: height)))"
+  }
+}
+
+/// Type sizing. A font family is deliberately not on the wire in this release:
+/// resolving one differs enough between the two platforms that a name crossing
+/// here would mean two different fallbacks for the same string.
+///
+/// Generated class from Pigeon that represents data sent in messages.
+struct PcTypography: Hashable, CustomStringConvertible {
+  /// Clamped to 0.8–1.3 by both natives. The Dart facade refuses anything
+  /// outside that range outright, so nothing out of range reaches this field.
+  var sizeScaleFactor: Double? = nil
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> PcTypography? {
+    let sizeScaleFactor: Double? = nilOrValue(pigeonVar_list[0])
+
+    return PcTypography(
+      sizeScaleFactor: sizeScaleFactor
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      sizeScaleFactor
+    ]
+  }
+  static func == (lhs: PcTypography, rhs: PcTypography) -> Bool {
+    if Swift.type(of: lhs) != Swift.type(of: rhs) {
+      return false
+    }
+    return PayCrossApiPigeonInternal.deepEquals(lhs.sizeScaleFactor, rhs.sizeScaleFactor)
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine("PcTypography")
+    PayCrossApiPigeonInternal.deepHash(value: sizeScaleFactor, hasher: &hasher)
+  }
+
+  public var description: String {
+    return "PcTypography(sizeScaleFactor: \(String(describing: sizeScaleFactor)))"
+  }
+}
+
+/// How the native payment sheet looks.
+///
+/// Colours resolve per role: what is set here, then the brand colour the
+/// merchant set in the back office, then the platform default. The back-office
+/// colour arrives with the session and never crosses this channel, so an
+/// absent appearance is not "no theming".
+///
+/// Generated class from Pigeon that represents data sent in messages.
+struct PcAppearance: Hashable, CustomStringConvertible {
+  var light: PcColors? = nil
+  var dark: PcColors? = nil
+  /// Required, unlike every other field here, because Pigeon has no field
+  /// defaults: a nullable mode would make "follow the device" a decision each
+  /// native had to invent for itself. The Dart facade always writes this.
+  var themeMode: PcThemeMode
+  var shapes: PcShapes? = nil
+  var primaryButton: PcPrimaryButton? = nil
+  var typography: PcTypography? = nil
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> PcAppearance? {
+    let light: PcColors? = nilOrValue(pigeonVar_list[0])
+    let dark: PcColors? = nilOrValue(pigeonVar_list[1])
+    let themeMode = pigeonVar_list[2] as! PcThemeMode
+    let shapes: PcShapes? = nilOrValue(pigeonVar_list[3])
+    let primaryButton: PcPrimaryButton? = nilOrValue(pigeonVar_list[4])
+    let typography: PcTypography? = nilOrValue(pigeonVar_list[5])
+
+    return PcAppearance(
+      light: light,
+      dark: dark,
+      themeMode: themeMode,
+      shapes: shapes,
+      primaryButton: primaryButton,
+      typography: typography
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      light,
+      dark,
+      themeMode,
+      shapes,
+      primaryButton,
+      typography,
+    ]
+  }
+  static func == (lhs: PcAppearance, rhs: PcAppearance) -> Bool {
+    if Swift.type(of: lhs) != Swift.type(of: rhs) {
+      return false
+    }
+    return PayCrossApiPigeonInternal.deepEquals(lhs.light, rhs.light) && PayCrossApiPigeonInternal.deepEquals(lhs.dark, rhs.dark) && PayCrossApiPigeonInternal.deepEquals(lhs.themeMode, rhs.themeMode) && PayCrossApiPigeonInternal.deepEquals(lhs.shapes, rhs.shapes) && PayCrossApiPigeonInternal.deepEquals(lhs.primaryButton, rhs.primaryButton) && PayCrossApiPigeonInternal.deepEquals(lhs.typography, rhs.typography)
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine("PcAppearance")
+    PayCrossApiPigeonInternal.deepHash(value: light, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: dark, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: themeMode, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: shapes, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: primaryButton, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: typography, hasher: &hasher)
+  }
+
+  public var description: String {
+    return "PcAppearance(light: \(String(describing: light)), dark: \(String(describing: dark)), themeMode: \(String(describing: themeMode)), shapes: \(String(describing: shapes)), primaryButton: \(String(describing: primaryButton)), typography: \(String(describing: typography)))"
+  }
+}
+
 /// Generated class from Pigeon that represents data sent in messages.
 struct PcConfiguration: Hashable, CustomStringConvertible {
   var environment: PcEnvironment
@@ -277,10 +600,10 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
   /// Null means "platform default" and must stay a real null: 0x00000000 is
   /// transparent black, a legal colour rather than a sentinel.
   ///
-  /// Android only in v1 — the iOS SDK has no brand-colour hook, and its only
-  /// colour source is the host app's window tint, which the plugin must not set
-  /// because tintColor inherits down the hierarchy and would repaint the
-  /// merchant's entire app. iOS accepts and ignores this.
+  /// **Deprecated**, superseded by [appearance], which sets the same colour in
+  /// both modes and opens the rest of the palette. Both platforms honour it
+  /// while it lasts. The Dart facade sends this as null whenever an appearance
+  /// is given, so neither native has to decide which of two brand colours wins.
   var brandColorArgb: Int64? = nil
   var testCardPrefill: PcTestCardPrefill? = nil
   /// Google Business Console merchant id, for the Google Pay button the Android
@@ -306,6 +629,8 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
   ///
   /// iOS only. Android has no Apple Pay, so it accepts and ignores this.
   var applePayMerchantId: String? = nil
+  /// How the sheet looks. Honoured on both platforms.
+  var appearance: PcAppearance? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -315,13 +640,15 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
     let testCardPrefill: PcTestCardPrefill? = nilOrValue(pigeonVar_list[2])
     let googlePayMerchantId: String? = nilOrValue(pigeonVar_list[3])
     let applePayMerchantId: String? = nilOrValue(pigeonVar_list[4])
+    let appearance: PcAppearance? = nilOrValue(pigeonVar_list[5])
 
     return PcConfiguration(
       environment: environment,
       brandColorArgb: brandColorArgb,
       testCardPrefill: testCardPrefill,
       googlePayMerchantId: googlePayMerchantId,
-      applePayMerchantId: applePayMerchantId
+      applePayMerchantId: applePayMerchantId,
+      appearance: appearance
     )
   }
   func toList() -> [Any?] {
@@ -331,13 +658,14 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
       testCardPrefill,
       googlePayMerchantId,
       applePayMerchantId,
+      appearance,
     ]
   }
   static func == (lhs: PcConfiguration, rhs: PcConfiguration) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return PayCrossApiPigeonInternal.deepEquals(lhs.environment, rhs.environment) && PayCrossApiPigeonInternal.deepEquals(lhs.brandColorArgb, rhs.brandColorArgb) && PayCrossApiPigeonInternal.deepEquals(lhs.testCardPrefill, rhs.testCardPrefill) && PayCrossApiPigeonInternal.deepEquals(lhs.googlePayMerchantId, rhs.googlePayMerchantId) && PayCrossApiPigeonInternal.deepEquals(lhs.applePayMerchantId, rhs.applePayMerchantId)
+    return PayCrossApiPigeonInternal.deepEquals(lhs.environment, rhs.environment) && PayCrossApiPigeonInternal.deepEquals(lhs.brandColorArgb, rhs.brandColorArgb) && PayCrossApiPigeonInternal.deepEquals(lhs.testCardPrefill, rhs.testCardPrefill) && PayCrossApiPigeonInternal.deepEquals(lhs.googlePayMerchantId, rhs.googlePayMerchantId) && PayCrossApiPigeonInternal.deepEquals(lhs.applePayMerchantId, rhs.applePayMerchantId) && PayCrossApiPigeonInternal.deepEquals(lhs.appearance, rhs.appearance)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -347,10 +675,11 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
     PayCrossApiPigeonInternal.deepHash(value: testCardPrefill, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: googlePayMerchantId, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: applePayMerchantId, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: appearance, hasher: &hasher)
   }
 
   public var description: String {
-    return "PcConfiguration(environment: \(String(describing: environment)), brandColorArgb: \(String(describing: brandColorArgb)), testCardPrefill: \(String(describing: testCardPrefill)), googlePayMerchantId: \(String(describing: googlePayMerchantId)), applePayMerchantId: \(String(describing: applePayMerchantId)))"
+    return "PcConfiguration(environment: \(String(describing: environment)), brandColorArgb: \(String(describing: brandColorArgb)), testCardPrefill: \(String(describing: testCardPrefill)), googlePayMerchantId: \(String(describing: googlePayMerchantId)), applePayMerchantId: \(String(describing: applePayMerchantId)), appearance: \(String(describing: appearance)))"
   }
 }
 
@@ -667,20 +996,36 @@ private class PayCrossApiPigeonCodecReader: FlutterStandardReader {
       }
       return nil
     case 130:
-      return PcTestCardPrefill.fromList(self.readValue() as! [Any?])
+      let enumResultAsInt: Int? = nilOrValue(self.readValue() as! Int?)
+      if let enumResultAsInt = enumResultAsInt {
+        return PcThemeMode(rawValue: enumResultAsInt)
+      }
+      return nil
     case 131:
-      return PcConfiguration.fromList(self.readValue() as! [Any?])
+      return PcTestCardPrefill.fromList(self.readValue() as! [Any?])
     case 132:
-      return PcVersionInfo.fromList(self.readValue() as! [Any?])
+      return PcColors.fromList(self.readValue() as! [Any?])
     case 133:
-      return PcAmount.fromList(self.readValue() as! [Any?])
+      return PcShapes.fromList(self.readValue() as! [Any?])
     case 134:
-      return PcSuccess.fromList(self.readValue() as! [Any?])
+      return PcPrimaryButton.fromList(self.readValue() as! [Any?])
     case 135:
-      return PcFailure.fromList(self.readValue() as! [Any?])
+      return PcTypography.fromList(self.readValue() as! [Any?])
     case 136:
-      return PcCancelled.fromList(self.readValue() as! [Any?])
+      return PcAppearance.fromList(self.readValue() as! [Any?])
     case 137:
+      return PcConfiguration.fromList(self.readValue() as! [Any?])
+    case 138:
+      return PcVersionInfo.fromList(self.readValue() as! [Any?])
+    case 139:
+      return PcAmount.fromList(self.readValue() as! [Any?])
+    case 140:
+      return PcSuccess.fromList(self.readValue() as! [Any?])
+    case 141:
+      return PcFailure.fromList(self.readValue() as! [Any?])
+    case 142:
+      return PcCancelled.fromList(self.readValue() as! [Any?])
+    case 143:
       return PcPending.fromList(self.readValue() as! [Any?])
     default:
       return super.readValue(ofType: type)
@@ -693,29 +1038,47 @@ private class PayCrossApiPigeonCodecWriter: FlutterStandardWriter {
     if let value = value as? PcEnvironment {
       super.writeByte(129)
       super.writeValue(value.rawValue)
-    } else if let value = value as? PcTestCardPrefill {
+    } else if let value = value as? PcThemeMode {
       super.writeByte(130)
-      super.writeValue(value.toList())
-    } else if let value = value as? PcConfiguration {
+      super.writeValue(value.rawValue)
+    } else if let value = value as? PcTestCardPrefill {
       super.writeByte(131)
       super.writeValue(value.toList())
-    } else if let value = value as? PcVersionInfo {
+    } else if let value = value as? PcColors {
       super.writeByte(132)
       super.writeValue(value.toList())
-    } else if let value = value as? PcAmount {
+    } else if let value = value as? PcShapes {
       super.writeByte(133)
       super.writeValue(value.toList())
-    } else if let value = value as? PcSuccess {
+    } else if let value = value as? PcPrimaryButton {
       super.writeByte(134)
       super.writeValue(value.toList())
-    } else if let value = value as? PcFailure {
+    } else if let value = value as? PcTypography {
       super.writeByte(135)
       super.writeValue(value.toList())
-    } else if let value = value as? PcCancelled {
+    } else if let value = value as? PcAppearance {
       super.writeByte(136)
       super.writeValue(value.toList())
-    } else if let value = value as? PcPending {
+    } else if let value = value as? PcConfiguration {
       super.writeByte(137)
+      super.writeValue(value.toList())
+    } else if let value = value as? PcVersionInfo {
+      super.writeByte(138)
+      super.writeValue(value.toList())
+    } else if let value = value as? PcAmount {
+      super.writeByte(139)
+      super.writeValue(value.toList())
+    } else if let value = value as? PcSuccess {
+      super.writeByte(140)
+      super.writeValue(value.toList())
+    } else if let value = value as? PcFailure {
+      super.writeByte(141)
+      super.writeValue(value.toList())
+    } else if let value = value as? PcCancelled {
+      super.writeByte(142)
+      super.writeValue(value.toList())
+    } else if let value = value as? PcPending {
+      super.writeByte(143)
       super.writeValue(value.toList())
     } else {
       super.writeValue(value)

@@ -1,3 +1,51 @@
+## Unreleased
+
+Additive in Dart. No existing call needs a change, and one parameter is
+deprecated rather than removed.
+
+* `PayCross.configure` takes a `PayCrossAppearance`, and it themes the native
+  sheets on **both** platforms. It carries a `PayCrossColors` palette for light
+  and one for dark — `brand`, `onBrand`, `surface`, `component`,
+  `componentBorder`, `text`, `textSecondary`, `placeholder`, `icon`, `error` —
+  a `PayCrossThemeMode` that pins the sheet to light or dark or follows the
+  device, `PayCrossShapes` for corner radii and border width, a
+  `PayCrossPrimaryButton` for the Pay button's colours, radius and height, and
+  `PayCrossTypography` for a font scale. Every role is nullable, and null means
+  "take the next source" rather than black.
+* Colours resolve per role: what you set, then the brand colour set on the
+  merchant account in the PayCross back office, then the platform default. The
+  back-office colour arrives with the session, so **it themes both sheets with
+  no code at all**. `onBrand` left null is derived from the brand's own
+  luminance, so a light brand cannot end up with an unreadable white label.
+* `PayCrossAppearance.brand(color)` sets one colour in both modes and leaves
+  everything else alone.
+* `brandColorArgb` is **deprecated** in favour of
+  `appearance: PayCrossAppearance.brand(color)`. It still works, and it now
+  applies on iOS as well as Android — the iOS SDK had no brand-colour hook when
+  it was added, and now has one. When both are given the appearance wins and
+  the brand colour is not sent.
+* `PayCrossErrorCode.invalidAppearance` is a new code. `configure` throws it,
+  before anything reaches a native SDK, for a `sizeScaleFactor` outside 0.8–1.3
+  or a negative or non-finite radius, border width or height. Both native SDKs
+  clamp the scale instead, for callers that reach them directly; this package
+  refuses, because a merchant who asked for 3.0 wanted something no sheet will
+  draw.
+* Layout, the card inputs' internals, the wallet buttons' colours and labels,
+  the 3-D Secure page and the error copy are fixed by design and no appearance
+  field reaches them. The wallet buttons' corner radius follows
+  `shapes.buttonCornerRadius`, and that is the only property of theirs this SDK
+  sets. A font family is not exposed in this release.
+* Requires the native Android SDK at paycross-android 0.7.0, up from 0.6.0, and
+  the native iOS SDK at PayCross 0.6.0, up from 0.5.0. Both add the appearance
+  model above and both fix a live defect with it: Android's Google Pay button
+  used a dark theme whatever the sheet's mode was, which is the wrong variant
+  on a dark surface, and its sheet text is readable in dark mode; iOS's Pay
+  button drew its label and spinner in white whatever the brand colour was, so
+  a light brand made it unreadable.
+* The example app has an "Appearance" tile that runs an ordinary payment with a
+  brand colour and the sheet pinned to dark, and puts the SDK back as it was
+  when the run ends.
+
 ## 0.5.0
 
 Additive in Dart. No existing call or `switch` needs a change.

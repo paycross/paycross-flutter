@@ -26,6 +26,17 @@ enum PayCrossErrorCode {
   /// anyway, so accepting it here would silently do nothing.
   testPrefillInProduction,
 
+  /// `PayCross.configure` was given a `PayCrossAppearance` holding a value no
+  /// sheet can draw: a `sizeScaleFactor` outside 0.8-1.3, or a negative or
+  /// non-finite radius, border width or height.
+  ///
+  /// Raised in Dart, before anything crosses to the native side. Both native
+  /// SDKs clamp the scale instead, for callers that reach them directly, and a
+  /// clamp is a silent correction: a merchant who asked for 3.0 wanted
+  /// something the sheet will never draw, and is better told than quietly
+  /// given 1.3.
+  invalidAppearance,
+
   /// A payment is already in flight. One at a time, per process.
   busy,
 
