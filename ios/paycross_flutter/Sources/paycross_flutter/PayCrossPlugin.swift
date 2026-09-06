@@ -162,11 +162,8 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
                 ?? configuration.brandColorArgb.map {
                     .brand(PayCrossColor(argb: UInt32(truncatingIfNeeded: $0)))
                 },
-            // Straight through, unresolved and unvalidated. The SDK matches it
-            // against the languages it ships, falls through to the session's
-            // locale and then the device when it names none of them, and skips
-            // a malformed tag outright, so anything done to it here would be a
-            // second answer to a question already answered.
+            // Straight through. The SDK owns the resolution ladder and skips a
+            // malformed tag; see its LOCALIZATION.md.
             locale: configuration.locale
         )
         // googlePayMerchantId is deliberately ignored: Google Pay's in-app API is

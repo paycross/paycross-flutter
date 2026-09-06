@@ -247,11 +247,8 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
             // so there is no Android wallet for it to configure. iOS forwards it
             // to the native SDK's applePayMerchantIdentifier.
             appearance = configuration.appearance?.toNative(),
-            // Straight through, unresolved and unvalidated. The SDK matches it
-            // against the languages it ships, falls through to the session's
-            // locale and then the device when it names none of them, and skips
-            // a malformed tag outright - so anything this plugin did to it here
-            // would be a second answer to a question already answered.
+            // Straight through. The SDK owns the resolution ladder and skips a
+            // malformed tag; see its LOCALIZATION.md.
             locale = configuration.locale
         )
     }

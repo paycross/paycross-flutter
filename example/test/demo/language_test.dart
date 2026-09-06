@@ -1,5 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/language.dart';
+
+/// A backend whose read never answers.
+///
+/// The failure this store actually has. `SharedPreferences` with no platform
+/// behind it does not throw, it goes quiet, which is what `preset_store.dart`
+/// and `history.dart` both bound their own writes against.
+class _NeverAnsweringBackend implements LanguageBackend {
+  final Completer<String?> gate = Completer<String?>();
+
+  @override
+  Future<String?> read() => gate.future;
+
+  @override
+  Future<void> write(String value) async {}
+}
 
 /// A backend whose reads and writes throw, standing in for a device whose
 /// preference store is unavailable.
@@ -67,6 +84,29 @@ void main() {
       final store = LanguageStore(backend: _ThrowingBackend());
 
       expect(await store.read(), DemoLanguage.system);
+    });
+
+    /// Silence is this store's real failure, and it is deliberately not
+    /// bounded here: the bound lives in `main`, which is the caller that
+    /// cannot afford to wait, and `main_test` pins it. A timer armed on every
+    /// read would outlive every widget test that opens Settings.
+    testWidgets('a store that goes quiet is left waiting, not answered', (
+      tester,
+    ) async {
+      final store = LanguageStore(backend: _NeverAnsweringBackend());
+
+      DemoLanguage? answer;
+      unawaited(store.read().then((language) => answer = language));
+      await tester.pump(const Duration(seconds: 30));
+
+      expect(answer, isNull);
+    });
+
+    /// Public for the reason `PresetStore`'s keys are: changing it silently
+    /// resets every colleague's choice, and nothing else in the app would
+    /// notice.
+    test('the storage key is the one already written to', () {
+      expect(languageKey, 'paycross_demo_language');
     });
 
     /// A failed write is reported rather than swallowed: the screen that

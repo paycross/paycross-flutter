@@ -817,6 +817,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 : (chosen) => _chooseLanguage(chosen.single),
           ),
           const SizedBox(height: 8),
+          // The reason travels with the control, like the credential buttons'
+          // "Reading saved credentials…" and the Live gate's hint: a dead
+          // control with nothing attached is a dead end, and to a screen
+          // reader the note below is a separate node rather than an
+          // explanation. Gone the moment the read lands, whatever it found,
+          // so it is not noise on every later swipe.
+          if (!_languageLoaded)
+            const Text(
+              key: ValueKey('languageLoading'),
+              'Reading the saved language…',
+            ),
           const Text(
             key: ValueKey('languageNote'),
             'The language the native payment sheet draws in. System sets no '

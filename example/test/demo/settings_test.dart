@@ -1912,6 +1912,24 @@ void main() {
         find.byKey(const ValueKey('languageToggle')),
       );
       expect(toggle.onSelectionChanged, isNull);
+      // And it says why. A dimmed control with nothing attached is the dead
+      // end the Live gate's own hint exists to avoid.
+      expect(find.byKey(const ValueKey('languageLoading')), findsOneWidget);
+    });
+
+    /// The reason goes away with the condition it describes, like
+    /// "Reading saved credentials…" above it. A note that outlives the wait
+    /// is noise on every later swipe.
+    testWidgets('the reason it was dead goes away once the read lands', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+      await _revealLanguageToggle(tester);
+
+      expect(find.byKey(const ValueKey('languageLoading')), findsNothing);
     });
 
     /// A choice that was not written will not survive the next launch, which

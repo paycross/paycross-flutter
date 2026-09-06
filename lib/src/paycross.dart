@@ -81,9 +81,10 @@ abstract final class PayCross {
   /// falls through to the next rather than ending the ladder.
   ///
   /// The amount is not clamped to those two languages: it is formatted with
-  /// the first locale anyone actually named, region intact, so a German
+  /// the first *well-formed* locale anyone named, region intact, so a German
   /// shopper reads an English sheet over an amount written the way they
-  /// expect.
+  /// expect. A malformed tag is passed over for the amount too, so a typo
+  /// cannot both pick the wrong language and misprint the price.
   ///
   /// The string crosses exactly as it is written. This package does not
   /// resolve it, validate it, lower-case it or turn `_` into `-`, because

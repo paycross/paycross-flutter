@@ -13,8 +13,10 @@ Additive in Dart. No existing call needs a change.
   matches nothing falls through to the next rather than ending the ladder. Null
   is that first rung left empty, not a request for English.
 * The **amount** is not clamped to those two languages. It is formatted with
-  the first locale anyone named, region intact, so a German shopper reads an
-  English sheet over an amount written the way they expect.
+  the first *well-formed* locale anyone named, region intact, so a German
+  shopper reads an English sheet over an amount written the way they expect. A
+  malformed tag is passed over for the amount as well as for the words, so a
+  typo cannot both pick the wrong language and misprint the price.
 * This package passes the tag across exactly as written. It does not resolve,
   validate or normalise it: both native SDKs already do, and they skip a
   malformed tag rather than throwing on it, so nothing passed here can fail a

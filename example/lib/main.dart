@@ -47,6 +47,15 @@ SecretStore mainSecretStore = const SecretStore();
 @visibleForTesting
 LanguageStore mainLanguageStore = const LanguageStore();
 
+/// How long either launch read gets before the app starts without it.
+///
+/// Both reads block the first frame, and both cross a platform channel that
+/// can go quiet rather than throw — which is the failure `preset_store.dart`
+/// and `history.dart` bound their own writes against. Five seconds is the
+/// bound they chose, and one number for both reads here so that a store which
+/// stalls costs the same wherever it is.
+const Duration _launchReadTimeout = Duration(seconds: 5);
+
 /// Runs a real payment against sandbox with no backend of your own.
 ///
 /// Under `--dart-define=PAYCROSS_E2E=true` this awaits exactly one thing and
@@ -101,7 +110,9 @@ Future<void> main() async {
 /// because an exception here would kill the app before `runApp`.
 Future<String?> _storedGooglePayMerchantId() async {
   try {
-    return (await mainSecretStore.read())?.googlePayMerchantId;
+    return (await mainSecretStore.read().timeout(
+      _launchReadTimeout,
+    ))?.googlePayMerchantId;
   } catch (_) {
     return null;
   }
@@ -115,7 +126,16 @@ Future<String?> _storedGooglePayMerchantId() async {
 /// [DemoLanguage.system] on any failure, and it is the guard because that is
 /// the one place that knows an unreadable store and an unset one mean the
 /// same thing here.
-Future<String?> _storedLocale() async => (await mainLanguageStore.read()).tag;
+///
+/// The bound is here rather than in the store, because it is this caller that
+/// cannot afford silence: the Settings screen reads the same store and only
+/// leaves its toggle disabled, and a timer armed on every mount of that
+/// screen would outlive every widget test that opens it.
+Future<String?> _storedLocale() async =>
+    (await mainLanguageStore.read().timeout(
+      _launchReadTimeout,
+      onTimeout: () => DemoLanguage.system,
+    )).tag;
 
 class ExampleApp extends StatelessWidget {
   const ExampleApp({

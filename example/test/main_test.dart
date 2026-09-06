@@ -69,6 +69,36 @@ class _SlowBackend implements SecretBackend {
   Future<void> delete(String key) async {}
 }
 
+/// A secret backend whose reads never answer.
+///
+/// Not the same failure as [_ThrowingBackend]: a platform channel with
+/// nothing behind it goes quiet rather than throwing, and `main` awaits this
+/// read before `runApp`, so silence is a black screen where an exception is
+/// only a missing merchant id.
+class _NeverAnsweringSecretBackend implements SecretBackend {
+  final Completer<String?> gate = Completer<String?>();
+
+  @override
+  Future<String?> read(String key) => gate.future;
+
+  @override
+  Future<void> write(String key, String value) async {}
+
+  @override
+  Future<void> delete(String key) async {}
+}
+
+/// The same silence, for the language store.
+class _NeverAnsweringLanguageBackend implements LanguageBackend {
+  final Completer<String?> gate = Completer<String?>();
+
+  @override
+  Future<String?> read() => gate.future;
+
+  @override
+  Future<void> write(String value) async {}
+}
+
 /// A language backend whose reads throw, standing in for a device whose
 /// preference store is unavailable at launch.
 class _ThrowingLanguageBackend implements LanguageBackend {
@@ -207,6 +237,32 @@ void main() {
     await tester.pump();
 
     expect(host.lastConfiguration, isNotNull);
+    expect(host.lastConfiguration?.locale, isNull);
+  });
+
+  /// The failure both launch reads actually have. Neither store throws when
+  /// the platform is not there; both go quiet, and `main` awaits them before
+  /// `runApp` — so without a bound this is a launch that never draws a frame.
+  /// Both bounds are five seconds, the one `preset_store.dart` and
+  /// `history.dart` already use.
+  testWidgets('two stores that go quiet do not stall the launch', (
+    tester,
+  ) async {
+    app.mainSecretStore = SecretStore(backend: _NeverAnsweringSecretBackend());
+    app.mainLanguageStore = LanguageStore(
+      backend: _NeverAnsweringLanguageBackend(),
+    );
+
+    var launched = false;
+    unawaited(app.main().then((_) => launched = true));
+    // Past both bounds, in this test's own fake clock. They run one after the
+    // other, so the launch needs more than one of them to get through.
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+
+    expect(launched, isTrue);
+    expect(host.lastConfiguration, isNotNull);
+    expect(host.lastConfiguration?.googlePayMerchantId, isNull);
     expect(host.lastConfiguration?.locale, isNull);
   });
 

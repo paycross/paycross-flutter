@@ -4,7 +4,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// Plain `SharedPreferences`, like History and the presets: a language is not
 /// a secret, and the secure store is slower and smaller.
-const String _languageKey = 'paycross_demo_language';
+///
+/// Public, for the reason `PresetStore` makes its own keys public: changing it
+/// silently resets every colleague's choice, and a rule that matters that much
+/// is worth being able to assert on directly.
+const String languageKey = 'paycross_demo_language';
 
 /// Which language the native payment sheet is pinned to.
 ///
@@ -52,11 +56,11 @@ class SharedPreferencesLanguageBackend implements LanguageBackend {
 
   @override
   Future<String?> read() async =>
-      (await SharedPreferences.getInstance()).getString(_languageKey);
+      (await SharedPreferences.getInstance()).getString(languageKey);
 
   @override
   Future<void> write(String value) async =>
-      (await SharedPreferences.getInstance()).setString(_languageKey, value);
+      (await SharedPreferences.getInstance()).setString(languageKey, value);
 }
 
 /// A [LanguageBackend] in a field. Tests only.
@@ -84,8 +88,19 @@ class LanguageStore {
 
   /// The stored choice, or [DemoLanguage.system].
   ///
-  /// Guarded, because `main` awaits this before `runApp`: a store that is
-  /// unavailable should cost the sheet its override, not the app its launch.
+  /// Guarded, so an unreadable store costs the sheet its override rather than
+  /// throwing at whoever asked.
+  ///
+  /// **Not bounded here**, and that is deliberate. This store's real failure
+  /// is silence rather than an exception — a platform store with nothing
+  /// behind it does not fail, it never answers, which is what
+  /// `preset_store.dart` and `history.dart` both bound their writes against —
+  /// but silence costs different things to different callers. `main` awaits
+  /// this before `runApp`, so there it is a launch that never draws and the
+  /// bound lives at that call site. The Settings screen only leaves its
+  /// toggle disabled, which is visible and harmless, and a timer armed on
+  /// every mount of that screen would outlive every widget test that opens
+  /// it.
   Future<DemoLanguage> read() async {
     try {
       return DemoLanguage.fromName(await _backend.read());

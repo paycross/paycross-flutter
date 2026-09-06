@@ -290,9 +290,11 @@ falls through to the next rather than ending the ladder. So `locale: 'de'` over
 a French session still draws French.
 
 The **amount** is not clamped to those two languages. It is formatted with the
-first locale anyone named, region intact, so a German shopper reads an English
-sheet over a `12,34 €` amount rather than losing their own number formatting to
-a language the SDKs have no words for.
+first *well-formed* locale anyone named, region intact, so a German shopper
+reads an English sheet over a `12,34 €` amount rather than losing their own
+number formatting to a language the SDKs have no words for. A malformed tag is
+passed over for the amount as well as for the words, so a typo cannot both pick
+the wrong language and misprint the price.
 
 This package passes the tag across exactly as you write it. It does not
 resolve, validate or normalise it, because both native SDKs already do all of
@@ -306,6 +308,17 @@ Every string each sheet draws is overridable in your own app, and the two
 [Android](https://github.com/paycross/payment-android-sdk/blob/main/LOCALIZATION.md),
 [iOS](https://github.com/paycross/payment-ios-sdk/blob/main/LOCALIZATION.md).
 
+**Setting `locale` does not turn those overrides off.** The two answer
+different questions: the locale picks which language the sheet is in, and your
+own string still beats ours inside it.
+
+**But `locale` can only name a language the SDKs ship.** It is matched against
+`en` and `fr` like every other candidate, so `locale: 'de'` will not reach
+strings you wrote for a third language — it falls through to the session's
+locale, then the device, then English. Your German strings are still used when
+the device or the session selects German, because the sheet resolves to German
+then and your resource wins inside it.
+
 ## Test identifiers
 
 Every element the sheets draw carries a stable identifier, and **it is the same
@@ -316,7 +329,7 @@ on. The full tables are in the native READMEs:
 [Android](https://github.com/paycross/payment-android-sdk#test-identifiers),
 [iOS](https://github.com/paycross/payment-ios-sdk#test-identifiers).
 
-Two things to know before you write the selectors:
+Four things to know before you write the selectors:
 
 - **On Android they are a debug-build contract.** The identifiers reach a
   UiAutomator or Espresso tree only when the host app is debuggable; a release
@@ -332,6 +345,18 @@ Two things to know before you write the selectors:
   and `paycross.cancel`. The Android sheet has no close control of its own — it
   is cancelled with the system back gesture — so from an Android test, press
   back and then use `paycross.cancelConfirm`.
+- **`paycross.walletButton` cannot be tapped by id on Android.** It sits on the
+  wrapper the SDK owns, not on Google's own button inside it, and Google's
+  button renders its own label in its own language. Assert its presence by id
+  and tap it by its rendered label.
+- **A field's group and name must contain no dot and no space.** They are
+  joined with dots to build `paycross.field.<group>.<name>`, nothing escapes
+  the separator, and a space would put a space in an Android resource id. Both
+  come from the session, so choose them without either in the back office.
+
+The native READMEs carry the rest, including the field-error node, which sits
+inside its field's merged accessibility node and needs `useUnmergedTree` on
+Android.
 
 ## Appearance
 
