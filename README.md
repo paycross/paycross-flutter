@@ -265,8 +265,8 @@ button appears and the payment settles.
 
 ## Languages
 
-The native payment sheets ship English and French. The demo app's own screens
-and yours are untouched by this: it is the sheet's language only.
+The native payment sheets ship English and French. Your app's own screens are
+untouched: this sets the sheet's language and nothing else.
 
 | Language | Tag |
 |---|---|
