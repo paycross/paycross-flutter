@@ -1,4 +1,4 @@
-## Unreleased
+## 0.6.0
 
 Additive in Dart. No existing call needs a change, and one parameter is
 deprecated rather than removed.
