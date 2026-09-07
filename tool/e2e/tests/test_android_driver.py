@@ -939,6 +939,43 @@ def test_wait_rearmed_gives_up_and_says_so():
     assert driver(shell).wait_rearmed("€10.00", timeout=0, interval=0) is False
 
 
+def test_wait_rearmed_blames_the_rig_for_an_amount_it_cannot_spell():
+    """The Android half of the rule the two drivers now share.
+
+    A French sheet reads `10,00 €` where the runner computes `€10.00`, and
+    answering False there would report "the sheet never re-armed" about a sheet
+    that plainly had -- the rig fault the removed locale guard used to prevent
+    by refusing to run at all.
+    """
+    rearmed = (FIXTURES / "android-rearmed.uix").read_text()
+    french = rearmed.replace('text="€10.00"', 'text="10,00 €"', 1)
+    assert french != rearmed
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(FakeShell(tree=french)).wait_rearmed("€10.00", timeout=0, interval=0)
+
+    message = str(excinfo.value)
+    assert "10,00" in message
+    assert "the rig, not the SDK" in message
+    # The rule lives on the base driver; the noun is this platform's half of
+    # it, and it is what a shared helper can silently lose.
+    assert "the device is not drawing" in message
+    assert android.AndroidDriver.device_noun == "device"
+
+
+def test_wait_rearmed_still_answers_false_for_a_sheet_that_did_not_re_arm():
+    # The distinction the message above rests on: a cell that really measured
+    # "no re-arm" has a verdict to report and must not be handed a rig fault.
+    rearmed = (FIXTURES / "android-rearmed.uix").read_text()
+    no_banner = rearmed.replace('resource-id="paycross.errorBanner"', 'resource-id="x"')
+    assert no_banner != rearmed
+
+    assert (
+        driver(FakeShell(tree=no_banner)).wait_rearmed("€10.00", timeout=0, interval=0)
+        is False
+    )
+
+
 def test_wait_label_returns_the_contract_label():
     tree_xml = (FIXTURES / "android-result.uix").read_text()
     shell = FakeShell("", tree_xml)
@@ -1795,8 +1832,8 @@ def test_launch_refuses_a_device_left_not_keeping_activities():
 def test_launch_refuses_a_device_a_previous_cell_left_turned():
     # Measured on the D3 probe: a cell that rotated once left the device
     # turned, and the next cell failed looking for a button that was off
-    # screen. Without this the message is "no element named ... within 60s",
-    # which reads as an SDK finding.
+    # screen. Without this the cell fails naming that button, which reads as an
+    # SDK finding rather than as the rig fault it is.
     shell = FakeShell("1\n", "0\n", "0\n", "0\n", "1\n")
 
     with pytest.raises(DriverError) as excinfo:

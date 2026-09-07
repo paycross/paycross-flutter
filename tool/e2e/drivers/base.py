@@ -88,6 +88,11 @@ def device_text(raw: bytes) -> str:
 
 
 class Driver(ABC):
+    #: What this platform's rig is called in a message about it. Only
+    #: `_blame_the_amount` reads it, and only so the sentence it raises names
+    #: the thing the reader has to go and look at.
+    device_noun = "device"
+
     def __init__(self, *, package: str, sleep: Callable[[float], None]):
         #: What `verify.crash_lines` matches `ANR in <package>` against. Log
         #: capture does not use it -- that is deliberately device-wide,
@@ -223,6 +228,29 @@ class Driver(ABC):
     @abstractmethod
     def cancel_form(self) -> None:
         """Abandons the sheet from the card form, confirming the prompt."""
+
+    def _blame_the_amount(self, amount_text: str) -> None:
+        """Raises when a re-arm failed only because the amount is spelled elsewise.
+
+        The guard this replaces refused to launch on any locale but English,
+        because the Pay button's rendered text was the driver's only handle.
+        Nothing renders a handle any more -- but the amount is still computed
+        in one region's spelling, so a French device turns a re-arm that
+        happened into a cell reporting that it did not. That is a rig fault
+        reading as an SDK finding, and this is where it gets named instead.
+
+        Here rather than on each driver because it is one rule: both call it
+        from `wait_rearmed` the moment the poll gives up, and the only thing
+        that differed between the two copies was the word for the device.
+        """
+        showing = tree.rearm_amount_mismatch(self._nodes(tolerate=True), amount_text)
+        if showing is not None:
+            raise DriverError(
+                f"the sheet re-armed showing {showing!r} where this cell expects "
+                f"{amount_text!r}: the {self.device_noun} is not drawing amounts "
+                "in the spelling `tree.format_amount_en_us` computes, so the "
+                "re-arm check cannot answer. This is the rig, not the SDK."
+            )
 
     @abstractmethod
     def wait_rearmed(self, amount_text: str, timeout: float) -> bool:
