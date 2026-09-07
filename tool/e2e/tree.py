@@ -143,11 +143,18 @@ def parse_wda(xml: str | bytes) -> list[Node]:
 
 
 def find_text_exact(nodes: list[Node], text: str) -> list[Node]:
-    """Exact match on `text`, which is what separates the Android Pay button.
+    """Exact match on `text`, for the things that publish no identifier.
 
-    The header renders a bare `€10.00` node and the Google Pay row carries
-    `content-desc="Pay with GPay"`, so a substring or all-attribute match hits
-    three nodes where one is meant.
+    What is left on this matcher is the sandbox challenge page's outcome
+    buttons and the example app's own widgets -- neither is drawn by an SDK, so
+    neither has a `paycross.*` name to reach instead. The sheet's Pay button
+    was the reason this was exact, and is matched by identifier now.
+
+    Still exact rather than a substring, and the challenge page is why: it
+    renders a button per outcome, and `timeout` is inside
+    `authentication_timeout`. A substring match asked for the first would find
+    both and tap whichever came first in the tree, which is a cell measuring an
+    outcome it did not ask for.
     """
     return [n for n in nodes if n.text == text]
 
@@ -284,8 +291,8 @@ def sheet_rearmed(nodes: list[Node], amount_text: str) -> bool:
 def rearm_amount_mismatch(nodes: list[Node], amount_text: str) -> str | None:
     """What the sheet's amount reads, when that is the only thing that failed.
 
-    Answers None whenever there is nothing to explain: no banner, no Pay
-    button, no amount node, or an amount that agrees.
+    Answers None whenever there is nothing to explain: no failure banner, no
+    amount node, or an amount that agrees.
 
     This exists because of what the drivers stopped doing. Both used to refuse
     to launch against a device that was not in English, since the Pay button
