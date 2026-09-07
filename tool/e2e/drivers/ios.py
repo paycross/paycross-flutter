@@ -243,6 +243,24 @@ _EXCERPT = 200
 _DEVICE_STATE = re.compile(r"\(([^()]+)\)\s*$")
 
 
+def _is_pay_button(node: tree.Node) -> bool:
+    """The Pay button, by its own name where the SDK publishes one.
+
+    On PayCross 0.7.0 it does not: the button answers to `paycross.sheet`, for
+    the reason written at that constant. So the second branch takes the one
+    element that can only be the Pay button -- a `Button` carrying the sheet's
+    identifier, which the sheet's own container, a `ScrollView`, is not.
+
+    Temporary, and it removes itself: the moment the SDK sets
+    `paycross.payButton` on that button the first branch matches and the second
+    is never reached. It is here because without it no iOS cell runs at all --
+    `paste_token`, `tap_pay` and `dismiss_cancel` all need this element.
+    """
+    if node.identifier == PAY_BUTTON:
+        return True
+    return node.identifier == SHEET and node.type == "Button"
+
+
 def _is_token_field(node: tree.Node) -> bool:
     """The example's token field, in both shapes its accessible name takes.
 
@@ -1387,12 +1405,7 @@ class IosDriver(Driver):
         element, and every one of them would time out.
         """
 
-        def is_pay_button(node: tree.Node) -> bool:
-            if node.identifier == PAY_BUTTON:
-                return True
-            return node.identifier == SHEET and node.type == "Button"
-
-        return self._find(PAY_BUTTON, timeout=timeout, match=is_pay_button)
+        return self._find(PAY_BUTTON, timeout=timeout, match=_is_pay_button)
 
     def wait_label(
         self,
@@ -1782,7 +1795,7 @@ class IosDriver(Driver):
         self._sleep(ALERT_SETTLE_SECONDS)
         self.tap_identifier(CANCEL_CONFIRM, timeout=30, identifier_only=True)
 
-    def dismiss_cancel(self) -> None:
+    def dismiss_cancel(self, *, timeout: float = 30) -> None:
         """Raises the cancel dialog, backs out of it, and proves the form is back.
 
         The path a shopper takes when they nearly abandoned the payment and
@@ -1790,16 +1803,28 @@ class IosDriver(Driver):
         no cell ever pressed: `cancel_form` and `cancel_challenge` both confirm,
         so `paycross.cancelDismiss` was shipped untested from this side.
 
-        `cancelDialog` is checked before the dismissal and `payButton` after
-        it, because "the dialog opened" and "the sheet came back" are two
-        different claims and only the second says the cell can carry on paying.
+        `cancelDialog` is checked before the dismissal, and afterwards the
+        dialog has to be GONE as well as the Pay button present. Here the
+        second half proves nothing on its own: the confirmation is drawn inside
+        the sheet rather than raised as an alert, so the Pay button is in the
+        source the whole time it is up. Android's dialog is its own window and
+        has the opposite asymmetry, which is why both drivers ask for both.
         """
-        self.tap_identifier(SHEET_CANCEL, timeout=30, identifier_only=True)
+        self.tap_identifier(SHEET_CANCEL, timeout=timeout, identifier_only=True)
         self._sleep(ALERT_SETTLE_SECONDS)
-        self._find(CANCEL_DIALOG, timeout=30, identifier_only=True)
-        self.tap_identifier(CANCEL_DISMISS, timeout=30, identifier_only=True)
+        self._find(CANCEL_DIALOG, timeout=timeout, identifier_only=True)
+        self.tap_identifier(CANCEL_DISMISS, timeout=timeout, identifier_only=True)
         self._sleep(ALERT_SETTLE_SECONDS)
-        self._pay_button()
+
+        def back(nodes: list[tree.Node]) -> bool | None:
+            gone = not self._matches_in(nodes, CANCEL_DIALOG, True)
+            return True if gone and any(map(_is_pay_button, nodes)) else None
+
+        if self._poll(back, timeout, POLL_INTERVAL_SECONDS) is None:
+            raise DriverError(
+                "the sheet did not come back after the cancel dialog was "
+                "dismissed; the cell cannot carry on paying"
+            )
 
     def wait_rearmed(
         self,

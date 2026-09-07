@@ -1964,6 +1964,89 @@ def test_cancel_form_taps_the_toolbar_cancel_then_confirms():
     assert all(kw["identifier_only"] is True for _, kw in taps)
 
 
+#: The cancel confirmation. Drawn INSIDE the sheet on iOS rather than raised as
+#: an alert, which is what lets it carry identifiers at all -- and which means
+#: the Pay button never leaves the source while it is up. That is why
+#: `dismiss_cancel` asks for the dialog to be gone rather than for the button
+#: to be back: on this platform only the first half means anything.
+CANCEL_DIALOG_NODES = (
+    '<XCUIElementTypeOther type="XCUIElementTypeOther" '
+    'name="paycross.cancelDialog" label="Cancel Payment?" enabled="true" '
+    'visible="true" x="40" y="300" width="322" height="200" index="80"/>'
+    '<XCUIElementTypeButton type="XCUIElementTypeButton" '
+    'name="paycross.cancelConfirm" label="Yes, Cancel" enabled="true" '
+    'visible="true" x="220" y="440" width="120" height="44" index="81"/>'
+    '<XCUIElementTypeButton type="XCUIElementTypeButton" '
+    'name="paycross.cancelDismiss" label="Continue Payment" enabled="true" '
+    'visible="true" x="60" y="440" width="120" height="44" index="82"/>'
+)
+
+WITH_CANCEL_DIALOG = SOURCE_XML.replace(
+    "</XCUIElementTypeOther>", CANCEL_DIALOG_NODES + "</XCUIElementTypeOther>", 1
+)
+assert WITH_CANCEL_DIALOG != SOURCE_XML
+
+
+class DismissFakeSsh(FakeSsh):
+    """The dialog up until Continue Payment is tapped, then the plain sheet.
+
+    `stays` keeps it up, which is the failure `dismiss_cancel` has to notice:
+    a dialog that did not close leaves a cell tapping Pay through an overlay.
+    """
+
+    def __init__(self, stays=False):
+        super().__init__()
+        self.stays = stays
+        self.taps = 0
+
+    def __call__(self, command, *, stdin=None):
+        if "/wda/tap" in command:
+            self.taps += 1
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            closed = self.taps >= 2 and not self.stays
+            return source_response(SOURCE_XML if closed else WITH_CANCEL_DIALOG)
+        return super().__call__(command, stdin=stdin)
+
+
+def test_dismiss_cancel_presses_the_button_no_cell_ever_pressed():
+    # `cancel_form` and `cancel_challenge` both confirm, so `cancelDismiss`
+    # shipped untested from this side.
+    ssh = DismissFakeSsh()
+    d = driver(ssh)
+    tapped = []
+    d.tap_identifier = lambda name, **kw: tapped.append(name) or setattr(
+        ssh, "taps", ssh.taps + 1
+    )
+
+    d.dismiss_cancel()
+
+    assert tapped == [ios.SHEET_CANCEL, ios.CANCEL_DISMISS]
+
+
+def test_dismiss_cancel_waits_for_the_dialog_to_go_not_for_the_pay_button():
+    """The Pay button is in the source the whole time the dialog is up.
+
+    SwiftUI draws this confirmation as an overlay inside the sheet, so asking
+    only that the button is back would answer yes before anything closed. This
+    fake keeps the dialog up, and the action has to notice.
+    """
+    ssh = DismissFakeSsh(stays=True)
+    d = driver(ssh)
+    d.tap_identifier = lambda name, **kw: setattr(ssh, "taps", ssh.taps + 1)
+
+    with pytest.raises(DriverError) as excinfo:
+        # Zero rather than the default: `_poll`'s deadline is real time while
+        # the injected sleep is not, so a test that means to reach it says so.
+        d.dismiss_cancel(timeout=0)
+
+    assert "did not come back" in str(excinfo.value)
+    # And the Pay button really was there throughout, which is what makes the
+    # assertion above about the dialog rather than about the button.
+    assert any(ios._is_pay_button(n) for n in tree.parse_wda(WITH_CANCEL_DIALOG))
+
+
 def test_cancel_form_reaches_the_toolbar_item_and_not_the_challenge_bar():
     # The end-to-end version of the assertion above, through the real finder.
     ssh = FakeSsh()

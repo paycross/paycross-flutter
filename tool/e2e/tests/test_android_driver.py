@@ -1282,12 +1282,14 @@ def test_dismiss_cancel_presses_the_other_button_and_waits_for_the_form():
 
 def test_dismiss_cancel_raises_when_the_sheet_does_not_come_back():
     # A dialog that closed onto nothing is not a form the cell can pay from.
-    shell = FakeShell(trees=[CANCEL_WINDOW, CANCEL_WINDOW, "<hierarchy></hierarchy>"])
+    shell = FakeShell(
+        trees=[CANCEL_WINDOW, CANCEL_WINDOW, "<hierarchy></hierarchy>"] * 2
+    )
 
     with pytest.raises(DriverError) as excinfo:
-        driver(shell).dismiss_cancel()
+        driver(shell).dismiss_cancel(timeout=0)
 
-    assert "the form after a dismissed cancel" in str(excinfo.value)
+    assert "did not come back" in str(excinfo.value)
 
 
 # -- present_token, tap_example_pay, enter_token -------------------------------

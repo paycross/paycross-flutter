@@ -1075,7 +1075,7 @@ class AndroidDriver(Driver):
         self._raise_cancel_dialog()
         self._tap_id(CANCEL_CONFIRM)
 
-    def dismiss_cancel(self) -> None:
+    def dismiss_cancel(self, *, timeout: float = 30) -> None:
         """Raises the cancel dialog, backs out of it, and proves the form is back.
 
         The path a shopper takes when they nearly abandoned the payment and
@@ -1083,19 +1083,29 @@ class AndroidDriver(Driver):
         no cell ever pressed: `cancel_form` and `cancel_challenge` both confirm,
         so `paycross.cancelDismiss` was shipped untested from this side.
 
-        The last check is not decoration. The dialog is its own window and a
-        dump taken while it is up holds only the dialog, so "the dialog closed"
-        and "the sheet came back" are two different observations and only the
-        second one says the cell can carry on paying.
+        The last check is not decoration, and it is two halves on purpose. The
+        dialog has to be GONE and the Pay button has to be BACK. On this
+        platform the dialog is its own window and a dump taken while it is up
+        holds only the dialog, so either half would do -- but the iOS
+        confirmation is drawn inside the sheet, where the Pay button never
+        left, and there only the first half means anything. One rule, so the
+        two drivers cannot drift into checking different things.
         """
-        self._raise_cancel_dialog()
-        self._tap_id(CANCEL_DISMISS)
+        self._raise_cancel_dialog(timeout=timeout)
+        self._tap_id(CANCEL_DISMISS, timeout=timeout)
         self._sleep(SETTLE_SECONDS)
-        self._find(
-            tree.find_identifier, PAY_BUTTON, "the form after a dismissed cancel"
-        )
 
-    def _raise_cancel_dialog(self) -> None:
+        def back(nodes: list[tree.Node]) -> bool | None:
+            gone = not tree.find_identifier(nodes, CANCEL_DIALOG)
+            return True if gone and tree.find_identifier(nodes, PAY_BUTTON) else None
+
+        if self._poll(back, timeout, SETTLE_SECONDS) is None:
+            raise DriverError(
+                "the sheet did not come back after the cancel dialog was "
+                "dismissed; the cell cannot carry on paying"
+            )
+
+    def _raise_cancel_dialog(self, *, timeout: float = 30) -> None:
         """Back, then the dialog the SDK catches it with.
 
         Android's sheet has no cancel control of its own -- `paycross.cancel`
@@ -1105,7 +1115,9 @@ class AndroidDriver(Driver):
         and from the challenge alike.
         """
         self._key(_KEYCODE_BACK)
-        self._find(tree.find_identifier, CANCEL_DIALOG, "the cancel dialog", timeout=30)
+        self._find(
+            tree.find_identifier, CANCEL_DIALOG, "the cancel dialog", timeout=timeout
+        )
 
     def wait_rearmed(
         self, amount_text: str, timeout: float, *, interval: float = 2
