@@ -598,5 +598,5 @@ through to the hook process.
 
 Integrating the plugin in your own app is a different job: the whole
 integration is [`lib/main.dart`](lib/main.dart) plus the
-[Flutter guide](https://docs.pay-cross.com/guides/flutter/) on the developer
+[Flutter guide](https://developers.pay-cross.com/guides/flutter/) on the developer
 portal, which the [package README](../README.md) links to.

@@ -17,7 +17,7 @@ Then raise both platform minimums: `minSdk = 24` in your app's
 `android/app/build.gradle.kts`, and `platform :ios, '16.0'` at the top of your
 `ios/Podfile` with the Xcode deployment target to match. Neither default is high
 enough, and both fail late — at the manifest merge and at pod resolution —
-rather than at `pub get`. The [Flutter guide](https://docs.pay-cross.com/guides/flutter/)
+rather than at `pub get`. The [Flutter guide](https://developers.pay-cross.com/guides/flutter/)
 covers this and the Swift Package Manager route.
 
 ## Quickstart
@@ -38,13 +38,13 @@ The [example app](example/lib/main.dart) is this quickstart as a runnable screen
 
 ## Documentation
 
-- **[Flutter guide](https://docs.pay-cross.com/guides/flutter/)** — wallets,
+- **[Flutter guide](https://developers.pay-cross.com/guides/flutter/)** — wallets,
   appearance, languages, saved cards, test identifiers, environments and errors.
 - **[API reference](https://pub.dev/documentation/paycross_flutter/latest/)** on
   pub.dev.
-- **[Changelog](https://docs.pay-cross.com/resources/changelogs/flutter/)** —
+- **[Changelog](https://developers.pay-cross.com/resources/changelogs/flutter/)** —
   mirrored from [`CHANGELOG.md`](CHANGELOG.md).
-- **[Support](https://docs.pay-cross.com/resources/support/)** — where questions go.
+- **[Support](https://developers.pay-cross.com/resources/support/)** — where questions go.
 
 ## Contributing and security
 
