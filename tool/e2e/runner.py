@@ -638,6 +638,8 @@ def _perform(step: Step, action: Action):
         driver.tap_google_pay()
     elif verb == "select_saved_card":
         driver.select_saved_card()
+    elif verb == "remove_saved_card":
+        driver.remove_saved_card()
     elif verb == "save_card":
         driver.save_card()
     elif verb == "acs":
@@ -646,6 +648,8 @@ def _perform(step: Step, action: Action):
         driver.cancel_challenge()
     elif verb == "cancel_form":
         driver.cancel_form()
+    elif verb == "dismiss_cancel":
+        driver.dismiss_cancel()
     # -- looking, and spending time -------------------------------------------
     elif verb == "expect":
         return _observe(step, arg)

@@ -324,8 +324,14 @@ class Driver(ABC):
     def select_saved_card(self) -> None:
         raise NotImplementedError("select_saved_card is a D5 action")
 
+    def remove_saved_card(self) -> None:
+        raise NotImplementedError("remove_saved_card is a D5 action")
+
     def save_card(self) -> None:
         raise NotImplementedError("save_card is a D5 action")
+
+    def dismiss_cancel(self) -> None:
+        raise NotImplementedError("dismiss_cancel is a D2 action")
 
     # -- expectations, same contract ------------------------------------------
     #
