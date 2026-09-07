@@ -1583,18 +1583,73 @@ class IosDriver(Driver):
     def _saved_card_rows(self, nodes: list[tree.Node]) -> list[tree.Node]:
         """Every stored card's ROW that is on screen, each card's bin excluded.
 
-        Both carry an identifier starting with `SAVED_CARD_PREFIX` -- the bin's
-        is the row's plus `.delete` -- so the suffix is what separates them.
-        On screen, because WebKit and a scrolled sheet both keep nodes in the
-        tree at coordinates a tap cannot reach.
+        The contract is `paycross.savedCard.<uuid>`, with the bin at that plus
+        `.delete`, so the suffix separates them. On screen, because a scrolled
+        sheet keeps nodes in the tree at coordinates a tap cannot reach.
+
+        On SDK 0.7.0 neither identifier is in the tree. `SavedCardPicker.swift`
+        puts `.payCrossIdentifier(.savedCards)` on the `VStack` holding all of
+        them, and SwiftUI's outer identifier overrides the one on each row and
+        each bin -- the same mechanism that costs the Pay button its name, one
+        container along. Three buttons come back answering to
+        `paycross.savedCards` and none answers to its own. So the fallback
+        reads the picker's SHAPE, which `_picker_rows` describes.
         """
-        return [
+        tagged = [
             n
             for n in nodes
             if n.identifier.startswith(SAVED_CARD_PREFIX)
             and not n.identifier.endswith(SAVED_CARD_DELETE_SUFFIX)
             and self._on_screen(n)
         ]
+        return tagged if tagged else self._picker_rows(nodes)[:-1]
+
+    def _picker_rows(self, nodes: list[tree.Node]) -> list[tree.Node]:
+        """The picker's full-width buttons, in composition order.
+
+        Every stored card's row, then `Use a new card` last -- which is how
+        `SavedCardPicker` composes them, and why the caller drops the tail.
+
+        A bin is told from a row by GEOMETRY rather than by its label, because
+        a label is copy: measured 2026-09-07, a row is `x=20 w=318` and its bin
+        `x=338 w=44` in the same vertical band, while `Use a new card` is `x=20
+        w=362` and has no bin. So the buttons at the picker's left edge are the
+        rows and the ones inset from it are the bins. Reading `Remove card, …`
+        would work today and stop working on the French sheet this train
+        shipped.
+        """
+        buttons = [
+            n
+            for n in nodes
+            if n.identifier == SAVED_CARDS and n.type == "Button" and self._on_screen(n)
+        ]
+        if not buttons:
+            return []
+        left = min(n.bounds[0] for n in buttons)
+        return [n for n in buttons if n.bounds[0] == left]
+
+    def _remove_button_for(
+        self, row: tree.Node, nodes: list[tree.Node]
+    ) -> tree.Node | None:
+        """The bin belonging to `row`, by its name where the SDK publishes one.
+
+        Where it does not -- see `_saved_card_rows` -- the bin is the button
+        that is NOT at the picker's left edge and whose centre sits in the
+        row's own vertical band. There is exactly one per row.
+        """
+        named = self._matches_in(nodes, row.identifier + SAVED_CARD_DELETE_SUFFIX, True)
+        if named:
+            return named[0]
+        left = {n.bounds[0] for n in self._picker_rows(nodes)}
+        inset = [
+            n
+            for n in nodes
+            if n.identifier == SAVED_CARDS
+            and n.type == "Button"
+            and n.bounds[0] not in left
+            and row.bounds[1] <= n.centre[1] <= row.bounds[3]
+        ]
+        return inset[0] if inset else None
 
     def remove_saved_card(self, *, timeout: float = 30) -> None:
         """Deletes the first stored card, and proves the row is gone.
@@ -1621,23 +1676,32 @@ class IosDriver(Driver):
                 "session's options are missing saved_cards, or this customer "
                 "has no stored card"
             )
-        self.tap_identifier(
-            row.identifier + SAVED_CARD_DELETE_SUFFIX,
-            timeout=timeout,
-            identifier_only=True,
-        )
+        bin_button = self._remove_button_for(row, self._nodes())
+        if bin_button is None:
+            raise DriverError(
+                f"the row {row.identifier} has no remove button beside it: the "
+                "session's saved_cards options are missing allow_removal"
+            )
+        self._tap_node(bin_button)
         self._sleep(ALERT_SETTLE_SECONDS)
 
         self._find(REMOVE_DIALOG, timeout=timeout, identifier_only=True)
         self.tap_identifier(REMOVE_CONFIRM, timeout=timeout, identifier_only=True)
 
-        gone = self._poll(
-            lambda nodes: (
-                True if not self._matches_in(nodes, row.identifier, True) else None
-            ),
-            timeout,
-            POLL_INTERVAL_SECONDS,
-        )
+        # By the row's own name where there is one, and by the picker having
+        # one fewer row where there is not -- the fallback cannot name a card,
+        # so it counts them instead.
+        rows_before = len(self._saved_card_rows(self._nodes(tolerate=True))) or 1
+        named = row.identifier != SAVED_CARDS
+
+        def is_gone(nodes: list[tree.Node]) -> bool | None:
+            if named:
+                return (
+                    True if not self._matches_in(nodes, row.identifier, True) else None
+                )
+            return True if len(self._saved_card_rows(nodes)) < rows_before else None
+
+        gone = self._poll(is_gone, timeout, POLL_INTERVAL_SECONDS)
         if gone is None:
             raise DriverError(
                 f"{row.identifier} is still on the sheet {timeout}s after "

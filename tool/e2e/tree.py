@@ -208,6 +208,10 @@ def format_amount_en_us(minor_units: int, currency: str) -> str:
 _AMOUNT_CONTINUES = frozenset(".,0123456789")
 
 
+def _digits(text: str) -> str:
+    return "".join(character for character in text if character.isdigit())
+
+
 def _carries_amount(text: str, amount_text: str) -> bool:
     """`amount_text` is in `text` and is not the head of a longer number."""
     for variant in _separator_variants(amount_text):
@@ -295,6 +299,11 @@ def rearm_amount_mismatch(nodes: list[Node], amount_text: str) -> str | None:
 
     So a driver asks this before it answers False, and says which of the two it
     is looking at.
+
+    It answers None for a sheet re-armed at a genuinely different AMOUNT. That
+    is not a spelling problem and not the rig's fault -- it is the finding the
+    amount half of `sheet_rearmed` exists to make, and turning it into a rig
+    fault would hide it. The digits tell the two apart.
     """
     if not amount_text:
         raise ValueError("rearm_amount_mismatch needs the cell's amount text")
@@ -303,4 +312,11 @@ def rearm_amount_mismatch(nodes: list[Node], amount_text: str) -> str | None:
     showing = find_identifier(nodes, AMOUNT)
     if not showing or any(_carries_amount(n.text, amount_text) for n in showing):
         return None
-    return showing[0].text
+    # The digits are what separate the two ways this predicate can fail, and
+    # only one of them is the rig's fault. A sheet spelling the SAME value
+    # another way -- `10,00 €` for `€10.00` -- has the same digits in the same
+    # order. A sheet re-armed at a DIFFERENT amount does not, and that is a
+    # cell verdict: it is the whole reason the amount is checked at all.
+    wanted = _digits(amount_text)
+    same_value = [n for n in showing if _digits(n.text) == wanted]
+    return same_value[0].text if same_value else None
