@@ -9,6 +9,8 @@ import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_demo/shop/catalogue.dart';
 import 'package:paycross_demo/shop/checkout_screen.dart';
+import 'package:paycross_demo/shop/shop_outcome.dart';
+import 'package:paycross_demo/shop/shop_screen.dart';
 import 'package:paycross_demo/shop/thank_you_screen.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
@@ -199,7 +201,7 @@ void main() {
       );
     });
 
-    testWidgets('a refusal shows the recovery hint the demo already renders', (
+    testWidgets('a refusal speaks to the shopper, not to an engineer', (
       tester,
     ) async {
       await tester.pumpWidget(_app(present: (_) async => _refused()));
@@ -208,10 +210,16 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(ThankYouScreen), findsNothing);
-      expect(find.textContaining('change_method'), findsOneWidget);
+      expect(find.text(shopDeclinedMessage), findsOneWidget);
+      expect(find.textContaining('change_method'), findsNothing);
+      expect(find.textContaining('txn-2'), findsNothing);
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNotNull,
+      );
     });
 
-    testWidgets('an unresolved payment shows the demo pending copy', (
+    testWidgets('an unresolved payment tells the shopper not to pay again', (
       tester,
     ) async {
       await tester.pumpWidget(_app(present: (_) async => _pending()));
@@ -220,7 +228,22 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(ThankYouScreen), findsNothing);
-      expect(find.textContaining('Unresolved'), findsOneWidget);
+      expect(find.text(shopUnresolvedMessage), findsOneWidget);
+      expect(find.textContaining('poll_timeout'), findsNothing);
+    });
+
+    testWidgets('Pay stays dead after an unresolved payment', (tester) async {
+      await tester.pumpWidget(_app(present: (_) async => _pending()));
+
+      await tester.tap(find.text('Pay €24.00'));
+      await tester.pumpAndSettle();
+
+      // Nobody knows whether that payment took the money, so a second one
+      // can charge the same card twice for the same basket.
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNull,
+      );
     });
 
     testWidgets('a sheet that throws does not leave the screen waiting', (
@@ -233,11 +256,86 @@ void main() {
       await tester.tap(find.text('Pay €24.00'));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('failed unexpectedly'), findsOneWidget);
+      expect(find.text(shopWentWrongMessage), findsOneWidget);
+      expect(find.textContaining('StateError'), findsNothing);
       expect(
         tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
         isNotNull,
       );
+    });
+
+    testWidgets('a paid order cannot be paid again by pressing back', (
+      tester,
+    ) async {
+      // The real stack, not a checkout mounted on its own: what the success
+      // path removes is everything above the shop, so a test that starts at
+      // the checkout would be asserting about a stack the app never has.
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      unawaited(navigator.push(shopRoute()));
+      await tester.pumpAndSettle();
+      unawaited(
+        navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => ShopCheckoutScreen(
+              product: _tote,
+              store: _configured(),
+              mintWith: (_, _) async => _minted,
+              present: (_) async => _approved(),
+              history: HistoryStore(backend: InMemoryHistoryBackend()),
+              readVersions: () async =>
+                  (demo: '0.1.12+1', plugin: '0.7.1', nativeSdk: 'unknown'),
+              now: () => DateTime.fromMillisecondsSinceEpoch(1757200000000),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Pay €24.00'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ThankYouScreen), findsOneWidget);
+
+      navigator.pop();
+      await tester.pumpAndSettle();
+
+      // The checkout went with the push. Back from a paid order lands on the
+      // shop, and there is no live Pay button anywhere behind it.
+      expect(find.byType(ShopCheckoutScreen), findsNothing);
+      expect(find.byType(ShopScreen), findsOneWidget);
+    });
+
+    testWidgets('Continue shopping lands on the shop too', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      unawaited(navigator.push(shopRoute()));
+      await tester.pumpAndSettle();
+      unawaited(
+        navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => ShopCheckoutScreen(
+              product: _tote,
+              store: _configured(),
+              mintWith: (_, _) async => _minted,
+              present: (_) async => _approved(),
+              history: HistoryStore(backend: InMemoryHistoryBackend()),
+              readVersions: () async =>
+                  (demo: '0.1.12+1', plugin: '0.7.1', nativeSdk: 'unknown'),
+              now: () => DateTime.fromMillisecondsSinceEpoch(1757200000000),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Pay €24.00'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continue shopping'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ShopScreen), findsOneWidget);
+      expect(find.byType(ThankYouScreen), findsNothing);
+      expect(find.byType(ShopCheckoutScreen), findsNothing);
     });
   });
 
@@ -258,6 +356,27 @@ void main() {
       expect(rows.single.transactionId, 'txn-1');
       expect(rows.single.surface, 'sdk');
       expect(rows.single.live, isFalse);
+    });
+
+    testWidgets('keeps the detail the shop screen does not show', (
+      tester,
+    ) async {
+      final backend = InMemoryHistoryBackend();
+      await tester.pumpWidget(
+        _app(
+          history: HistoryStore(backend: backend),
+          present: (_) async => _refused(),
+        ),
+      );
+
+      await tester.tap(find.text('Pay €24.00'));
+      await tester.pumpAndSettle();
+
+      // The shopper reads a sentence; whoever reports the run still gets the
+      // recovery token and the transaction id.
+      final rows = await HistoryStore(backend: backend).read();
+      expect(rows.single.outcome, contains('change_method'));
+      expect(rows.single.outcome, contains('txn-2'));
     });
 
     testWidgets('a cancelled order is recorded too', (tester) async {
@@ -302,7 +421,43 @@ void main() {
   });
 
   group('what a reviewer must not see', () {
-    testWidgets('the checkout carries no harness vocabulary', (tester) async {
+    /// Every state the checkout can be left in, because the note is where
+    /// the harness words would actually appear and the initial render never
+    /// has one.
+    for (final state in <(String, Future<PayCrossResult> Function(String))>[
+      ('a refusal', (_) async => _refused()),
+      ('an unresolved payment', (_) async => _pending()),
+      ('a cancellation', (_) async => const PayCrossCancelled()),
+      ('a sheet that threw', (_) async => throw StateError('no plugin')),
+    ]) {
+      testWidgets('no harness vocabulary survives ${state.$1}', (tester) async {
+        await tester.pumpWidget(_app(present: state.$2));
+
+        await tester.tap(find.text('Pay €24.00'));
+        await tester.pumpAndSettle();
+
+        for (final word in const <String>[
+          'sandbox',
+          'Test card',
+          'scenario',
+          'preset',
+          'session',
+          'token',
+          'recovery',
+          'transaction',
+          'reconcile',
+          'Refused',
+          'Unresolved',
+          'txn-',
+        ]) {
+          expect(find.textContaining(word), findsNothing, reason: word);
+        }
+      });
+    }
+
+    testWidgets('the checkout carries no harness vocabulary before a tap', (
+      tester,
+    ) async {
       await tester.pumpWidget(_app());
 
       for (final word in const <String>[
@@ -323,6 +478,29 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the summary fits a phone at every text size', (tester) async {
+      for (final width in const <double>[360, 390]) {
+        for (final scale in const <double>[1.0, 1.8]) {
+          tester.view.physicalSize = Size(width, 844);
+          tester.view.devicePixelRatio = 1.0;
+          await tester.pumpWidget(
+            MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+              child: _app(),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: 'width $width at ${scale}x',
+          );
+        }
+      }
+      addTearDown(tester.view.reset);
     });
   });
 }

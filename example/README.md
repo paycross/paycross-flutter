@@ -111,10 +111,15 @@ What happens after the sheet closes:
 
 | Outcome | What the shop does |
 |---|---|
-| Approved | The thank-you page: the order number and what was paid. **Continue shopping** goes back to the product list, past the checkout. |
+| Approved | The thank-you page: the order number, the item and what was paid. The checkout and the product page are removed with it, so back cannot reach a live Pay button for an order already bought. **Continue shopping** returns to the product list. |
 | Cancelled | Back on the checkout with "Payment cancelled." and Pay usable again. |
-| Refused | Back on the checkout with the same recovery wording a scenario shows. |
-| Unresolved | Back on the checkout with the same "reconcile server-side" wording a scenario shows. |
+| Refused | Back on the checkout with a sentence a shopper can act on — "Your card was declined. Please try another card." — and Pay usable again. |
+| Unresolved | Back on the checkout with "do not pay again, we will email you", and **Pay left dead**. Nobody knows whether that payment took the money, so a second one could charge the same card twice. |
+
+The shop speaks to shoppers, so it does not print what a scenario prints: no
+recovery token, no transaction id, no "reconcile server-side". None of that
+detail is lost — History records the wording a scenario would have shown, so
+the run is still reportable in full from the **Copy bug report** button.
 
 **The shop is Test only.** In Live there is no tile and no bar action. Two
 reasons: its Pay button asks nothing before it charges, so in production one

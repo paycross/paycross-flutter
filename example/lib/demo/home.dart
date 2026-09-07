@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../shop/catalogue.dart';
+import '../shop/shop_screen.dart';
 import 'editor.dart';
 import 'endpoints.dart';
 import 'environment.dart';
@@ -15,8 +17,6 @@ import 'settings.dart';
 import 'surface.dart';
 import 'test_cards_screen.dart';
 import 'web_run.dart';
-import '../shop/catalogue.dart';
-import '../shop/shop_screen.dart';
 
 /// The app's real mint: one [Minter] per run, closed when that run is done.
 ///

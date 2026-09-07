@@ -13,6 +13,8 @@ import '../demo/settings.dart';
 import '../demo/version_panel.dart';
 import 'catalogue.dart';
 import 'shop_order.dart';
+import 'shop_outcome.dart';
+import 'shop_screen.dart';
 import 'thank_you_screen.dart';
 
 /// The order, the total, and the button that pays for it.
@@ -63,6 +65,15 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
   /// What to tell the shopper about a payment that did not complete, or null
   /// when there is nothing to say yet.
   String? _note;
+
+  /// True once a payment came back unresolved.
+  ///
+  /// Its own field rather than a second reading of [_note], and the reason is
+  /// the one outcome it stands for: nobody knows whether that payment took
+  /// the money, so pressing Pay again can charge the shopper twice. The
+  /// button stays dead for the life of this screen, because nothing that
+  /// happens here can resolve it.
+  bool _unresolved = false;
 
   Future<void> _pay() async {
     if (_paying) return;
@@ -122,22 +133,34 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
       );
 
       if (run.result is PayCrossSuccess) {
-        await Navigator.of(context).push(
+        // The checkout and the product page go with it. A paid order that is
+        // still one back-press from a live Pay button is an order somebody
+        // can buy twice, and back is the first thing anybody walking a flow
+        // presses.
+        await Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute<void>(
             builder: (_) => ThankYouScreen(
               reference: reference,
+              item: widget.product.name,
               amount: widget.product.price,
             ),
           ),
+          (route) => route.settings.name == shopRouteName || route.isFirst,
         );
         return;
       }
       // Everything else -- cancelled, refused, unresolved, and a sheet that
-      // threw -- lands back here in the demo's own words for it. There is no
-      // shop-specific wording, and that is deliberate: a refusal's recovery
-      // and an unresolved payment's reason are what somebody reading this
-      // screen has to act on, and a friendlier sentence would say less.
-      if (mounted) setState(() => _note = run.human);
+      // threw -- lands back here in the shop's own words for it. The demo's
+      // wording carries the server's recovery token and a transaction id,
+      // which is what somebody debugging a scenario needs and exactly what a
+      // shopper must never be shown. Nothing is lost by it: History records
+      // the demo's wording, so the run is still reportable in full.
+      if (mounted) {
+        setState(() {
+          _note = shopOutcomeMessage(run);
+          _unresolved = !shopMayPayAgain(run);
+        });
+      }
     } finally {
       if (mounted) setState(() => _paying = false);
     }
@@ -169,10 +192,23 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
           const SizedBox(height: 16),
           MergeSemantics(
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Total', style: theme.textTheme.titleMedium),
-                Text(total, style: theme.textTheme.titleLarge),
+                // Flexible and Expanded for the reason the thank-you
+                // page's rows carry them: two loose children in a
+                // `spaceBetween` row have no width to give back, and this
+                // one ran off the edge once the phone's font scale was up.
+                Flexible(
+                  child: Text('Total', style: theme.textTheme.titleMedium),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    total,
+                    textAlign: TextAlign.end,
+                    style: theme.textTheme.titleLarge,
+                  ),
+                ),
               ],
             ),
           ),
@@ -197,7 +233,7 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
           Semantics(
             identifier: 'shop.pay',
             child: FilledButton(
-              onPressed: _paying ? null : _pay,
+              onPressed: _paying || _unresolved ? null : _pay,
               child: Text('Pay $total'),
             ),
           ),

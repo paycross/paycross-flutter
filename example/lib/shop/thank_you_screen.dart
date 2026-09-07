@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../demo/money.dart';
 import 'catalogue.dart';
-import 'shop_screen.dart';
 
 /// What a paid order looks like.
 ///
@@ -14,11 +13,16 @@ class ThankYouScreen extends StatelessWidget {
   const ThankYouScreen({
     super.key,
     required this.reference,
+    required this.item,
     required this.amount,
   });
 
   /// The order number, stamped when the order was placed.
   final String reference;
+
+  /// What was bought. A receipt that names only a number is a receipt
+  /// nobody can check.
+  final String item;
 
   /// What was paid, in minor units.
   final int amount;
@@ -50,23 +54,25 @@ class ThankYouScreen extends StatelessWidget {
           const SizedBox(height: 24),
           _Line(label: 'Order number', value: reference),
           const SizedBox(height: 8),
+          _Line(label: 'Item', value: item),
+          const SizedBox(height: 8),
           _Line(label: 'Paid', value: formatMoney(amount, shopCurrency)),
           const SizedBox(height: 32),
           Semantics(
             identifier: 'shop.continue',
             child: FilledButton(
-              // Back to the shop rather than back one screen: the checkout
-              // and the product page are behind this, and an order that is
-              // paid for should not be payable again by pressing back twice.
+              // One pop, because there is one route to pop. The checkout
+              // removed itself and the product page when it opened this, so
+              // that a paid order cannot be paid a second time by pressing
+              // back -- which means the shop is already the route underneath.
               //
-              // `isFirst` is the floor, not a second destination. A stack
-              // with no shop route in it is a widget test or a screen pushed
-              // some way nobody has written yet, and popping it empty would
-              // leave a Navigator with nothing in it.
-              onPressed: () => Navigator.of(context).popUntil(
-                (route) =>
-                    route.settings.name == shopRouteName || route.isFirst,
-              ),
+              // Guarded, because a stack with nothing under it is a widget
+              // test or a screen pushed some way nobody has written yet, and
+              // popping it would leave a Navigator with nothing in it.
+              onPressed: () {
+                final navigator = Navigator.of(context);
+                if (navigator.canPop()) navigator.pop();
+              },
               child: const Text('Continue shopping'),
             ),
           ),
@@ -86,10 +92,24 @@ class _Line extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MergeSemantics(
     child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+        // Both children take a share of the width rather than their own
+        // intrinsic size, and that is what makes this row incapable of
+        // overflowing. An order number is nineteen characters: loose in a
+        // `spaceBetween` row it drew clean off the right edge of every
+        // phone -- stripes in a debug build, silently clipped in a release
+        // one, on the one screen this whole flow exists to photograph. The
+        // label went over on its own once the phone's font scale was up.
+        Flexible(child: Text(label)),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
       ],
     ),
   );
