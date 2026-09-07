@@ -519,6 +519,51 @@ def test_remove_saved_card_raises_when_the_row_survives_the_confirmation():
     assert STORED in str(excinfo.value)
 
 
+def test_remove_saved_card_does_not_read_the_dialogs_own_window_as_success():
+    """The window trap this whole action has to survive.
+
+    A dialog arrives as its own window and the dump taken while it is up holds
+    the dialog and nothing else -- no picker, no form. So "the row is not in
+    the tree" is TRUE of the dialog itself, and a check that asked only that
+    would answer yes the instant Confirm was tapped, whatever the backend then
+    did. Requiring the Pay button back is what makes the look land on the sheet.
+    """
+    # The last two trees are the poll's: the dialog still up, then the sheet
+    # with the row still on it.
+    shell = FakeShell(
+        trees=[
+            SAVED_SHEET,
+            SAVED_SHEET,
+            REMOVE_DIALOG,
+            REMOVE_DIALOG,
+            REMOVE_DIALOG,
+            SAVED_SHEET,
+        ]
+    )
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).remove_saved_card(timeout=0)
+
+    assert "still on the sheet" in str(excinfo.value)
+
+
+def test_remove_saved_card_waits_out_the_dialog_before_it_answers():
+    # The same sequence with a removal that really landed: the dialog closes
+    # onto a sheet whose row is gone, and only that is a pass.
+    shell = FakeShell(
+        trees=[
+            SAVED_SHEET,
+            SAVED_SHEET,
+            REMOVE_DIALOG,
+            REMOVE_DIALOG,
+            REMOVE_DIALOG,
+            SAVED_GONE,
+        ]
+    )
+
+    driver(shell).remove_saved_card()
+
+
 def test_remove_saved_card_says_so_when_there_is_nothing_to_remove():
     ordinary = (FIXTURES / "android-rearmed.uix").read_text()
 

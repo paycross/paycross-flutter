@@ -995,8 +995,12 @@ class AndroidDriver(Driver):
         tapped went away".
 
         The dialog is its own window and a dump taken while it is up holds
-        nothing else, so the row's absence has to be looked for after the
-        dialog closes rather than in the same look.
+        NOTHING ELSE -- not the picker, not the form. So "the row is not in the
+        tree" is true of the dialog itself, and a check that asked only that
+        would answer yes the instant Confirm was tapped, whatever the backend
+        then did. The sheet has to be back first, which is what
+        `paycross.payButton` says: it is on the form in every state, including
+        the one where the last stored card has gone and the picker with it.
         """
         row = self._poll(
             lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
@@ -1017,14 +1021,15 @@ class AndroidDriver(Driver):
         )
         self._tap_id(REMOVE_CONFIRM, timeout=timeout)
 
-        gone = self._poll(
-            lambda nodes: True
-            if not tree.find_identifier(nodes, row.identifier)
-            else None,
-            timeout,
-            SETTLE_SECONDS,
-        )
-        if gone is None:
+        def is_gone(nodes: list[tree.Node]) -> bool | None:
+            back = tree.find_identifier(nodes, PAY_BUTTON)
+            return (
+                True
+                if back and not tree.find_identifier(nodes, row.identifier)
+                else None
+            )
+
+        if self._poll(is_gone, timeout, SETTLE_SECONDS) is None:
             raise DriverError(
                 f"{row.identifier} is still on the sheet {timeout}s after "
                 "confirming its removal; the card was not removed and the "
