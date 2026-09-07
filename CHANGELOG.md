@@ -1,3 +1,12 @@
+## 0.7.1
+
+Pins the native patch releases paycross-android 0.8.1 and PayCross 0.7.1: every
+`paycross.*` identifier now reaches the platform's accessibility tree (Android's
+wallet button and 3-D Secure wrappers; iOS's Pay button, saved-card rows, bins,
+"Use a new card" and server-field inputs answered to their container's name on
+0.7.0), and iOS's device-language rung reads the shopper's own language list.
+No Dart API change.
+
 ## 0.7.0
 
 Additive in Dart. No existing call needs a change.
