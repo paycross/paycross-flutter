@@ -17,7 +17,7 @@ Cards on both platforms, Google Pay on Android, and Apple Pay on iOS.
 
 ```yaml
 dependencies:
-  paycross_flutter: ^0.6.0
+  paycross_flutter: ^0.7.0
 ```
 
 Then raise both platform minimums to match the table above. Neither default is
@@ -293,7 +293,7 @@ The **amount** is not clamped to those two languages. It is formatted with the
 first *well-formed* locale anyone named, region intact, so a German shopper
 reads an English sheet over a `12,34 €` amount rather than losing their own
 number formatting to a language the SDKs have no words for. A malformed tag is
-passed over for the amount as well as for the words, so a typo cannot both pick
+passed over for the amount, so a typo cannot both pick
 the wrong language and misprint the price.
 
 This package passes the tag across exactly as you write it. It does not
