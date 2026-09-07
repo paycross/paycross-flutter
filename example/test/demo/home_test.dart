@@ -19,11 +19,11 @@ import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/run.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:paycross_demo/demo/surface.dart';
 import 'package:paycross_demo/demo/test_cards_screen.dart';
 import 'package:paycross_demo/demo/web_run.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '_environment.dart';
 import '_surface.dart';
