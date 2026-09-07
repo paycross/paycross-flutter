@@ -24,7 +24,7 @@ void main() {
       });
       for (final card in doNotUseTestCards) {
         expect(card.note, contains('approve'));
-        expect(card.note, contains('870'));
+        expect(card.note, contains('sandbox routing gap'));
       }
     },
   );
