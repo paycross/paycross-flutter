@@ -24,6 +24,16 @@
 #
 # The label is the example app's own and stays English: the demo is not
 # localized, and `result:success:<txn>` is a contract string rather than copy.
+#
+# **What this cell proves is that a French session PAYS, not that it reads in
+# French.** Nothing below asserts a word of copy, because there is no
+# expectation verb that could: `EXPECTATIONS` holds six non-results and none of
+# them is a text assertion, and the cell vocabulary is frozen. So this is a
+# regression guard for the DRIVERS -- it fails the day a matcher goes back to
+# matching English -- and the rendering itself is proved by hand, in the
+# campaign's `evidence/train4/french-session-android/` and
+# `french-session-ios/` dumps and screenshots. Whoever wants the copy asserted
+# in the matrix is adding a verb to the grammar, which is its own task.
 id: french_session
 platforms: [android, ios]
 card:
