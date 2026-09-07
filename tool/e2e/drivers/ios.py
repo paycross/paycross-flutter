@@ -112,7 +112,8 @@ PAY_BUTTON = "paycross.payButton"
 #: stops there.
 #:
 #: Measured on the simulator 2026-09-07 -- `paycross.payButton` is not in the
-#: tree at all, and `paycross.sheet` is on two elements. See `_pay_button`.
+#: tree at all, and `paycross.sheet` is on two elements. Filed as
+#: **payment-ios-sdk#47**, which is what `_is_pay_button` exists until.
 SHEET = "paycross.sheet"
 #: Never interactive -- also the neutral target for the keyboard-dismissal
 #: fallback. Its label carries a `Total, ` caption ahead of the amount.
@@ -255,6 +256,10 @@ def _is_pay_button(node: tree.Node) -> bool:
     `paycross.payButton` on that button the first branch matches and the second
     is never reached. It is here because without it no iOS cell runs at all --
     `paste_token`, `tap_pay` and `dismiss_cancel` all need this element.
+
+    Delete this function with **payment-ios-sdk#47**.
+    `test_the_pay_button_fallback_is_the_branch_being_taken` goes red when that
+    lands, so the workaround cannot outlive the defect quietly.
     """
     if node.identifier == PAY_BUTTON:
         return True
@@ -318,6 +323,9 @@ def _ssh(command: str, *, stdin: bytes | None = None) -> str:
 
 
 class IosDriver(Driver):
+    #: `_blame_the_amount`'s word for the thing to go and look at.
+    device_noun = "simulator"
+
     #: WebDriverAgent's `/source` on this side of the fence; base._nodes
     #: calls it.
     _parse_dump = staticmethod(tree.parse_wda)
@@ -1447,9 +1455,11 @@ class IosDriver(Driver):
         the row's centre did nothing and the probe came back with "the tap at
         (201, 715) did not turn on 'Save this card'". Only the control responds.
 
-        Which makes this the exact iOS twin of the Android hazard: on both
-        platforms the node you can name is not the node you can tap, for two
-        entirely different framework reasons.
+        Android used to have the mirror of this and does not any more: its
+        checkbox carried no name and its caption was a non-clickable sibling,
+        where `paycross.saveCard` is now on the `toggleable` row that carries
+        the identifier, the state and the click at once. So this split is
+        SwiftUI's alone, and `save_card` is the one action still shaped by it.
 
         Falls back to the row rather than raising when no inner control is
         found. A tap there is what this did before and is no worse than
@@ -1607,6 +1617,10 @@ class IosDriver(Driver):
         container along. Three buttons come back answering to
         `paycross.savedCards` and none answers to its own. So the fallback
         reads the picker's SHAPE, which `_picker_rows` describes.
+
+        Same defect as the Pay button's and the same removal marker:
+        **payment-ios-sdk#47**. `test_the_picker_fallback_is_the_branch_being_taken`
+        goes red when it lands.
         """
         tagged = [
             n
@@ -1710,6 +1724,17 @@ class IosDriver(Driver):
         rows_before = len(before)
 
         def is_gone(nodes: list[tree.Node]) -> bool | None:
+            # The confirmation has to be gone before either half is read, and
+            # the counted half is why. `_saved_card_rows` keeps only what is
+            # ON SCREEN, so a row the dismissing overlay -- or a loading state
+            # covering the picker while the request is in flight -- is
+            # reported not visible drops out of the count, and a removal the
+            # backend never made reads as one that landed. That is the Train 2
+            # defect this verb exists to catch, satisfying itself. Android
+            # waits for `paycross.payButton` back for the same reason; here the
+            # dialog is drawn INSIDE the sheet, so its absence is the signal.
+            if self._matches_in(nodes, REMOVE_DIALOG, True):
+                return None
             if named:
                 return (
                     True if not self._matches_in(nodes, row.identifier, True) else None
@@ -1841,19 +1866,7 @@ class IosDriver(Driver):
             interval,
         )
         if found is None:
-            # See AndroidDriver._blame_the_amount: the launch-time locale guard
-            # is gone from both drivers and this is what took its place.
-            showing = tree.rearm_amount_mismatch(
-                self._nodes(tolerate=True), amount_text
-            )
-            if showing is not None:
-                raise DriverError(
-                    f"the sheet re-armed showing {showing!r} where this cell "
-                    f"expects {amount_text!r}: the simulator is not drawing "
-                    "amounts in the spelling `tree.format_amount_en_us` "
-                    "computes, so the re-arm check cannot answer. This is the "
-                    "rig, not the SDK."
-                )
+            self._blame_the_amount(amount_text)
         return found is not None
 
     # -- evidence ------------------------------------------------------------

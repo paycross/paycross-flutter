@@ -905,6 +905,27 @@ def test_tap_pay_falls_back_to_the_button_wearing_the_sheets_name():
     assert driver(ssh)._pay_button().type == "Button"
 
 
+def test_the_pay_button_fallback_is_the_branch_being_taken():
+    """The removal marker for `_is_pay_button`, with teeth.
+
+    This asserts the WRONG thing on purpose: that the Pay button in a freshly
+    recorded tree answers to the sheet's identifier rather than its own. It is
+    true of PayCross 0.7.0 and it is a defect -- payment-ios-sdk#47.
+
+    When that lands and someone re-records `ios-source.xml`, this test goes red
+    and names the code to delete. The two tests either side of it prove the
+    fallback works and that the preferred branch wins; neither of them would
+    ever fail once the SDK is fixed, so neither of them forces the workaround
+    out. This one does.
+    """
+    taken = driver(FakeSsh())._pay_button()
+
+    assert taken.identifier == ios.SHEET, (
+        "the Pay button now publishes its own identifier: payment-ios-sdk#47 "
+        "is fixed, so delete IosDriver._is_pay_button and this test"
+    )
+
+
 def test_tap_pay_prefers_the_contract_the_moment_the_sdk_honours_it():
     # The fallback deletes itself: a tree carrying the right name never
     # reaches the second branch.
@@ -1457,6 +1478,29 @@ def test_the_picker_fallback_tells_a_row_from_its_bin_and_from_the_new_card_row(
     assert bin_button.bounds == (338, 336, 382, 380)
 
 
+def test_the_picker_fallback_is_the_branch_being_taken():
+    """The same removal marker, for the same defect, on the picker.
+
+    `SavedCardPicker` sets an identifier on every row and every bin, and
+    `.payCrossIdentifier(.savedCards)` on the VStack above them overrides all
+    of it -- payment-ios-sdk#47. So a freshly recorded picker has no row
+    answering to `paycross.savedCard.<uuid>`, which is what this asserts.
+
+    Red when the SDK is fixed and the fixture re-recorded, which is the point.
+    """
+    nodes = tree.parse_wda(SAVED_SHEET_IOS)
+
+    assert not [n for n in nodes if n.identifier.startswith(ios.SAVED_CARD_PREFIX)], (
+        "the picker now publishes its rows' own identifiers: "
+        "payment-ios-sdk#47 is fixed, so delete IosDriver._picker_rows, "
+        "_remove_button_for's geometry branch and this test"
+    )
+    assert [n.identifier for n in driver(FakeSsh())._picker_rows(nodes)] == [
+        ios.SAVED_CARDS,
+        ios.SAVED_CARDS,
+    ]
+
+
 def test_the_picker_fallback_gives_way_the_moment_the_sdk_names_a_row():
     # Like `_pay_button`, it deletes itself: a tree carrying the contract's
     # own identifiers never reaches the geometry.
@@ -1512,6 +1556,28 @@ def with_remove_dialog(source):
     return added
 
 
+#: The picker with every row reported not visible, which is what WDA says of
+#: the rows while the confirmation is dismissing over them. An on-screen count
+#: reads zero rows here, so a `remove_saved_card` that compared counts in this
+#: state would report a removal nothing had made.
+def _hide(source, *labels):
+    for label in labels:
+        source = source.replace(
+            f'label="{label}" enabled="true" visible="true"',
+            f'label="{label}" enabled="true" visible="false"',
+        )
+    return source
+
+
+HIDDEN_PICKER = _hide(
+    SAVED_SHEET_IOS,
+    "Visa •••• 3063, 12/28",
+    "Remove card, Visa •••• 3063",
+    "Use a new card",
+)
+assert HIDDEN_PICKER != SAVED_SHEET_IOS
+
+
 class RemoveFakeSsh(FakeSsh):
     """Picker, then picker plus the confirmation, then one row fewer.
 
@@ -1520,9 +1586,10 @@ class RemoveFakeSsh(FakeSsh):
     the confirmation is drawn inside the sheet.
     """
 
-    def __init__(self, removes=True):
+    def __init__(self, removes=True, obscured=False):
         super().__init__()
         self.removes = removes
+        self.obscured = obscured
         self.taps = []
 
     def __call__(self, command, *, stdin=None):
@@ -1535,6 +1602,13 @@ class RemoveFakeSsh(FakeSsh):
                 return source_response(SAVED_SHEET_IOS)
             if len(self.taps) == 1:
                 return source_response(with_remove_dialog(SAVED_SHEET_IOS))
+            # One look with the dialog still up and the picker behind it
+            # reported invisible, then the settled sheet. `obscured` is what
+            # the confirmation dismissing over the rows looks like, and the
+            # rows drop out of an on-screen count while it lasts.
+            if self.obscured and len(self.taps) == 2:
+                self.taps.append("settled")
+                return source_response(with_remove_dialog(HIDDEN_PICKER))
             return source_response(
                 SAVED_SHEET_IOS_REMOVED if self.removes else SAVED_SHEET_IOS
             )
@@ -1583,6 +1657,31 @@ def test_remove_saved_card_counts_the_picker_before_it_taps_anything():
     # picker only while no tap has landed, which is what makes this an
     # assertion rather than a coincidence.
     assert "/source" in ssh.calls[0]
+
+
+def test_remove_saved_card_does_not_read_an_obscured_picker_as_a_removal():
+    """The counted branch's own version of the Android window trap.
+
+    With no uuid to wait out, this branch compares row counts -- and
+    `_saved_card_rows` keeps only what is ON SCREEN. While the confirmation is
+    dismissing over the picker WDA reports the rows behind it not visible, so
+    the count drops to zero and a removal the backend never made would read as
+    one that landed: the Train 2 defect this verb exists to catch, satisfying
+    itself.
+
+    Requiring the dialog gone before either half is read is what stops it. The
+    fake serves exactly that state for one look, then the sheet with the row
+    still on it, and the action has to fail.
+    """
+    ssh = RemoveFakeSsh(removes=False, obscured=True)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).remove_saved_card(timeout=0)
+
+    assert "still on the sheet" in str(excinfo.value)
+    # And the obscured state really did reach the poll, so the assertion above
+    # is about the guard rather than about the fake running out of trees.
+    assert HIDDEN_PICKER != SAVED_SHEET_IOS
 
 
 def test_remove_saved_card_says_so_when_there_is_nothing_to_remove():
@@ -2418,6 +2517,10 @@ def test_wait_rearmed_blames_the_rig_for_an_amount_it_cannot_spell():
     message = str(excinfo.value)
     assert "10,00" in message
     assert "the rig, not the SDK" in message
+    # The rule lives on the base driver now; the noun is what each platform
+    # contributes, and it is the half a shared helper can silently lose.
+    assert "the simulator is not drawing" in message
+    assert ios.IosDriver.device_noun == "simulator"
 
 
 def test_wait_rearmed_still_answers_false_for_a_sheet_that_did_not_re_arm():
