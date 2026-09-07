@@ -1488,6 +1488,112 @@ def test_select_saved_card_raises_rather_than_paying_with_a_fresh_card():
     assert "still showing the new-card form" in str(excinfo.value)
 
 
+#: The confirmation the bin raises. Drawn IN the sheet rather than as an alert,
+#: which is what lets it carry identifiers at all -- SwiftUI does not forward a
+#: button's identifier onto the `UIAlertAction` an `.alert` builds.
+REMOVE_DIALOG_NODES = (
+    '<XCUIElementTypeOther type="XCUIElementTypeOther" '
+    'name="paycross.removeDialog" label="Remove this card?" enabled="true" '
+    'visible="true" x="40" y="300" width="322" height="200" index="90"/>'
+    '<XCUIElementTypeButton type="XCUIElementTypeButton" '
+    'name="paycross.removeConfirm" label="Remove" enabled="true" '
+    'visible="true" x="220" y="440" width="120" height="44" index="91"/>'
+    '<XCUIElementTypeButton type="XCUIElementTypeButton" '
+    'name="paycross.removeDismiss" label="Cancel" enabled="true" '
+    'visible="true" x="60" y="440" width="120" height="44" index="92"/>'
+)
+
+
+def with_remove_dialog(source):
+    added = source.replace(
+        "</XCUIElementTypeOther>", REMOVE_DIALOG_NODES + "</XCUIElementTypeOther>", 1
+    )
+    assert added != source
+    return added
+
+
+class RemoveFakeSsh(FakeSsh):
+    """Picker, then picker plus the confirmation, then one row fewer.
+
+    The tap count is the state machine: the first lands on the bin and raises
+    the dialog, the second confirms. Nothing here swaps windows, because on iOS
+    the confirmation is drawn inside the sheet.
+    """
+
+    def __init__(self, removes=True):
+        super().__init__()
+        self.removes = removes
+        self.taps = []
+
+    def __call__(self, command, *, stdin=None):
+        if "/wda/tap" in command:
+            self.taps.append(command)
+        if "/source" in command:
+            self.calls.append(command)
+            self.stdins.append(stdin)
+            if not self.taps:
+                return source_response(SAVED_SHEET_IOS)
+            if len(self.taps) == 1:
+                return source_response(with_remove_dialog(SAVED_SHEET_IOS))
+            return source_response(
+                SAVED_SHEET_IOS_REMOVED if self.removes else SAVED_SHEET_IOS
+            )
+        return super().__call__(command, stdin=stdin)
+
+
+def test_remove_saved_card_taps_the_bin_beside_the_row_then_confirms():
+    # The bin is the button inset from the picker's left edge in the row's own
+    # band -- (338, 336, 382, 380) -- and never the row, whose centre is 159pt
+    # to its left. Tapping the row would choose the card instead of deleting it.
+    ssh = RemoveFakeSsh()
+
+    driver(ssh).remove_saved_card()
+
+    assert payloads_for(ssh, "/wda/tap")[0] == {"x": 360.0, "y": 358.0}
+    assert len(payloads_for(ssh, "/wda/tap")) == 2
+
+
+def test_remove_saved_card_raises_when_the_row_survives_the_confirmation():
+    """The defect this action exists to catch, measured on TEST 2026-09-06.
+
+    Confirming the removal left the row in place with `Could not remove the
+    card. Try again.` in the banner, because the web API could not write the
+    session blob back. A driver that tapped Confirm and moved on would have
+    reported a removal that never happened, and no merchant assertion in the
+    cell grammar would have noticed -- there is no saved-card count to assert.
+    """
+    ssh = RemoveFakeSsh(removes=False)
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).remove_saved_card(timeout=0)
+
+    assert "still on the sheet" in str(excinfo.value)
+
+
+def test_remove_saved_card_counts_the_picker_before_it_taps_anything():
+    # It has no uuid to wait out on this SDK, so it counts rows -- and a
+    # removal that lands promptly would be compared against its own result if
+    # the count were taken after the confirmation.
+    ssh = RemoveFakeSsh()
+
+    driver(ssh).remove_saved_card()
+
+    # The count it compares against has to predate the removal it measures, so
+    # the first thing the action does is look. The fake serves the untouched
+    # picker only while no tap has landed, which is what makes this an
+    # assertion rather than a coincidence.
+    assert "/source" in ssh.calls[0]
+
+
+def test_remove_saved_card_says_so_when_there_is_nothing_to_remove():
+    ssh = FakeSsh()  # the ordinary composite: no picker at all
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(ssh).remove_saved_card(timeout=0)
+
+    assert "no stored-card row" in str(excinfo.value)
+
+
 def test_select_saved_card_says_so_when_no_stored_card_is_offered():
     # `saved_cards: {show: all}` missing from the session, or the customer has
     # no cards. A cell-authoring or setup fault, named as one rather than

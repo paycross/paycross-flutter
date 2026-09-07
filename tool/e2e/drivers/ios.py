@@ -1661,21 +1661,26 @@ class IosDriver(Driver):
         back. A driver that tapped Confirm and moved on would have reported a
         removal that never happened.
 
-        The row's own identifier carries the card's uuid, so the check is
-        exact: not "a row went away" but "the row for the card whose bin was
-        tapped went away".
+        The row's own identifier carries the card's uuid where the SDK
+        publishes one, so the check is exact: not "a row went away" but "the
+        row for the card whose bin was tapped went away". Where it does not --
+        see `_saved_card_rows` -- there is no name to wait out, so the picker
+        is COUNTED instead, and the count has to be taken before anything is
+        tapped: a removal that lands promptly would otherwise be compared
+        against its own result.
         """
-        row = self._poll(
-            lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
+        before = self._poll(
+            lambda nodes: self._saved_card_rows(nodes) or None,
             timeout,
             POLL_INTERVAL_SECONDS,
         )
-        if row is None:
+        if before is None:
             raise DriverError(
                 f"no stored-card row on the sheet within {timeout}s: the "
                 "session's options are missing saved_cards, or this customer "
                 "has no stored card"
             )
+        row = before[0]
         bin_button = self._remove_button_for(row, self._nodes())
         if bin_button is None:
             raise DriverError(
@@ -1688,11 +1693,8 @@ class IosDriver(Driver):
         self._find(REMOVE_DIALOG, timeout=timeout, identifier_only=True)
         self.tap_identifier(REMOVE_CONFIRM, timeout=timeout, identifier_only=True)
 
-        # By the row's own name where there is one, and by the picker having
-        # one fewer row where there is not -- the fallback cannot name a card,
-        # so it counts them instead.
-        rows_before = len(self._saved_card_rows(self._nodes(tolerate=True))) or 1
         named = row.identifier != SAVED_CARDS
+        rows_before = len(before)
 
         def is_gone(nodes: list[tree.Node]) -> bool | None:
             if named:
