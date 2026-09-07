@@ -17,8 +17,8 @@ Then raise both platform minimums: `minSdk = 24` in your app's
 `android/app/build.gradle.kts`, and `platform :ios, '16.0'` at the top of your
 `ios/Podfile` with the Xcode deployment target to match. Neither default is high
 enough, and both fail late — at the manifest merge and at pod resolution —
-rather than at `pub get`. The [Flutter guide](https://developers.pay-cross.com/guides/flutter/)
-covers this and the Swift Package Manager route.
+rather than at `pub get`. The Flutter guide linked below covers both, and the
+Swift Package Manager route.
 
 ## Quickstart
 
