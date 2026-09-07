@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from tool.e2e import tree
 from tool.e2e.cells import Card
 from tool.e2e.drivers import android, base
 from tool.e2e.drivers.base import DriverError
@@ -29,8 +30,8 @@ def screen(token: str = "") -> str:
         ' bounds="[0,0][100,50]"/>'
         '<node class="android.view.View" text="" content-desc="Pay"'
         ' bounds="[0,60][100,100]"/>'
-        '<node class="android.view.View" text="" content-desc="Card number input"'
-        ' bounds="[0,110][100,150]"/>'
+        '<node class="android.widget.EditText" resource-id="paycross.cardNumber"'
+        ' text="" content-desc="" bounds="[0,110][100,150]"/>'
         "</hierarchy>"
     )
 
@@ -244,14 +245,25 @@ def test_install_names_both_paths_when_the_apk_cannot_be_staged(tmp_path):
 # -- launch -------------------------------------------------------------------
 
 
-def test_launch_refuses_a_device_that_is_not_en_us():
-    shell = FakeShell("1\n", "de-DE\n")
+def test_launch_no_longer_refuses_a_device_that_is_not_en_us():
+    """The guard the identifier switch removed, asserted by its absence.
 
-    with pytest.raises(DriverError) as excinfo:
-        driver(shell).launch()
+    It refused anything but `en-US`, because the Pay button's rendered text was
+    the driver's only handle on it. Nothing on the sheet is matched by a
+    rendered string now, and a device drawing French is a case this rig has to
+    be able to MEASURE rather than refuse -- D6 exists to do exactly that.
 
-    assert "en-US" in str(excinfo.value)
-    assert "de-DE" in str(excinfo.value)
+    What the guard was really protecting is `sheet_rearmed`'s amount half, and
+    that is diagnosed in `wait_rearmed` instead, where it can name the amount
+    the sheet was actually showing.
+    """
+    shell = FakeShell("1\n", "0\n", "0\n", "0\n", "0\n", "", "")
+
+    driver(shell).launch()
+
+    assert any("monkey" in call for call in shell.argv_text())
+    # And the locale is not even read: one getprop, for the boot check.
+    assert len([c for c in shell.argv_text() if "getprop" in c]) == 1
 
 
 def test_launch_quotes_adb_when_the_boot_check_cannot_be_read():
@@ -268,18 +280,6 @@ def test_launch_quotes_adb_when_the_boot_check_cannot_be_read():
     assert "booting" not in message
 
 
-def test_launch_quotes_adb_when_the_locale_cannot_be_read():
-    shell = FakeShell("1\n", "error: device offline\n")
-
-    with pytest.raises(DriverError) as excinfo:
-        driver(shell).launch()
-
-    message = str(excinfo.value)
-    assert "device offline" in message
-    # And not dressed up as though adb's sentence were a locale.
-    assert "expected 'en-US'" not in message
-
-
 def test_launch_still_says_booting_when_the_property_is_merely_unset():
     # A device that is up but mid-boot answers with nothing at all, which is
     # a different thing from adb being unable to ask.
@@ -292,7 +292,7 @@ def test_launch_still_says_booting_when_the_property_is_merely_unset():
 
 
 def test_launch_force_stops_before_starting():
-    shell = FakeShell("1\n", "en-US\n", "", "")
+    shell = FakeShell("1\n", "0\n", "0\n", "0\n", "0\n", "", "")
     naps = []
 
     driver(shell, naps).launch()
@@ -369,14 +369,14 @@ def test_verify_pan_reports_what_the_field_actually_reads():
     # One digit short of the PAN: what a caret bug leaves behind.
     form = (
         "<hierarchy>"
-        '<node class="android.widget.EditText" text="4111 1111 1111 000"'
-        ' content-desc="Card number input" bounds="[0,0][100,50]"/>'
-        '<node class="android.view.View" text="" content-desc="Expiry date input"'
-        ' bounds="[0,60][100,100]"/>'
-        '<node class="android.view.View" text="" content-desc="CVV input"'
-        ' bounds="[0,110][100,150]"/>'
-        '<node class="android.view.View" text="" content-desc="Cardholder name input"'
-        ' bounds="[0,160][100,200]"/>'
+        '<node class="android.widget.EditText" resource-id="paycross.cardNumber"'
+        ' text="4111 1111 1111 000" content-desc="" bounds="[0,0][100,50]"/>'
+        '<node class="android.view.View" resource-id="paycross.expiry" text=""'
+        ' content-desc="" bounds="[0,60][100,100]"/>'
+        '<node class="android.view.View" resource-id="paycross.cvv" text=""'
+        ' content-desc="" bounds="[0,110][100,150]"/>'
+        '<node class="android.view.View" resource-id="paycross.cardholderName"'
+        ' text="" content-desc="" bounds="[0,160][100,200]"/>'
         "</hierarchy>"
     )
 
@@ -393,31 +393,50 @@ def test_verify_pan_reports_what_the_field_actually_reads():
 
 # -- select_saved_card --------------------------------------------------------
 
-#: The dropdown once opened, dumped 2026-08-31. It arrives as its OWN window:
-#: the whole dump is 3.4 KB and the form behind it is simply not in it, which
-#: is why the row search runs against a tree that holds nothing else.
+#: The saved-card sheet, dumped from the emulator on 2026-09-07 against a
+#: session carrying `saved_cards: {show: all, allow_removal: true}` for a
+#: customer with one stored card.
 #:
-#: Its shape is the third instance of this dimension's recurring trap -- the
-#: text sits on a NON-clickable `TextView` inside a clickable `android.view.View`
-#: parent. Unlike the save checkbox, though, here the tap works: the label is a
-#: CHILD of the clickable row rather than a sibling, so the touch bubbles up.
-#: Measured, not assumed.
-SAVED_MENU = (FIXTURES / "android-saved-card-menu.uix").read_text()
+#: It is a RADIO LIST, and that is the change Train 2 saw coming: the
+#: `ExposedDropdownMenuBox` this driver used to open, whose popup arrived as a
+#: window of its own, is gone. Every row is addressable where it stands.
+SAVED_SHEET = (FIXTURES / "android-saved-card-sheet.uix").read_text()
 
 #: And the form after the row was tapped: the fresh-card fields are gone and
-#: the saved-card branch has rendered its prompt.
+#: the saved-card branch has rendered its single CVV box.
 SAVED_CHOSEN = (FIXTURES / "android-saved-card-chosen.uix").read_text()
 
+#: The removal confirmation, which is its OWN window: this dump holds the
+#: dialog and nothing else, so the row whose bin raised it is not in it. That
+#: is why `remove_saved_card` reads the row's identifier BEFORE it taps.
+REMOVE_DIALOG = (FIXTURES / "android-remove-dialog.uix").read_text()
 
-def test_select_saved_card_opens_the_selector_then_picks_the_stored_row():
-    shell = FakeShell(trees=[SAVED_SHEET, SAVED_MENU, SAVED_CHOSEN])
+#: The one stored card in those dumps. Spelled out because every assertion
+#: below is about the driver carrying THIS uuid from the row to the bin to the
+#: check that the row went away.
+STORED = "paycross.savedCard.01a0763c-d401-737c-bbb9-948af4e0f60b"
+
+
+def test_select_saved_card_taps_the_stored_row_where_it_stands():
+    shell = FakeShell(trees=[SAVED_SHEET, SAVED_CHOSEN])
 
     driver(shell).select_saved_card()
 
     taps = [a for a in shell.argv_text() if a.startswith("shell input tap")]
-    # First the selector at the centre of its bounds [42,431][1038,578],
-    # then the stored row's label at the centre of [74,741][375,794].
-    assert taps == ["shell input tap 540 504", "shell input tap 224 767"]
+    # The centre of the row's own bounds [42,431][1038,559]. One tap: there is
+    # no menu to open first any more.
+    assert taps == ["shell input tap 540 495"]
+
+
+def test_select_saved_card_does_not_mistake_a_bin_for_a_row():
+    # `paycross.savedCard.<uuid>.delete` starts with the row's identifier, so
+    # a prefix match alone would find the bin -- and tapping it opens the
+    # removal dialog instead of choosing the card.
+    nodes = tree.parse_uiautomator(SAVED_SHEET)
+
+    rows = driver(FakeShell())._saved_card_rows(nodes)
+
+    assert [n.identifier for n in rows] == [STORED]
 
 
 def test_select_saved_card_verifies_the_form_really_switched():
@@ -428,8 +447,8 @@ def test_select_saved_card_verifies_the_form_really_switched():
     saved-card payment -- and `saved_card_used` is the only assertion that would
     ever notice, an hour into a matrix run. So this raises.
     """
-    # The menu opens and the tap lands, but the form never switches.
-    shell = FakeShell(trees=[SAVED_SHEET, SAVED_MENU, SAVED_SHEET])
+    # The tap lands, but the form never switches.
+    shell = FakeShell(trees=[SAVED_SHEET, SAVED_SHEET])
 
     with pytest.raises(DriverError) as excinfo:
         driver(shell).select_saved_card(timeout=0)
@@ -437,22 +456,21 @@ def test_select_saved_card_verifies_the_form_really_switched():
     assert "still showing the new-card form" in str(excinfo.value)
 
 
-def test_select_saved_card_matches_the_masked_pan_by_shape_not_by_value():
-    # The driver cannot know the stored PAN, so the row is found by the shape
-    # the backend renders -- six digits, asterisks, last four. The neighbouring
-    # `Use a new card` row and the `JOHN DOE - 12/2028` detail line are both in
-    # the same popup and neither matches.
-    assert android._MASKED_PAN.fullmatch("411111******0000")
-    assert not android._MASKED_PAN.fullmatch("Use a new card")
-    assert not android._MASKED_PAN.fullmatch("JOHN DOE - 12/2028")
-    # And not the COLLAPSED selector's own text, which carries the expiry --
-    # so a search run after the selection cannot re-match what it just chose.
-    assert not android._MASKED_PAN.fullmatch("411111******0000 (12/2028)")
+def test_select_saved_card_is_not_satisfied_by_a_form_that_rendered_nothing():
+    # The switch is `cardNumber` gone AND `cvv` still there. Absence alone
+    # would also be true of a sheet that failed to draw at all, which is a
+    # different finding and must not read as a successful selection.
+    empty = "<hierarchy></hierarchy>"
+    shell = FakeShell(trees=[SAVED_SHEET, empty])
+
+    with pytest.raises(DriverError):
+        driver(shell).select_saved_card(timeout=0)
 
 
 def test_select_saved_card_says_so_when_no_stored_row_is_offered():
     # `saved_cards` missing from the session, or the customer has no card.
-    shell = FakeShell(tree=SAVED_SHEET)  # the selector opens onto nothing
+    ordinary = (FIXTURES / "android-rearmed.uix").read_text()
+    shell = FakeShell(tree=ordinary)
 
     with pytest.raises(DriverError) as excinfo:
         driver(shell).select_saved_card(timeout=0)
@@ -460,19 +478,64 @@ def test_select_saved_card_says_so_when_no_stored_row_is_offered():
     assert "no stored-card row" in str(excinfo.value)
 
 
+# -- remove_saved_card --------------------------------------------------------
+
+#: The sheet after the card really went: same session, no rows left.
+SAVED_GONE = SAVED_SHEET.replace(STORED, "paycross.somethingElse")
+
+
+def test_remove_saved_card_taps_the_bin_of_the_row_it_read():
+    shell = FakeShell(
+        trees=[SAVED_SHEET, SAVED_SHEET, REMOVE_DIALOG, REMOVE_DIALOG, SAVED_GONE]
+    )
+
+    driver(shell).remove_saved_card()
+
+    taps = [a for a in shell.argv_text() if a.startswith("shell input tap")]
+    # The bin at the centre of [912,442][1038,559], then Remove at the centre
+    # of [701,1285][897,1411]. The row itself is never tapped: choosing a card
+    # is not what this action does.
+    assert taps == ["shell input tap 975 500", "shell input tap 799 1348"]
+
+
+def test_remove_saved_card_raises_when_the_row_survives_the_confirmation():
+    """The defect this action exists to catch, measured on TEST 2026-09-06.
+
+    Confirming the removal answered 200 on the screen and left the row in
+    place, with `Could not remove the card. Try again.` in the error banner,
+    because the web API could not write the session blob back. A driver that
+    tapped Confirm and moved on would have reported a removal that never
+    happened -- and no merchant assertion in the cell grammar would have
+    noticed, because there is no saved-card count to assert.
+    """
+    shell = FakeShell(
+        trees=[SAVED_SHEET, SAVED_SHEET, REMOVE_DIALOG, REMOVE_DIALOG, SAVED_SHEET]
+    )
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).remove_saved_card(timeout=0)
+
+    assert "still on the sheet" in str(excinfo.value)
+    assert STORED in str(excinfo.value)
+
+
+def test_remove_saved_card_says_so_when_there_is_nothing_to_remove():
+    ordinary = (FIXTURES / "android-rearmed.uix").read_text()
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(FakeShell(tree=ordinary)).remove_saved_card(timeout=0)
+
+    assert "no stored-card row" in str(excinfo.value)
+
+
 # -- wait_saved_card ----------------------------------------------------------
 
-#: The saved-card sheet, dumped from the emulator on 2026-08-31 against a
-#: session carrying `saved_cards: {show: all}` for a customer with one stored
-#: card. The first such dump taken in this campaign.
-SAVED_SHEET = (FIXTURES / "android-saved-card-sheet.uix").read_text()
 
-
-def test_wait_saved_card_finds_the_selector_the_sdk_only_composes_when_there_is_one():
-    # `CardFormScreen.kt:161` composes SavedCardSelector only under
-    # `if (savedCards.isNotEmpty())`, so the selector being on screen IS the
+def test_wait_saved_card_finds_the_list_the_sdk_only_composes_when_there_is_one():
+    # `CardFormScreen.kt` composes SavedCardSelector only under
+    # `if (savedCards.isNotEmpty())`, so the list being on screen IS the
     # predicate -- there is no separate "a card is offered" signal to read.
-    assert android.SAVED_CARD_SELECTOR == "Saved card selector"
+    assert android.SAVED_CARDS == "paycross.savedCards"
 
     assert driver(FakeShell(tree=SAVED_SHEET)).wait_saved_card() is True
 
@@ -496,32 +559,53 @@ def test_wait_saved_card_still_raises_when_the_device_will_not_dump():
 
 # -- save_card ----------------------------------------------------------------
 
-#: The real form, dumped from the emulator on 2026-08-31 against a session
-#: carrying `save_card_config`. The save checkbox is the only checkable node on
-#: it, it carries no text and no content-desc, and the label beside it is a
-#: separate non-clickable TextView -- which is why `save_card` matches on the
-#: state rather than on anything readable.
+#: The real form, dumped from the emulator on 2026-09-07 against a session
+#: carrying `save_card_config`, before anything ticked the box. The tagged node
+#: is the `toggleable` Row: it carries the identifier, the checked state and
+#: the click all at once, and the Compose `Checkbox` inside it takes no click
+#: of its own. That is the whole reason `save_card` shrank in Train 4 -- it
+#: used to hunt the tree for anything two-state, because the box carried no
+#: name and its caption was a non-clickable sibling.
 SAVE_FORM = (FIXTURES / "android-save-card-form.uix").read_text()
 SAVE_FORM_TICKED = SAVE_FORM.replace(
-    'class="android.widget.CheckBox" package="com.paycross.flutterdemo" '
-    'content-desc="" checkable="true" checked="false"',
-    'class="android.widget.CheckBox" package="com.paycross.flutterdemo" '
-    'content-desc="" checkable="true" checked="true"',
+    'resource-id="paycross.saveCard" class="android.view.View" '
+    'package="com.paycross.flutterdemo" content-desc="" checkable="true" '
+    'checked="false"',
+    'resource-id="paycross.saveCard" class="android.view.View" '
+    'package="com.paycross.flutterdemo" content-desc="" checkable="true" '
+    'checked="true"',
 )
-assert SAVE_FORM_TICKED != SAVE_FORM, "the fixture's checkbox changed shape"
+assert SAVE_FORM_TICKED != SAVE_FORM, "the fixture's save-card row changed shape"
 
 
-def test_save_card_taps_the_checkbox_itself_and_not_its_label():
-    # The label is a plain TextView in a Row with no clickable modifier on it,
-    # so a tap there does nothing at all -- and looks exactly like one that
-    # worked. Measured centres: the box is at (106, 1125), the words at
-    # (405, 1124), and they are 300px apart on the same line.
+def test_save_card_taps_the_row_the_identifier_is_on():
+    # One node, found by name and tapped where it was found. The old hazard is
+    # gone: the caption is inside the toggleable Row now rather than beside it,
+    # so there is no "tapped the words instead" failure left to guard against.
     shell = FakeShell(trees=[SAVE_FORM, SAVE_FORM_TICKED])
 
     driver(shell).save_card()
 
     taps = [a for a in shell.argv_text() if a.startswith("shell input tap")]
-    assert taps == ["shell input tap 106 1125"]
+    assert taps == ["shell input tap 540 1124"]
+
+
+def test_save_card_refuses_a_tag_that_is_not_on_a_two_state_control():
+    # If the tag ever moves off the toggleable row, the tap below would land
+    # somewhere plausible and the read-back would blame the tap. Saying it
+    # here points at the SDK change instead.
+    loose = SAVE_FORM.replace(
+        'resource-id="paycross.saveCard" class="android.view.View" '
+        'package="com.paycross.flutterdemo" content-desc="" checkable="true"',
+        'resource-id="paycross.saveCard" class="android.view.View" '
+        'package="com.paycross.flutterdemo" content-desc="" checkable="false"',
+    )
+    assert loose != SAVE_FORM
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(FakeShell(tree=loose)).save_card(timeout=0)
+
+    assert "not a two-state control" in str(excinfo.value)
 
 
 def test_save_card_verifies_the_tick_took():
@@ -553,13 +637,15 @@ def test_save_card_leaves_an_already_ticked_box_alone():
 def test_save_card_says_so_when_the_session_never_rendered_a_box():
     # `save_card_config` absent from the session means `canSaveCard` is false
     # and the checkbox is not composed at all. That is a cell-authoring
-    # mistake, and this message is what points at it.
-    shell = FakeShell(tree=(FIXTURES / "android-rearmed.uix").read_text())
+    # mistake, and this message is what points at it. The saved-card sheet is
+    # a real dump of exactly such a session.
+    shell = FakeShell(tree=SAVED_SHEET)
 
     with pytest.raises(DriverError) as excinfo:
         driver(shell).save_card(timeout=0)
 
-    assert "save-card checkbox" in str(excinfo.value)
+    assert "save_card_config" in str(excinfo.value)
+    assert android.SAVE_CARD in str(excinfo.value)
 
 
 # -- type_cvv -----------------------------------------------------------------
@@ -580,7 +666,7 @@ def test_type_cvv_fills_the_cvv_field_and_touches_nothing_else():
     assert "shell input text 123" in text
     # The same content-desc the fresh form uses: CardFormScreen renders the
     # same CvvField on both branches, so there is one matcher, not two.
-    assert android.CVV == "CVV input"
+    assert android.CVV == "paycross.cvv"
     # Nothing else typed and nothing else cleared. A stray DEL here would
     # eat digits the shopper is about to be asked for again.
     assert text.count("input text") == 1
@@ -985,7 +1071,7 @@ def test_relaunch_on_android_is_exactly_launch():
     # Two launches' worth: FakeShell pops one output per call, and a launch
     # spends eight -- boot, locale, airplane, don't-keep-activities, the two
     # rotation settings, force-stop, monkey.
-    one = ["1\n", "en-US\n", "0\n", "0\n", "0\n", "0\n", "", ""]
+    one = ["1\n", "0\n", "0\n", "0\n", "0\n", "", ""]
     shell = FakeShell(*one, *one)
     made = driver(shell)
 
@@ -1017,23 +1103,63 @@ def sheet(*rows: tuple[str, str, str]) -> str:
     )
 
 
+def tagged(*rows: tuple[str, str, str]) -> str:
+    """A tree of `(resource-id, text, bounds)` nodes and nothing else.
+
+    The sibling of `sheet` for everything the SDK draws: those nodes are found
+    by identifier now, and a tree built out of `content-desc` would prove a
+    matcher that no longer exists.
+    """
+    return (
+        "<hierarchy>"
+        + "".join(
+            f'<node class="android.view.View" resource-id="{identifier}"'
+            f' text="{text}" content-desc="" bounds="{bounds}"/>'
+            for identifier, text, bounds in rows
+        )
+        + "</hierarchy>"
+    )
+
+
 def taps(shell):
     return [c for c in shell.argv_text() if c.startswith("shell input tap")]
 
 
 def test_tap_pay_taps_the_sheets_own_pay_button_and_not_the_examples():
-    # The example's own Pay is a content-desc; the sheet's is Compose `text`
-    # carrying the formatted amount. Matching the wrong one cost the
-    # 2026-08-26 run a false 270-second timeout.
+    """One identifier, and the amount is no longer part of the matcher.
+
+    This used to match `text="Pay €10.00"` exactly, which is what made the
+    amount a parameter, made the `en-US` guard necessary and made the example
+    app's own `Pay` a hazard worth a test. Two of those are gone; the hazard is
+    not, because the example's Pay is still on the screen behind the sheet.
+    """
     shell = FakeShell(
-        tree=sheet(
-            ("€10.00", "", "[0,0][100,40]"),
-            ("Pay €10.00", "", "[0,60][100,100]"),
-            ("", "Pay", "[0,120][100,160]"),
+        tree=(
+            "<hierarchy>"
+            '<node class="android.view.View" resource-id="paycross.amount"'
+            ' text="€10.00" content-desc="" bounds="[0,0][100,40]"/>'
+            '<node class="android.view.View" resource-id="paycross.payButton"'
+            ' text="" content-desc="" bounds="[0,60][100,100]"/>'
+            '<node class="android.view.View" resource-id="" text="Pay €10.00"'
+            ' content-desc="" bounds="[0,70][100,90]"/>'
+            '<node class="android.view.View" resource-id="" text=""'
+            ' content-desc="Pay" bounds="[0,120][100,160]"/>'
+            "</hierarchy>"
         )
     )
 
     driver(shell).tap_pay("€10.00")
+
+    assert taps(shell) == ["shell input tap 50 80"]
+
+
+def test_tap_pay_does_not_need_the_amount_it_is_given():
+    # The parameter survives only because the base class and the runner pass
+    # it on both platforms. A cell whose amount the driver could not compute
+    # must still be able to press Pay.
+    shell = FakeShell(tree=tagged(("paycross.payButton", "", "[0,60][100,100]")))
+
+    driver(shell).tap_pay("nonsense")
 
     assert taps(shell) == ["shell input tap 50 80"]
 
@@ -1053,38 +1179,70 @@ def test_acs_waits_for_the_sandbox_page_before_it_taps_an_outcome():
     assert taps(shell) == ["shell input tap 50 280"]
 
 
+#: The cancel confirmation as it really arrives -- its own window, holding the
+#: dialog and nothing else. Confirmed against a dump on 2026-09-07
+#: (`android-cancel-dialog.uix`); the tags reach one only because 0.8.0 sets
+#: `testTagsAsResourceId` per window rather than once on the sheet.
+CANCEL_WINDOW = tagged(
+    ("paycross.cancelDialog", "", "[0,300][100,500]"),
+    ("paycross.cancelDismiss", "", "[0,400][50,440]"),
+    ("paycross.cancelConfirm", "", "[60,400][100,440]"),
+)
+
+
 def test_cancel_challenge_backs_out_of_the_acs_page_then_confirms():
     shell = FakeShell(
         trees=[
             sheet((android.ACS_MARKERS[0], "", "[0,0][100,40]")),
-            sheet(
-                (android.CANCEL_TITLE, "", "[0,300][100,340]"),
-                (android.CANCEL_CONFIRM, "", "[0,400][100,440]"),
-            ),
+            CANCEL_WINDOW,
+            CANCEL_WINDOW,
         ]
     )
 
     driver(shell).cancel_challenge()
 
     assert "shell input keyevent 4" in shell.argv_text()
-    assert taps(shell) == ["shell input tap 50 420"]
+    assert taps(shell) == ["shell input tap 80 420"]
 
 
 def test_cancel_form_confirms_without_waiting_for_the_acs_page():
     # BackHandler is unconditional on both screens (PaymentActivity.kt), and
     # the card form is not the ACS page -- so this one must not look for it.
-    shell = FakeShell(
-        tree=sheet(
-            (android.CANCEL_TITLE, "", "[0,300][100,340]"),
-            (android.CANCEL_CONFIRM, "", "[0,400][100,440]"),
-        )
-    )
+    shell = FakeShell(tree=CANCEL_WINDOW)
 
     driver(shell).cancel_form()
 
     assert "shell input keyevent 4" in shell.argv_text()
-    assert taps(shell) == ["shell input tap 50 420"]
+    assert taps(shell) == ["shell input tap 80 420"]
     assert not any(android.ACS_MARKERS[0] in c for c in shell.argv_text())
+
+
+def test_dismiss_cancel_presses_the_other_button_and_waits_for_the_form():
+    """The one dialog button no cell ever pressed.
+
+    `cancel_form` and `cancel_challenge` both confirm, so `cancelDismiss` shipped
+    untested from this side. The last look is not decoration either: the dialog
+    is its own window and a dump taken while it is up holds only the dialog, so
+    "the dialog closed" and "the sheet came back" are two different
+    observations and only the second one says the cell can carry on paying.
+    """
+    form = tagged(("paycross.payButton", "", "[0,60][100,100]"))
+    shell = FakeShell(trees=[CANCEL_WINDOW, CANCEL_WINDOW, form])
+
+    driver(shell).dismiss_cancel()
+
+    assert "shell input keyevent 4" in shell.argv_text()
+    assert taps(shell) == ["shell input tap 25 420"]
+
+
+def test_dismiss_cancel_raises_when_the_sheet_does_not_come_back():
+    # A dialog that closed onto nothing is not a form the cell can pay from.
+    shell = FakeShell(trees=[CANCEL_WINDOW, CANCEL_WINDOW, "<hierarchy></hierarchy>"])
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).dismiss_cancel()
+
+    assert "the form after a dismissed cancel" in str(excinfo.value)
 
 
 # -- present_token, tap_example_pay, enter_token -------------------------------
@@ -1266,7 +1424,7 @@ def test_airplane_refuses_a_cut_that_did_not_take():
 def test_launch_refuses_a_device_a_previous_cell_left_in_airplane_mode():
     # Neither a failure nor an exception turns it off again, and every cell
     # after it would fail for that reason while looking like an SDK finding.
-    shell = FakeShell("1\n", "en-US\n", "1\n")
+    shell = FakeShell("1\n", "1\n")
 
     with pytest.raises(DriverError) as excinfo:
         driver(shell).launch()
@@ -1576,7 +1734,7 @@ def test_dont_keep_activities_refuses_a_setting_that_did_not_take():
 def test_launch_refuses_a_device_left_not_keeping_activities():
     # Left on it poisons every later cell -- the plugin's detach path fires on
     # every one of them, and each failure looks like an SDK finding.
-    shell = FakeShell("1\n", "en-US\n", "0\n", "1\n")
+    shell = FakeShell("1\n", "0\n", "1\n")
 
     with pytest.raises(DriverError) as excinfo:
         driver(shell).launch()
@@ -1592,7 +1750,7 @@ def test_launch_refuses_a_device_a_previous_cell_left_turned():
     # turned, and the next cell failed looking for a button that was off
     # screen. Without this the message is "no element named ... within 60s",
     # which reads as an SDK finding.
-    shell = FakeShell("1\n", "en-US\n", "0\n", "0\n", "0\n", "1\n")
+    shell = FakeShell("1\n", "0\n", "0\n", "0\n", "1\n")
 
     with pytest.raises(DriverError) as excinfo:
         driver(shell).launch()
@@ -1607,7 +1765,7 @@ def test_launch_ignores_a_stale_user_rotation_the_sensor_overrides():
     # `user_rotation` only takes effect while `accelerometer_rotation` is 0.
     # With the sensor in charge the device is upright whatever that value
     # says, and refusing on it would break a rig nothing had turned.
-    shell = FakeShell("1\n", "en-US\n", "0\n", "0\n", "1\n", "1\n", "", "")
+    shell = FakeShell("1\n", "0\n", "0\n", "1\n", "1\n", "", "")
 
     driver(shell).launch()
 
