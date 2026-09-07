@@ -162,6 +162,14 @@ SETTLE_SECONDS = 0.5
 PASTE_SETTLE_SECONDS = 1.5
 LAUNCH_SETTLE_SECONDS = 6
 SCROLL_SETTLE_SECONDS = 1.0
+#: Between the keystrokes of a card field, and only there. `/wda/keys` takes
+#: the whole string in one request and the SDK's formatter reflows the field
+#: after every character it accepts -- inserting the expiry's `/`, which moves
+#: the caret. Sent flat out, the expiry came back reading `12/2` from `1228`:
+#: one character delivered into a field that was being rewritten underneath it.
+#: The Android driver paces its digits for the same reason and calls it
+#: DIGIT_PACING_SECONDS.
+KEY_PACING_SECONDS = 0.15
 ALERT_SETTLE_SECONDS = 1
 POLL_INTERVAL_SECONDS = 1
 
@@ -1008,6 +1016,18 @@ class IosDriver(Driver):
         # One character at a time, as wda.py does: WDA's /wda/keys takes a list.
         self._wda("POST", self._session("/wda/keys"), {"value": list(text)})
 
+    def _paced_keys(self, text: str) -> None:
+        """One request per character, at the pace a formatted field can take.
+
+        `_keys` hands WDA the whole string and it arrives faster than the SDK
+        reflows the field, which loses characters -- see KEY_PACING_SECONDS.
+        Only the card fields need this; the token field is not formatted and is
+        thirteen times longer, so it keeps the bulk path.
+        """
+        for character in text:
+            self._keys(character)
+            self._sleep(KEY_PACING_SECONDS)
+
     # -- actions -------------------------------------------------------------
 
     def _enter_token_text(self, text: str) -> None:
@@ -1289,7 +1309,7 @@ class IosDriver(Driver):
         before = self._value_of(name)
         for _ in range(2):
             self._focus_field(name)
-            self._keys(value)
+            self._paced_keys(value)
             self._sleep(SETTLE_SECONDS)
             if self._value_of(name) != before:
                 return
@@ -1310,7 +1330,7 @@ class IosDriver(Driver):
         # is nothing to read back. `_focus_field` is all this one gets, and the
         # Pay button's own enablement is what says it validated.
         self._focus_field(CVV)
-        self._keys(card.cvv)
+        self._paced_keys(card.cvv)
         self._sleep(SETTLE_SECONDS)
         # CVV is typed last and leaves a numeric keyboard over the bottom of
         # the sheet, which then covers the ACS page's decline outcomes. Tried
@@ -1337,7 +1357,7 @@ class IosDriver(Driver):
         that is found out.
         """
         self._focus_field(CVV)
-        self._keys(cvv)
+        self._paced_keys(cvv)
         self._sleep(SETTLE_SECONDS)
         # The same bargain `type_card` strikes: tried, because the pad covers
         # the bottom of the sheet, and not required, because on this build
