@@ -214,10 +214,17 @@ _DUMP_RETRY_SECONDS = 1
 
 #: The sheet is 402x874; the ACS page is taller. A drag from three quarters
 #: down to just under a third of the way up moves it by about half a screen.
+#:
+#: `_DRAG_FROM` is now a ceiling rather than the origin -- see `_drag_origin`
+#: for what a pan that starts on a text field does, which is nothing.
 _DRAG_FROM = 0.75
 _DRAG_TO = 0.30
 _DRAG_DURATION = 0.4
 _MAX_SWIPES = 12
+
+#: A drag that starts above this is not worth taking: it would move the sheet
+#: by less than a fifth of a screen and burn one of the twelve swipes doing it.
+_DRAG_FLOOR = 0.35
 
 #: How much of an unexpected answer is quoted back. A `/source` body holds the
 #: example's token field, so the excerpt is deliberately short and always a
@@ -833,7 +840,7 @@ class IosDriver(Driver):
                 self._session("/wda/dragfromtoforduration"),
                 {
                     "fromX": width / 2,
-                    "fromY": height * _DRAG_FROM,
+                    "fromY": self._drag_origin(nodes, height),
                     "toX": width / 2,
                     "toY": height * _DRAG_TO,
                     "duration": _DRAG_DURATION,
@@ -841,6 +848,36 @@ class IosDriver(Driver):
             )
             self._sleep(settle)
         raise DriverError(f"{name!r} never came on screen after {max_swipes} swipes")
+
+    def _drag_origin(self, nodes: list[tree.Node], height: int) -> float:
+        """Where a pan has to start for the sheet to receive it at all.
+
+        Measured on the simulator 2026-09-07, and it is not a tuning knob. A
+        drag from `height * _DRAG_FROM` -- y=655 on an 874-tall screen -- moves
+        the card form by nothing whatever, twelve times in a row, because the
+        email `TextField` occupies 632..677 and a UIKit text field swallows the
+        pan. The same drag from y=612 scrolled the sheet by 228 points. The two
+        differ only in which node is underneath: 612 is inside that field's
+        `StaticText` label, which is inert.
+
+        So the origin is read off the tree rather than off the screen: the
+        LOWEST on-screen `StaticText` between the floor and the ceiling, which
+        is as far down as a drag can start without landing on a control and
+        therefore the longest swipe available. A label is the right shape for
+        this on both surfaces -- the sheet's field captions and the ACS page's
+        headings are both `StaticText`.
+
+        The old fraction stays as the fallback, for a screen with no label on
+        it at all. It is no worse than what this replaced.
+        """
+        labels = [
+            node.centre[1]
+            for node in nodes
+            if node.type == "StaticText"
+            and self._on_screen(node)
+            and height * _DRAG_FLOOR <= node.centre[1] <= height * _DRAG_FROM
+        ]
+        return float(max(labels)) if labels else height * _DRAG_FROM
 
     def scroll_back_to_top(
         self,
@@ -1201,17 +1238,80 @@ class IosDriver(Driver):
     def wait_no_google_pay(self, timeout: float) -> bool:
         raise NotImplementedError(self._NO_WALLET)
 
+    def _focus_field(self, name: str) -> None:
+        """Taps a field, and taps it again if the sheet moved under the tap.
+
+        Measured on the simulator 2026-09-07: tapping `paycross.cardNumber`
+        scrolls the form 54 points, because SwiftUI brings the field it has
+        just focused clear of the keyboard. So the coordinates the tap was
+        computed from are stale by the time it lands, and the NEXT field is
+        looked up against a tree read while that scroll was still settling --
+        which is how expiry and CVV came back EMPTY from a `type_card` that
+        raised nothing. An empty expiry is a Pay button that never enables, so
+        the cell then fails at `tap_pay` with a message about the button.
+
+        Two taps rather than a longer sleep: the sheet only moves when a tap
+        lands, so the second look is the settled one by construction, and a
+        sleep long enough to be sure would be spent on every field.
+        A second tap on a field that is already focused does nothing.
+        """
+        node = self._find(name)
+        self._tap_node(node)
+        # A scroll animation, not a frame: SCROLL_SETTLE_SECONDS rather than
+        # the tap settle, or the second look is as stale as the first.
+        self._sleep(SCROLL_SETTLE_SECONDS)
+        settled = self._find(name)
+        if settled.centre != node.centre:
+            self._tap_node(settled)
+            self._sleep(SETTLE_SECONDS)
+
+    def _value_of(self, name: str) -> str | None:
+        for node in self._nodes(tolerate=True):
+            if node.identifier == name:
+                return node.value
+        return None
+
+    def _fill(self, name: str, value: str) -> None:
+        """Focuses a field and types into it, once more if the first go missed.
+
+        The read-back is the point. `type_card` left EXPIRY empty on this sheet
+        and raised nothing -- the form scrolls under the tap that focuses a
+        field, so the next tap is computed against a stale tree and lands
+        somewhere else, and the keys then go to whatever had focus before. An
+        empty expiry is a Pay button that never enables, so the cell fails much
+        later at `tap_pay`, with a message about the button.
+
+        A field that is empty reports its PLACEHOLDER as its value -- `12/30`
+        for the expiry, `NAME ON CARD` for the holder -- so "the value changed"
+        is what says the keys landed, without the driver needing to know what
+        the SDK will have formatted them into.
+        """
+        before = self._value_of(name)
+        for _ in range(2):
+            self._focus_field(name)
+            self._keys(value)
+            self._sleep(SETTLE_SECONDS)
+            if self._value_of(name) != before:
+                return
+        raise DriverError(
+            f"{name} still reads {before!r} after two attempts at typing into "
+            "it; the tap is not reaching the field"
+        )
+
     def type_card(self, card: Card) -> None:
         for name, value in (
             (CARDHOLDER, card.holder),
             (CARD_NUMBER, card.pan),
             (EXPIRY, card.expiry_digits),
-            (CVV, card.cvv),
         ):
-            self.tap_identifier(name)
-            self._sleep(SETTLE_SECONDS)
-            self._keys(value)
-            self._sleep(SETTLE_SECONDS)
+            self._fill(name, value)
+        # The CVV is a `SecureField`: WDA reports its value as bullets however
+        # many digits went in, and an empty one reports bullets too, so there
+        # is nothing to read back. `_focus_field` is all this one gets, and the
+        # Pay button's own enablement is what says it validated.
+        self._focus_field(CVV)
+        self._keys(card.cvv)
+        self._sleep(SETTLE_SECONDS)
         # CVV is typed last and leaves a numeric keyboard over the bottom of
         # the sheet, which then covers the ACS page's decline outcomes. Tried
         # here so it is already gone by the time a challenge page loads, but
@@ -1236,8 +1336,7 @@ class IosDriver(Driver):
         own enablement is what says the field validated, and `tap_pay` is where
         that is found out.
         """
-        self.tap_identifier(CVV)
-        self._sleep(SETTLE_SECONDS)
+        self._focus_field(CVV)
         self._keys(cvv)
         self._sleep(SETTLE_SECONDS)
         # The same bargain `type_card` strikes: tried, because the pad covers
