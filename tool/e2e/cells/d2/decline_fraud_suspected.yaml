@@ -3,7 +3,7 @@
 # change_method cells beside it, and the one shape a merchant must handle
 # without offering a retry.
 #
-# PAN-driven: 0119 is OutcomeFraudSuspected (scenarios.go:23), reached before
+# PAN-driven: 0119 is the sandbox's fraud-suspected outcome, reached before
 # 3DS, so no threeds_result is asserted.
 #
 # Caveat, the same one D0's ACS fraud cell carries: Android's

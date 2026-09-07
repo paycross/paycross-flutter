@@ -457,13 +457,13 @@ def _wait_expired(step: Step, seconds: float, *, sleep=None) -> None:
     env-overridable) while the token minted with it dies at mint + 900 s, so
     re-presenting the original token after the flip would measure the JWT
     expiry all over again rather than the server's verdict. A GET on an open
-    session re-mints a token (`PaymentSessionResource.php`, gated on
+    session re-mints a token (the server's session resource, gated on
     `effective_status === OPEN`), so every poll leaves a fresher one on the
     cell's 0600 file and the last read before the flip hands it one good for
     another ~900 s.
 
     `payments:expire-sessions` runs every minute over sessions that are OPEN
-    and past `expires_at` (`ExpirePaymentSessions.php:29-31`) -- it does not
+    and past `expires_at` (the server's session-expiry job) -- it does not
     look at transactions at all, so a session holding a failed one expires
     exactly like an empty one.
 

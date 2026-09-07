@@ -825,10 +825,10 @@ def test_a_misspelled_acs_outcome_names_what_it_could_have_been(tmp_path):
 
 
 def test_the_acs_allow_list_holds_all_three_of_the_sandboxs_button_groups():
-    # render.go builds authOutcomes, issuerOutcomes AND technicalOutcomes, and
-    # challenge.html.tmpl:142-153 renders each group as buttons whose visible
-    # text is the token. A list covering only two groups would refuse a legal
-    # cell.
+    # The challenge page builds an authentication group, an issuer-declines
+    # group AND a technical group, and its template renders each group as
+    # buttons whose visible text is the token. A list covering only two groups
+    # would refuse a legal cell.
     assert {"approve", "authentication_rejected"} <= cells.ACS_OUTCOMES
     assert {"do_not_honor", "card_expired", "invalid_cvv"} <= cells.ACS_OUTCOMES
     assert {"timeout", "issuer_unavailable", "unknown_error"} <= cells.ACS_OUTCOMES

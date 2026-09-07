@@ -2467,7 +2467,7 @@ class ExpiringSandbox(FakeSandbox):
     """A session that answers `open` a few times and then `expired`.
 
     Every read of an open one re-mints a token, exactly as
-    `PaymentSessionResource.php` does.
+    the server's session resource does.
     """
 
     def __init__(self, opens=2):

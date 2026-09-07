@@ -7,12 +7,12 @@
 #     distinguishes it from session_expired_jwt. The do-not-honor PAN is used
 #     rather than a challenge because it reaches the same state in a third of
 #     the time. `payments:expire-sessions` does not look at transactions
-#     (ExpirePaymentSessions.php:29-31), so a session holding one expires
+#     (the server's session-expiry job), so a session holding one expires
 #     exactly like an empty one.
 #  2. `wait_expired` polls the merchant API until the every-minute job flips
 #     the session, AND rewrites the token file from every read on the way --
 #     an open session re-mints a token on every GET
-#     (PaymentSessionResource.php, gated on effective_status === OPEN --
+#     (the server's session resource, gated on effective_status === OPEN --
 #     ANY non-open status returns a null token, and `effective_status` reads
 #     `expired` as soon as expires_at passes, BEFORE the sweeper runs), so
 #     the last read before the flip leaves a token good for another ~900 s.

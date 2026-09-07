@@ -3,11 +3,11 @@
 # THIS CELL ONLY EXISTS BECAUSE THE TEST MERCHANT CARRIES THE `aft` EXTRA
 # ATTRIBUTE. That was confirmed before the cell was written, and NOT the way
 # the plan proposed: the merchant API's top-level `account_funding` is a plain
-# echo of the create request -- core's PaymentSessionResource says so itself
+# echo of the create request -- the server's session resource says so itself
 # ("stored regardless of the merchant AFT flag") -- so reading it back truthy
 # proves only that the field was stored. The gate is the CHECKOUT SNAPSHOT the
 # SDK reads, GET /api/session/{id} on checkout.test-pay-cross.com, where
-# `data.account_funding` is core's computed isAccountFundingSession. Measured
+# `data.account_funding` is the server's computed account-funding flag. Measured
 # there on TEST 2026-08-31: `true` with the block below, `false` without it,
 # and `data.wallets.google_pay` true either way. Were the merchant to lose
 # `aft`, AccountFundingIntent::check would return false on its first branch,

@@ -41,6 +41,6 @@ expected:
     failure_recovery: change_method
     # Explicitly absent, not merely unasserted. CVV failures are scheme-
     # specific alphanumerics (Visa's N7), not ISO 8583 decline codes, so
-    # canonical.go deliberately maps this one to no network_decline_code at
+    # the server deliberately maps this one to no network_decline_code at
     # all -- and `null` is how a cell says "this field must not be there".
     network_decline_code: null

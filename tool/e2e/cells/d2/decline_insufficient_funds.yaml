@@ -3,11 +3,11 @@
 # with a banner and waits. Dart is told nothing at all until the shopper acts,
 # which is why this cell observes the predicate and then leaves by hand.
 #
-# PAN-driven: sandbox `magicPANs` keys on the last four digits, and 9995 is
-# OutcomeInsufficientFunds (scenarios.go:22). No 3DS is involved, so no
-# threeds_result is asserted.
+# PAN-driven: the sandbox keys on the last four digits, and 9995 is its
+# insufficient-funds outcome. No 3DS is involved, so no threeds_result is
+# asserted.
 #
-# Visa, so no network_advice_code: canonical.go attaches the Merchant Advice
+# Visa, so no network_advice_code: the server attaches the Merchant Advice
 # Code only in a Mastercard range. The decline code is ISO 8583 51.
 #
 # Sub-project #2 (re-arm fixes, ios#14 / android#23) is expected to make this

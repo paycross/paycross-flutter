@@ -5,7 +5,7 @@ that is true of every dimension lives in `cell_rules.py`. What stays here is
 what is true of D5 and of nothing else -- and almost all of it is about the
 one property no other dimension has: **these cells are not independent**. The
 saved-card list is snapshotted into a session at creation and never rebuilt
-(SessionDataService.php:37-38), so a pay cell's session has to be minted after
+(the server's saved-card lookup), so a pay cell's session has to be minted after
 its store cell's save has settled. The runner's only ordering is the filename,
 so the ordering is asserted here rather than trusted.
 """
@@ -124,7 +124,7 @@ def test_each_pair_shares_one_pinned_customer(store, pay):
     other. A mismatched pair looks up a customer that has no cards; a
     templated reference (`CUST-{{timestamp}}`, or the runner's own default)
     mints a fresh customer per session, which is the same thing by a different
-    route. `PaymentSessionsController.php:89-109` mints a random UUID when the
+    route. The server's session-create endpoint mints a random UUID when the
     field is absent, so leaving it out is a third.
     """
     references = {}
@@ -244,7 +244,7 @@ def test_every_pan_is_quoted_and_is_one_the_sandbox_still_recognises():
     # a leading zero is YAML octal, and a PAN whose scenario was removed from
     # the sandbox approves instead of doing what the cell says. `0000` is
     # the instant approve, `3220` the challenge card.
-    live = {"0000", "3220"}  # scenarios.go, the two D5 uses
+    live = {"0000", "3220"}  # sandbox PANs, the two D5 uses
     for path in sorted(D5.glob("*.yaml")):
         for line in path.read_text(encoding="utf-8").splitlines():
             found = re.match(r"\s*pan:\s*(\S+)\s*$", line)

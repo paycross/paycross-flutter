@@ -1,10 +1,10 @@
 # The token is past its own `exp` while its session is still open.
 #
 # The two clocks differ on purpose: config('payments.session_ttl') puts the
-# JWT's exp at mint + 900 s (PaymentSession.php:127,138) while the session's
+# JWT's exp at mint + 900 s while the session's
 # expires_at is mint + 1200 s -- session_ttl + session_grace_period, both
-# env-overridable, so re-read config/payments.php if this cell ever starts
-# timing out (PaymentSession.php, the `creating` hook). Waiting out the
+# env-overridable on the server, so re-read its config if this cell ever starts
+# timing out (the session model's creating hook). Waiting out the
 # difference is the only way to reach this state, and it is why `wait` exists
 # at all.
 #

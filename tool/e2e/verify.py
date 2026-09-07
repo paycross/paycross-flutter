@@ -235,7 +235,7 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
     D2 is the dimension that wants it: `acs_invalid_cvv` asserts
     `network_decline_code: null`, because a CVV failure carries a scheme-
     specific alphanumeric (Visa's N7) rather than an ISO 8583 decline code,
-    so `canonical.go` deliberately attaches none. An absent key there would
+    so the server deliberately attaches none. An absent key there would
     have asserted nothing at all.
     """
     problems: list[str] = []

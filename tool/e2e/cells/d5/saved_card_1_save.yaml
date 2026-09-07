@@ -3,7 +3,7 @@
 # Two request fields are both required and neither is optional:
 # `save_card_config` renders the checkbox, and `customer.merchant_reference`
 # is what makes this session and the next one resolve to ONE customer --
-# omit it and PaymentSessionsController.php:89-109 mints a random UUID, so
+# omit it and the server's session-create endpoint mints a random UUID, so
 # the card is stored against a customer nothing will ever look up again.
 #
 # `save_card_config` alone stores nothing: the save is driven by `card.save`
@@ -18,7 +18,7 @@
 #
 # Filename order is execution order and this pair depends on it: the saved-card
 # list is snapshotted into a session at creation and never rebuilt
-# (SessionDataService.php:37-38), so the session `saved_card_2_pay` mints must
+# (the server's saved-card lookup), so the session `saved_card_2_pay` mints must
 # be minted after this cell's save has settled. `_1_` / `_2_` is that ordering.
 id: saved_card_1_save
 platforms: [android, ios]

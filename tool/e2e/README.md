@@ -567,7 +567,7 @@ against the buttons the sandbox actually renders (`cells.ACS_OUTCOMES`), so a
 typo is refused at load rather than after the 120-second page wait it used to
 cost. That list is all three of the sandbox's button groups —
 `authOutcomes`, `issuerOutcomes` **and** `technicalOutcomes`, which
-`challenge.html.tmpl` renders alike, each button's visible text being the token
+the challenge template renders alike, each button's visible text being the token
 — and it is a literal here because the runner has no access to the Go repo. A
 sandbox that adds a button is a one-line change; one that removes a button
 shows up as a live cell failing rather than as a false pass. Use `expect acs`

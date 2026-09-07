@@ -94,13 +94,11 @@ _LITERAL_TOKEN = re.compile(r"[A-Za-z0-9._~-]{1,200}")
 
 
 #: Every button the sandbox's challenge page renders, which is what
-#: `acs:<outcome>` taps. Three groups, not two: `internal/challenge/render.go`
-#: builds `authOutcomes`, `issuerOutcomes` AND `technicalOutcomes`, and
-#: `assets/challenge.html.tmpl:142-153` renders each of them as
-#: `<button data-outcome="{{.}}">{{.}}</button>` -- so the visible text a
-#: driver taps is the token verbatim, and every token here is reachable.
-#: Values from the sandbox's `internal/sandboxcore/outcome.go`
-#: `origin/main` (read 2026-08-31; the local working tree runs behind).
+#: `acs:<outcome>` taps. Three groups, not two: the challenge page builds an
+#: authentication group, an issuer-declines group AND a technical group, and
+#: its template renders each of them as a button whose visible text is the
+#: token verbatim -- so every token here is reachable by a driver tap.
+#: Values read from the sandbox's outcome constants on 2026-08-31.
 #:
 #: A membership check rather than the shape check this used to be. `[a-z_]+`
 #: accepts `card_expird`, which authors cleanly, reaches a device, and then
