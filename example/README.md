@@ -88,6 +88,40 @@ different strip — "Live — no credentials this session", or "Live — client 
 and six characters — and it has no secure store in reach at all: it can only
 show what is in memory for this session.
 
+## The shop
+
+The first tile on Home, and the storefront icon in the bar, open **PayCross
+Store**: three products, a product page, a checkout summary, the payment
+sheet, and a thank-you page with an order number on it. It exists so that a
+wallet review — and anybody being shown the SDK who does not work here — sees
+a purchase rather than a harness. Nothing on those five screens says
+"sandbox", names a scenario or quotes a test card.
+
+It is not a separate integration. Checkout mints through the same minter, on
+the same merchant credentials from Settings, with the same body shape the
+scenarios send: the product's price in euros under an order number of the
+form `ORDER-<timestamp>`, no stored cards asked for and none offered. It
+presents through the same native sheet, and it writes the run to History like
+any other, filed under `shop:<product>`.
+
+To pay you need credentials, exactly as a scenario does. Pay on a phone
+nobody has set up opens Settings instead of minting.
+
+What happens after the sheet closes:
+
+| Outcome | What the shop does |
+|---|---|
+| Approved | The thank-you page: the order number and what was paid. **Continue shopping** goes back to the product list, past the checkout. |
+| Cancelled | Back on the checkout with "Payment cancelled." and Pay usable again. |
+| Refused | Back on the checkout with the same recovery wording a scenario shows. |
+| Unresolved | Back on the checkout with the same "reconcile server-side" wording a scenario shows. |
+
+**The shop is Test only.** In Live there is no tile and no bar action. Two
+reasons: its Pay button asks nothing before it charges, so in production one
+tap would spend a real card past every refusal a Live tile makes you climb;
+and the red `LIVE — REAL MONEY` banner sits over every screen in the app, so
+a shop in Live would not look like a shop anyway.
+
 ## Home: the scenarios
 
 This is what Home looks like in Test. In Live it has one tile and none of
