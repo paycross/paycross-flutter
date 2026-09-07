@@ -63,10 +63,13 @@ Future<MintedSession> liveMintWithCredentials(
 /// How long the credential read gets before a run gives up on it.
 ///
 /// A platform store with nothing behind it does not fail, it never answers --
-/// the same shape `run.dart` bounds its bookkeeping against. Unbounded, one
-/// wedged Keychain would leave [runInFlight] set for the rest of the process
-/// and neither entrance could start a run again.
-const Duration _credentialReadTimeout = Duration(seconds: 5);
+/// the same shape `present.dart` bounds its bookkeeping against. Unbounded,
+/// one wedged Keychain would leave [runInFlight] set for the rest of the
+/// process and neither entrance could start a run again.
+///
+/// Public because the storefront's checkout reads the same store for the same
+/// reason and must not invent a second deadline for it.
+const Duration credentialReadTimeout = Duration(seconds: 5);
 
 /// True while [runPreset] is reading the credentials for a run.
 ///
@@ -128,7 +131,7 @@ Future<void> runPreset(
   runInFlight = true;
   final credentials = await store
       .read()
-      .timeout(_credentialReadTimeout, onTimeout: () => null)
+      .timeout(credentialReadTimeout, onTimeout: () => null)
       .whenComplete(() {
         runInFlight = false;
       });
