@@ -780,19 +780,27 @@ Two consequences worth knowing before a run:
   the example app's own widgets, the sandbox challenge page's outcome buttons,
   and the wallet button, whose label belongs to Google.
 
-Three identifiers do not reach the drivers, and each is filed rather than
-worked around silently:
+Three identifiers do not reach the drivers, and each is filed — the issue is
+the removal marker for the workaround that stands in for it:
 
-| identifier | platform | what happens |
-|---|---|---|
-| `paycross.walletButton` | Android | attached to an `AndroidView`, so no resource id reaches a dump |
-| `paycross.threeDS` | Android | the same, on the challenge `WebView` |
-| `paycross.payButton` | iOS | the button publishes `paycross.sheet`; `IosDriver._pay_button` carries the fallback |
+| identifier | platform | what happens | filed |
+|---|---|---|---|
+| `paycross.walletButton` | Android | attached to an `AndroidView`, so no resource id reaches a dump | **payment-android-sdk#54** |
+| `paycross.threeDS` | Android | the same, on the challenge `WebView` | **payment-android-sdk#54** |
+| `paycross.payButton` | iOS | the button publishes `paycross.sheet`; `IosDriver._pay_button` carries the fallback | **payment-ios-sdk#47** |
 
-The iOS saved-card picker has the same shape as the third: its rows and bins
-all answer to `paycross.savedCards`, and `IosDriver._picker_rows` reads the
-picker's geometry instead. Both iOS fallbacks prefer the contract and are dead
-code the moment the SDK honours it.
+The iOS saved-card picker has the same shape as the third and the same issue:
+its rows, its bins and `Use a new card` all answer to `paycross.savedCards`,
+and `IosDriver._picker_rows` reads the picker's geometry instead.
+
+Both iOS fallbacks are dead code the moment the SDK honours the contract, and
+each is held to that by a test that FAILS when it does —
+`test_the_pay_button_fallback_is_the_branch_being_taken` and
+`test_the_picker_fallback_is_the_branch_being_taken`. When payment-ios-sdk#47 closes
+and someone re-records the fixtures, those two go red and name the code to
+delete. The Android pair needs no fallback: the wallet is matched by Google's
+own description and the challenge by its rendered markers, both of which the
+driver did anyway.
 
 ### Observing a non-result
 

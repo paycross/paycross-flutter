@@ -195,7 +195,11 @@ ACS_MARKERS = ("AUTHENTICATION OUTCOMES", "Sandbox 3DS Challenge")
 #: is the same shape as the dialog bug 0.8.0 fixed and it is still open --
 #: measured 2026-09-07, `evidence/train4/t7-probe/02-paste_token.uix` has the
 #: wallet row with `content-desc="Pay with GPay"` and no resource-id at all.
-#: The Android README's "assert its presence by id" is not true today.
+#: The Android README's "assert its presence by id" is not true today. Filed as
+#: **payment-android-sdk#54**, together with `paycross.threeDS`, which the
+#: challenge `WebView` loses the same way. Neither costs this driver a
+#: workaround -- the wallet has Google's description and the challenge has
+#: `ACS_MARKERS`, both of which were the matchers here anyway.
 #:
 #: So this string stays, with its old caveat intact: it is rendered by Google
 #: Play services, so it moves with the GMS version and with the device locale,
@@ -358,9 +362,7 @@ class AndroidDriver(Driver):
             # tree, so a tap would land on an arbitrary one instead of failing.
             raise DriverError("refusing to tap on an empty identifier match")
         self._tap(
-            self._find(
-                tree.find_identifier, identifier, "no element named", **kw
-            ).centre
+            self._find(tree.find_identifier, identifier, "the element", **kw).centre
         )
 
     def _saved_card_rows(self, nodes: list[tree.Node]) -> list[tree.Node]:
@@ -460,8 +462,8 @@ class AndroidDriver(Driver):
         # is exactly the state it leaves.
         #
         # Measured on the D3 probe: one un-restored rotation, and the
-        # interleaved control after it failed with "no element named
-        # 'payButton' within 60s" -- which reads as an SDK finding and is a rig
+        # interleaved control after it failed looking for the Pay button, which
+        # was off screen -- a message that reads as an SDK finding and is a rig
         # fault. `cell_rules` refuses a cell with an odd number of turns; this
         # catches the cell that died between two of them, where the teardown
         # replay cannot help because `rotate` has no on/off pair.
@@ -1132,25 +1134,6 @@ class AndroidDriver(Driver):
         if found is None:
             self._blame_the_amount(amount_text)
         return found is not None
-
-    def _blame_the_amount(self, amount_text: str) -> None:
-        """Raises when a re-arm failed only because the amount is spelled elsewise.
-
-        The guard this replaces refused to launch on any locale but `en-US`,
-        because the Pay button's rendered text was the driver's only handle.
-        Nothing renders a handle any more -- but the amount is still computed in
-        one region's spelling, so a French device turns a re-arm that happened
-        into a cell reporting that it did not. That is a rig fault reading as an
-        SDK finding, and this is where it gets named instead.
-        """
-        showing = tree.rearm_amount_mismatch(self._nodes(tolerate=True), amount_text)
-        if showing is not None:
-            raise DriverError(
-                f"the sheet re-armed showing {showing!r} where this cell expects "
-                f"{amount_text!r}: the device is not drawing amounts in the "
-                "spelling `tree.format_amount_en_us` computes, so the re-arm "
-                "check cannot answer. This is the rig, not the SDK."
-            )
 
     def wait_google_pay(self, timeout: float = 30) -> bool:
         found = self._poll(
