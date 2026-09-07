@@ -5,18 +5,10 @@ import 'package:url_launcher/url_launcher.dart';
 import 'environment.dart';
 import 'history.dart';
 import 'minter.dart';
+import 'present.dart';
 import 'presets.dart';
 import 'surface.dart';
 import 'version_panel.dart';
-
-/// How long the two bookkeeping steps after a launch get before the screen
-/// stops waiting on them.
-///
-/// The same deadline `run.dart` puts on the same two steps, and for the same
-/// reason: a platform store with nothing behind it never answers rather than
-/// failing, and without this the "Copy bug report" button would simply never
-/// appear.
-const Duration _bookkeepingTimeout = Duration(seconds: 5);
 
 /// What History records for a session the browser opened.
 ///
@@ -248,49 +240,22 @@ class _WebCheckoutRunScreenState extends State<WebCheckoutRunScreen> {
       _human = human;
     });
 
-    final versions = await _versionsOrUnknown();
-    final entry = HistoryEntry(
-      at: DateTime.now(),
-      presetName: widget.preset.name,
+    final entry = await recordRun(
+      history: widget.history,
+      readVersions: widget.readVersions,
+      scenario: widget.preset.name,
       sessionId: minted.id,
       // There is not one, and there will not be one: a transaction is
       // created by the payment, and the payment is happening somewhere this
       // app cannot see. Recorded as absent rather than invented.
       transactionId: null,
       outcome: outcome,
-      demoVersion: versions.demo,
-      pluginVersion: versions.plugin,
-      nativeSdkVersion: versions.nativeSdk,
       live: widget.live,
       surface: webSurfaceName,
     );
-    await _remember(entry);
 
     if (!mounted) return;
     setState(() => _entry = entry);
-  }
-
-  /// Writes the run to History, and never lets that failure lose the screen.
-  ///
-  /// A payment may already be under way in the browser by the time this
-  /// runs. A store that cannot be written costs a missing row; letting it
-  /// throw would cost the session id, which is the only thing anybody has to
-  /// find that payment by.
-  Future<void> _remember(HistoryEntry entry) async {
-    try {
-      await widget.history.append(entry).timeout(_bookkeepingTimeout);
-    } catch (_) {
-      // Nothing to say on screen: the entry is held in memory either way, so
-      // the card and its bug report render unchanged.
-    }
-  }
-
-  Future<DemoVersions> _versionsOrUnknown() async {
-    try {
-      return await widget.readVersions().timeout(_bookkeepingTimeout);
-    } catch (_) {
-      return unknownVersions;
-    }
   }
 
   Future<void> _copy(String text, String said) async {
