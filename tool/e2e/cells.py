@@ -42,9 +42,18 @@ BARE_ACTIONS = frozenset(
         "tap_pay",
         "tap_google_pay",
         "select_saved_card",
+        # Deletes the first stored card the sheet offers and proves the row
+        # went away. The proof is the verb's whole point: Train 2 measured a
+        # confirmed removal leaving the row in place with an error banner
+        # behind it, so a cell that only tapped Confirm would have passed.
+        "remove_saved_card",
         "save_card",
         "cancel_challenge",
         "cancel_form",
+        # Raises the cancel confirmation and backs out of it, leaving the sheet
+        # where it was. The only way `paycross.cancelDismiss` is ever pressed:
+        # both cancel verbs confirm.
+        "dismiss_cancel",
         "rotate",
         "kill_activity",
     }

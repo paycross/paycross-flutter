@@ -41,6 +41,7 @@ EXPECTED_IDS = {
     "acs_card_expired",
     "acs_do_not_honor",
     "acs_invalid_cvv",
+    "cancel_dismissed_then_paid",
     "cancel_on_form",
     "completed_session_represented",
     "decline_do_not_honor",
@@ -61,7 +62,7 @@ def test_d2_is_exactly_the_cells_the_plan_promised():
 
 @pytest.mark.parametrize(
     "platform, count",
-    [("android", 19), ("ios", 16)],
+    [("android", 20), ("ios", 17)],
 )
 def test_the_d2_cells_satisfy_the_shared_authoring_rules(platform, count):
     loaded = check_cell_dir(D2, platform)

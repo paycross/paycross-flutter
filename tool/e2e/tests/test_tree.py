@@ -19,8 +19,12 @@ def ios():
 def test_parses_an_android_dump_into_uniform_nodes():
     nodes = android("android-rearmed.uix")
 
-    pan_field = tree.find_content_desc(nodes, "Card number input")[0]
-    assert pan_field.type == "android.view.View"
+    # resource-id, which is where a Compose testTag lands once
+    # testTagsAsResourceId is set. The tagged node is the EditText itself; the
+    # `Card number input` description is on a non-clickable View inside it,
+    # which is why the driver stopped matching on the description.
+    pan_field = tree.find_identifier(nodes, "paycross.cardNumber")[0]
+    assert pan_field.type == "android.widget.EditText"
     assert pan_field.bounds == (42, 431, 1038, 599)
     assert pan_field.centre == (540, 515)
     assert pan_field.visible is True
@@ -29,15 +33,21 @@ def test_parses_an_android_dump_into_uniform_nodes():
 def test_parses_a_wda_dump_into_uniform_nodes():
     nodes = ios()
 
-    pay = tree.find_identifier(nodes, "payButton")[0]
-    assert pay.type == "Button"
+    # `paycross.sheet` and not `paycross.payButton`, because that is what the
+    # simulator really answers with: SDK 0.7.0 puts the sheet's identifier on
+    # the group wrapping the form, and SwiftUI's outer name overrides the one
+    # set on the pinned footer. `IosDriver._pay_button` is what copes.
+    pay = [
+        n for n in tree.find_identifier(nodes, "paycross.sheet") if n.type == "Button"
+    ]
+    assert len(pay) == 1
     # label fills both text and content_desc, so matchers need no branch.
-    assert pay.text == "Pay €10.00"
-    assert pay.content_desc == "Pay €10.00"
-    assert pay.bounds == (16, 790, 386, 840)
-    assert pay.centre == (201, 815)
+    assert pay[0].text == "Pay €10.00"
+    assert pay[0].content_desc == "Pay €10.00"
+    assert pay[0].bounds == (20, 790, 382, 840)
+    assert pay[0].centre == (201, 815)
 
-    banner = tree.find_identifier(nodes, "errorBanner")[0]
+    banner = tree.find_identifier(nodes, "paycross.errorBanner")[0]
     # In the tree while scrolled off-screen. The predicate must not need
     # visibility -- CardFormView puts the banner below the pinned footer.
     assert banner.visible is False
@@ -46,32 +56,32 @@ def test_parses_a_wda_dump_into_uniform_nodes():
 def test_a_checkable_node_reports_its_state_and_an_ordinary_one_says_nothing():
     """`checked` is how a two-state control is read, normalised across two dumps.
 
-    D5 needs it and nothing else does. The SDK's "Save card for future use" is
-    a Compose `Checkbox` in a `Row` with no clickable modifier on the Row, so
-    the only node that toggles is the Checkbox itself -- and in a real dump it
-    carries no text and no content description at all
-    (`android-save-card-form.uix`, taken 2026-08-31). Its state is the sole
-    evidence that a tap landed, and `save_card` has to be able to raise rather
-    than report a save that never happened.
+    The SDK's save-card control is a `Row` carrying `Modifier.toggleable` and
+    the `paycross.saveCard` tag, with a `Checkbox` inside it whose own
+    `onCheckedChange` is null. So in a real dump the tagged Row is the
+    checkable node and the CheckBox is not one at all -- the reverse of what
+    this fixture held before Train 4, when the tag did not exist and the box
+    was the only handle. `save_card` reads the state back off the Row, and the
+    state is the sole evidence that a tap landed.
 
     `None` rather than `False` for a node that is not checkable, because
-    uiautomator writes `checked="false"` on every node in the tree -- the
-    frame layouts, the labels, all of them. Reading that as "an unticked
-    control" would make every dump full of them.
+    uiautomator writes `checked="false"` on every node in the tree -- the frame
+    layouts, the labels, all of them. Reading that as "an unticked control"
+    would make every dump full of them.
     """
     nodes = android("android-save-card-form.uix")
 
-    box = [n for n in nodes if n.type.endswith("CheckBox")]
-    assert len(box) == 1, "the save checkbox is the only checkable node here"
-    assert box[0].checked is False
-    assert box[0].bounds == (43, 1062, 169, 1188)
-    # No handle but its class and its state: this is why `save_card` cannot
-    # match on a description and cannot verify by reading a label.
-    assert box[0].text == ""
-    assert box[0].content_desc == ""
+    row = tree.find_identifier(nodes, "paycross.saveCard")
+    assert len(row) == 1
+    assert row[0].checked is False
 
-    label = tree.find_text_exact(nodes, "Save card for future use")[0]
-    assert label.checked is None, "a plain TextView is not a two-state control"
+    # The Compose Checkbox inside it takes no click of its own, so it is not a
+    # two-state control as far as a dump is concerned.
+    inner = [n for n in nodes if n.type.endswith("CheckBox")]
+    assert len(inner) == 1
+    assert inner[0].checked is None
+
+    assert all(n.checked is None for n in nodes if n.type.endswith("TextView"))
 
 
 def test_a_wda_switch_reports_its_state_the_same_way():
@@ -155,124 +165,145 @@ def test_format_amount_en_us(minor, currency, expected):
     assert tree.format_amount_en_us(minor, currency) == expected
 
 
-def test_sheet_rearmed_on_android_needs_the_banner_and_the_pay_button():
-    rearmed = android("android-rearmed.uix")
+#: The two the predicate reads, spelled out here so a rename in `tree` that
+#: the tests happened to follow still fails something.
+BANNER, AMOUNT = "paycross.errorBanner", "paycross.amount"
+
+
+def without(nodes, identifier):
+    return [n for n in nodes if n.identifier != identifier]
+
+
+def showing(nodes, label):
+    """The same tree with the amount header reading `label`."""
+    return [replace(n, text=label) if n.identifier == AMOUNT else n for n in nodes]
+
+
+@pytest.mark.parametrize("dump", ["android-rearmed.uix", None])
+def test_sheet_rearmed_needs_both_halves_on_either_platform(dump):
+    # One rule for both platforms now: the SDKs publish the same identifiers,
+    # so the predicate stopped having a platform branch.
+    nodes = android(dump) if dump else ios()
+    amount = tree.format_amount_en_us(1000, "EUR")
+
+    assert tree.sheet_rearmed(nodes, amount) is True
+    assert tree.sheet_rearmed(without(nodes, BANNER), amount) is False
+    assert tree.sheet_rearmed(without(nodes, AMOUNT), amount) is False
+    # A sheet re-armed at some other amount is not this cell's sheet.
+    assert tree.sheet_rearmed(nodes, "€12.50") is False
+
+
+def test_sheet_rearmed_is_false_on_the_example_apps_own_screen():
+    # The negative that matters: the result screen is what a cell is looking
+    # at when the sheet is gone, and it carries none of the three.
     result_screen = android("android-result.uix")
-    amount = tree.format_amount_en_us(1000, "EUR")
 
-    assert tree.sheet_rearmed(rearmed, "android", amount) is True
-    assert tree.sheet_rearmed(result_screen, "android", amount) is False
-    # A different amount means a different Pay button, so no false positive.
-    assert tree.sheet_rearmed(rearmed, "android", "€12.50") is False
-    # The result screen happens to carry neither half, so it cannot show that
-    # the banner is required. Drop only the banner from a tree that has both.
-    without_banner = [n for n in rearmed if n.text not in tree.ANDROID_REARM_BANNERS]
-    assert tree.sheet_rearmed(without_banner, "android", amount) is False
-
-
-@pytest.mark.parametrize(
-    "banner", ["Payment failed. Please try again.", "Network error. Please try again."]
-)
-def test_sheet_rearmed_on_android_takes_either_banner(banner):
-    # PaymentViewModel renders the second for a submit that never reached the
-    # backend, so without it an airplane-mode cell would look at a plainly
-    # re-armed sheet and report that it never re-armed. iOS is unaffected: its
-    # predicate matches the errorBanner identifier, which covers both.
-    assert banner in tree.ANDROID_REARM_BANNERS
-    rearmed = android("android-rearmed.uix")
-    amount = tree.format_amount_en_us(1000, "EUR")
-    showing = [
-        replace(node, text=banner) if node.text in tree.ANDROID_REARM_BANNERS else node
-        for node in rearmed
-    ]
-
-    assert tree.sheet_rearmed(showing, "android", amount) is True
-    # Still both halves: a banner on its own is not a re-armed sheet.
     assert (
-        tree.sheet_rearmed(
-            [n for n in showing if n.text != f"Pay {amount}"], "android", amount
-        )
+        tree.sheet_rearmed(result_screen, tree.format_amount_en_us(1000, "EUR"))
         is False
     )
 
 
-def test_sheet_rearmed_on_ios_matches_identifiers_not_copy():
-    nodes = ios()
+def test_sheet_rearmed_reads_the_amount_off_the_header_not_the_pay_button():
+    # Measured on the emulator 2026-09-07: Android's `paycross.payButton` is a
+    # View whose own text is empty -- `Pay €10.00` is on a child TextView. So
+    # the button could not answer for the amount even if the predicate asked
+    # it, and the header, which carries the amount as its own text, is what
+    # both platforms read.
+    nodes = android("android-rearmed.uix")
+    button = tree.find_identifier(nodes, "paycross.payButton")[0]
 
-    assert tree.sheet_rearmed(nodes, "ios", "€10.00") is True
-
-    without_banner = [n for n in nodes if n.identifier != "errorBanner"]
-    assert tree.sheet_rearmed(without_banner, "ios", "€10.00") is False
-
-    without_pay = [n for n in nodes if n.identifier != "payButton"]
-    assert tree.sheet_rearmed(without_pay, "ios", "€10.00") is False
-
-
-def test_sheet_rearmed_on_ios_needs_the_pay_button_to_carry_this_amount():
-    # payButton is an identifier, so without this a sheet re-armed at some
-    # other amount -- or a form that was never this cell's -- satisfies it.
-    nodes = ios()
-
-    assert tree.sheet_rearmed(nodes, "ios", "€10.00") is True
-    assert tree.sheet_rearmed(nodes, "ios", "€12.50") is False
+    assert button.text == ""
+    assert tree.find_identifier(nodes, AMOUNT)[0].text == "€10.00"
 
 
-def test_sheet_rearmed_on_ios_tolerates_the_regions_decimal_separator():
+def test_sheet_rearmed_tolerates_the_regions_decimal_separator():
     # Measured on the rig 2026-08-29: the simulator is en_US@rg=lvzzzz -- US
-    # English, Latvian region -- so the SDK renders "Pay €10,00" while the
-    # runner computes "€10.00" and the re-arm cell failed as "the sheet never
+    # English, Latvian region -- so the SDK renders "€10,00" while the runner
+    # computes "€10.00" and the re-arm cell failed as "the sheet never
     # re-armed" on a sheet that plainly had. The value is what the check is
     # about, and a region is free to punctuate it however it likes.
-    nodes = [
-        replace(n, text=n.text.replace(".", ",")) if n.identifier == "payButton" else n
-        for n in ios()
-    ]
-    assert any("€10,00" in n.text for n in nodes if n.identifier == "payButton")
+    nodes = showing(ios(), "Total, €10,00")
 
-    assert tree.sheet_rearmed(nodes, "ios", "€10.00") is True
+    assert tree.sheet_rearmed(nodes, "€10.00") is True
     # Still this cell's amount, and still not another one's.
-    assert tree.sheet_rearmed(nodes, "ios", "€12.50") is False
+    assert tree.sheet_rearmed(nodes, "€12.50") is False
 
 
-def pay_button(label):
-    return [replace(n, text=label) if n.identifier == "payButton" else n for n in ios()]
+def test_sheet_rearmed_reads_an_amount_inside_a_caption():
+    # iOS labels the header `Total, €10.00`; Android's is the bare amount. A
+    # substring search is what reads both without a platform branch.
+    assert tree.sheet_rearmed(showing(ios(), "Total, €10.00"), "€10.00") is True
+    assert tree.sheet_rearmed(showing(ios(), "€10.00"), "€10.00") is True
 
 
-def test_sheet_rearmed_on_ios_does_not_confuse_grouping_with_value():
+def test_sheet_rearmed_does_not_confuse_grouping_with_value():
     # Separator-blind, not digit-blind: neither the amount as written nor the
     # separator-swapped variant may match the head of a longer number. A sheet
     # re-armed at a thousand times the amount is exactly what the amount half
     # of this predicate exists to catch.
     #
-    # "Pay €1,000.00" alone does not prove it -- neither "€10.00" nor "€10,00"
+    # "€1,000.00" alone does not prove it -- neither "€10.00" nor "€10,00"
     # appears in it, so it passed before there was anything stopping them. The
     # two that do reach the hole are below, one per separator convention.
-    assert tree.sheet_rearmed(pay_button("Pay €1,000.00"), "ios", "€10.00") is False
-    assert tree.sheet_rearmed(pay_button("Pay €1,000.00"), "ios", "€1,000.00") is True
+    assert tree.sheet_rearmed(showing(ios(), "Total, €1,000.00"), "€10.00") is False
+    assert tree.sheet_rearmed(showing(ios(), "Total, €1,000.00"), "€1,000.00") is True
 
     # "€10,00", the swapped variant, is the head of "€10,000.00".
-    assert tree.sheet_rearmed(pay_button("Pay €10,000.00"), "ios", "€10.00") is False
+    assert tree.sheet_rearmed(showing(ios(), "€10,000.00"), "€10.00") is False
     # And "€10.00" as written is the head of "€10.000,00".
-    assert tree.sheet_rearmed(pay_button("Pay €10.000,00"), "ios", "€10.00") is False
+    assert tree.sheet_rearmed(showing(ios(), "€10.000,00"), "€10.00") is False
     # Each is still its own amount.
-    assert tree.sheet_rearmed(pay_button("Pay €10,000.00"), "ios", "€10,000.00") is True
-    assert tree.sheet_rearmed(pay_button("Pay €10.000,00"), "ios", "€10.000,00") is True
+    assert tree.sheet_rearmed(showing(ios(), "€10,000.00"), "€10,000.00") is True
+    assert tree.sheet_rearmed(showing(ios(), "€10.000,00"), "€10.000,00") is True
 
 
-def test_sheet_rearmed_on_ios_still_matches_an_amount_that_is_not_last():
+def test_sheet_rearmed_still_matches_an_amount_that_is_not_last():
     # The guard looks at the character after the amount, so anything that is
     # not part of a longer number has to keep matching.
-    assert tree.sheet_rearmed(pay_button("Pay €10.00 now"), "ios", "€10.00") is True
-    assert tree.sheet_rearmed(pay_button("Pay €10.00"), "ios", "€10.00") is True
+    assert tree.sheet_rearmed(showing(ios(), "Total, €10.00 due"), "€10.00") is True
 
 
-@pytest.mark.parametrize("platform", ["android", "ios"])
-def test_sheet_rearmed_refuses_an_empty_amount(platform):
+@pytest.mark.parametrize("predicate", [tree.sheet_rearmed, tree.rearm_amount_mismatch])
+def test_the_rearm_predicates_refuse_an_empty_amount(predicate):
     # "" is in every label, so an empty amount would match any sheet at all.
     with pytest.raises(ValueError):
-        tree.sheet_rearmed(ios(), platform, "")
+        predicate(ios(), "")
 
 
-def test_sheet_rearmed_rejects_an_unknown_platform():
-    with pytest.raises(ValueError):
-        tree.sheet_rearmed([], "windows", "€10.00")
+def test_rearm_amount_mismatch_names_a_french_sheet_rather_than_denying_it():
+    """The half of the removed locale guard that still had work to do.
+
+    `format_amount_en_us` renders `€10.00` where a French sheet draws
+    `10,00 €`, and swapping the separator does not move the symbol. Without
+    this the cell would report "the sheet never re-armed" about a sheet that
+    plainly had -- a rig fault wearing an SDK finding's clothes.
+    """
+    french = showing(ios(), "Total, 10,00 €")
+
+    assert tree.sheet_rearmed(french, "€10.00") is False
+    assert tree.rearm_amount_mismatch(french, "€10.00") == "Total, 10,00 €"
+
+
+def test_rearm_amount_mismatch_leaves_a_different_amount_to_the_cell():
+    # The digits are what separate a spelling from a value. A sheet re-armed at
+    # €12.50 when the cell is a €10.00 one is the finding the amount half
+    # exists to make, and calling it a rig fault would hide it.
+    other = showing(ios(), "Total, €12.50")
+
+    assert tree.sheet_rearmed(other, "€10.00") is False
+    assert tree.rearm_amount_mismatch(other, "€10.00") is None
+
+
+@pytest.mark.parametrize(
+    "nodes_of, why",
+    [
+        (lambda: ios(), "the amount agrees, so there is nothing to explain"),
+        (lambda: without(ios(), BANNER), "no failure banner: this is not a re-arm"),
+        (lambda: without(ios(), AMOUNT), "no amount header to have misread"),
+    ],
+)
+def test_rearm_amount_mismatch_stays_quiet_when_it_has_nothing_to_say(nodes_of, why):
+    # It must not turn every failed re-arm into a rig fault: a cell that
+    # measures "the sheet did not re-arm" has a verdict to report.
+    assert tree.rearm_amount_mismatch(nodes_of(), "€10.00") is None, why

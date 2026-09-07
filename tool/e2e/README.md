@@ -219,6 +219,14 @@ is refused before a credential is read (exit 2). Do not share one across
 dimensions, and do not share an evidence root either: `passed_cells` keys on the
 cell id alone, so D0's `control` pass would otherwise satisfy D2's resume.
 
+The dimensions are `d0` the baseline and 3-D Secure, `d2` the failure matrix,
+`d3` lifecycle, `d4` the wallet, `d5` card-on-file, and **`d6` localization** —
+the same payment `d0`'s control makes, with the sheet drawn in another language.
+D6 is what the identifier switch bought: every matcher on the sheet used to be a
+rendered English string and the Android driver refused to launch against
+anything but `en-US`, so a cell like `french_session` could not have been
+written and would not have run.
+
 `tool/e2e/tests/cell_rules.py` holds the authoring rules every dimension's
 directory must satisfy — a control cell, a terminal verb last (teardown aside),
 no PAN that approves on TEST, `no_succeeded_txn` pinned to a session that
@@ -448,6 +456,8 @@ Things worth knowing before you write an expectation:
 | `type_cvv` | types the cell's CVV into the CVV field and nothing else (D5) |
 | `save_card` | makes sure the save-card box is ticked, and reads the state back to prove it (D5) |
 | `select_saved_card` | chooses the first stored card, and verifies the form switched (D5) |
+| `remove_saved_card` | deletes the first stored card, and waits for that row to leave the sheet (D5) |
+| `dismiss_cancel` | raises the cancel confirmation, backs out of it, and waits for the form (D2) |
 | `background <s>` | home screen, wait `<s>`, resume the **existing** task — never a fresh launch (D3) |
 | `rotate` | a quarter turn, and it stays turned — a cell must turn back (D3) |
 | `kill_activity` | ends the app's process, sheet and all — the stand-in for a low-memory kill (D3) |
@@ -469,13 +479,21 @@ naming the expectation and the number the wait really used:
 `expect google_pay` and `expect no_google_pay` all match
 `content-desc="Pay with GPay"`, which is drawn by Play services rather than by
 the SDK — so it moves with the **GMS version** and with the **device locale**,
-and it can break without a line changing in either repo. The SDK does tag its
-own button (`Modifier.testTag("google_pay_button")`), but
-`testTagsAsResourceId` is set nowhere in either repo, so Compose test tags are
-invisible to `uiautomator`; that is filed as **payment-android-sdk#26**, and
-until it lands this is the only handle there is. The node is also **not
-clickable** — the click handler lives on the `AndroidView`, not on a Compose
-node — so it is tapped at its bounds centre.
+and it can break without a line changing in either repo. It is the last thing
+on the sheet still matched by a rendered string, and that is not an oversight.
+
+The SDK tags its own wrapper `paycross.walletButton`, and **that tag does not
+reach a `uiautomator` dump.** It sits on an `AndroidView`, and
+`testTagsAsResourceId` writes a resource id onto Compose semantics nodes only —
+the node in the dump belongs to Google's hosted `PayButton` and carries no
+resource id at all. Measured 2026-09-07. `paycross.threeDS` is lost the same
+way, for the same reason, on the challenge WebView; neither costs this runner
+anything, because the challenge is detected by `ACS_MARKERS` and the wallet by
+Google's own description. A Compose test does not see the problem, because it
+reads the semantics tree rather than the dump.
+
+The node is also **not clickable** — the click handler lives on the
+`AndroidView`, not on a Compose node — so it is tapped at its bounds centre.
 
 `expect no_google_pay` is the one expectation that waits its answer **out**
 rather than waiting for it. Readiness is a `LaunchedEffect` that runs after the
@@ -535,8 +553,8 @@ carried the old text at 22:07Z and did not at 11:41Z the next morning, and
 every android cell waiting
 for a challenge failed in between while the frictionless control passed five
 times interleaved with them. iOS was untouched, because it matches
-`threeDSCancel`, an accessibility identifier on the SDK's own cancel bar,
-rather than page text.
+`paycross.threeDSCancel`, an accessibility identifier on the SDK's own cancel
+bar, rather than page text.
 
 Two lessons are baked into that constant. **Match text the page renders**, and
 **keep the old marker as well as the new one**, because deployments lag and a
@@ -595,16 +613,25 @@ device, which is what `expect saved_card` is for.
 
 Two platform differences the drivers hide, both measured rather than assumed:
 
-* **What is tappable is not what is nameable.** Android's save checkbox has an
-  empty `text` and an empty `content-desc`, so it is found by its `checkable`
-  state; its label is a separate node that does nothing when tapped. On iOS the
-  row carries the label but only the unnamed control inside it responds.
+* **What is tappable is not always what is nameable.** On iOS the switch row
+  carries the identifier but only the unnamed control inside it responds, so
+  `save_card` finds one node and taps another. Android used to have the mirror
+  of this — an unnamed checkbox beside an unclickable label — and does not any
+  more: `paycross.saveCard` is on the `toggleable` row, which carries the
+  identifier, the state and the click at once.
 * **iOS scrolls, Android does not.** The iOS toggle sits below the fold, so
   `save_card` scrolls to it — and scrolls back, because a form left scrolled
   puts `amount` under the navigation bar and breaks the keyboard-dismissal
   fallback that `acs()` depends on. That is why `save_card` runs **before**
   `type_card` in every store cell: typing raises a numeric pad nothing on this
   build dismisses, and the scroll drag starts inside it.
+
+  **A drag has to start somewhere inert.** Measured 2026-09-07: a swipe from
+  three quarters down the card form moves it by nothing at all, twelve times in
+  a row, because a `TextField` sits under that point and swallows the pan. The
+  same swipe two hundred points higher — inside that field's caption — scrolls
+  the sheet. `IosDriver._drag_origin` therefore picks its start from the tree,
+  the lowest on-screen `StaticText`, rather than from a fraction of the screen.
 
 ### Rig guards, and putting a cell's toys away
 
@@ -715,38 +742,97 @@ Two other defines are read, both passed to `PayCross.configure` when non-empty:
   Both SDKs ship `en` and `fr`. A tag naming neither falls through to the
   session's own locale, then the device, then English, and a malformed one is
   skipped — so a typo here changes the words a cell reads but cannot fail the
-  build or the payment. **The predicates in `tree.py` match English copy**
-  (`sheet_rearmed` compares `Payment failed. Please try again.` word for word),
-  so a French cell needs its own predicates before it can assert on anything
-  the sheet says. The identifiers are unaffected: they are the same
-  `paycross.*` strings in every language.
+  build or the payment.
+
+  **Nothing in `tree.py` matches the sheet's copy any more.** Every predicate
+  reads a `paycross.*` identifier, which is the same string in every language,
+  and D6 is the dimension that proves it. The one thing still written in one
+  region's spelling is the AMOUNT: `format_amount_en_us` renders `€10.00` where
+  a French sheet draws `10,00 €`, and `_carries_amount` swaps the decimal
+  separator without moving the currency symbol. So a localized cell may not
+  expect a re-arm — `test_d6_cells` refuses one — and `wait_rearmed` names the
+  amount the sheet was really showing rather than answering "it never
+  re-armed".
+
+  A session can ask for the language instead of the build: `locale` is a
+  top-level field of the create-session request, and it is what `d6`'s
+  `french_session` cell uses. The build-time define wins over it.
 
   The automation screen itself is untouched by this. It is frozen, it renders
   no copy from the SDK, and its outcome label is the same string in both
   languages.
+
+### Identifiers
+
+Every control the SDKs draw carries a `paycross.*` identifier and the drivers
+reach all of them by it. The strings are the same on both platforms, so a
+matcher is written once: Android publishes a Compose `testTag` as a
+`resource-id`, iOS sets the same string as an `accessibilityIdentifier`.
+
+Two consequences worth knowing before a run:
+
+* **Android needs a DEBUGGABLE host app.** Compose gates
+  `testTagsAsResourceId` on `FLAG_DEBUGGABLE`, so a release build publishes
+  none of them and every matcher times out at once. The debug example APK
+  satisfies it; `--dart-define=PAYCROSS_E2E=true` is about the label contract
+  and is a separate thing.
+* **Rendered text is matched only where nothing else can be.** What is left:
+  the example app's own widgets, the sandbox challenge page's outcome buttons,
+  and the wallet button, whose label belongs to Google.
+
+Three identifiers do not reach the drivers, and each is filed — the issue is
+the removal marker for the workaround that stands in for it:
+
+| identifier | platform | what happens | filed |
+|---|---|---|---|
+| `paycross.walletButton` | Android | attached to an `AndroidView`, so no resource id reaches a dump | **payment-android-sdk#54** |
+| `paycross.threeDS` | Android | the same, on the challenge `WebView` | **payment-android-sdk#54** |
+| `paycross.payButton` | iOS | the button publishes `paycross.sheet`; `IosDriver._pay_button` carries the fallback | **payment-ios-sdk#47** |
+
+The iOS saved-card picker has the same shape as the third and the same issue:
+its rows, its bins and `Use a new card` all answer to `paycross.savedCards`,
+and `IosDriver._picker_rows` reads the picker's geometry instead.
+
+Both iOS fallbacks are dead code the moment the SDK honours the contract, and
+each is held to that by a test that FAILS when it does —
+`test_the_pay_button_fallback_is_the_branch_being_taken` and
+`test_the_picker_fallback_is_the_branch_being_taken`. When payment-ios-sdk#47 closes
+and someone re-records the fixtures, those two go red and name the code to
+delete. The Android pair needs no fallback: the wallet is matched by Google's
+own description and the challenge by its rendered markers, both of which the
+driver did anyway.
 
 ### Observing a non-result
 
 A retryable decline produces no Dart result at all: the native sheet re-arms the
 form and waits. `tree.sheet_rearmed` is how the runner sees that.
 
-* **Android** — a node whose `text` is exactly `Payment failed. Please try
-  again.` **or** exactly `Network error. Please try again.`, *and* one whose
-  `text` is exactly `Pay <formatted amount>`. `PaymentViewModel` renders the
-  first when the backend declined and the second when the request never got
-  there, and a network-cut cell would otherwise look at a plainly re-armed
-  sheet and report that it never re-armed. Exact match, because the amount
-  header renders a bare `€10.00` node, the example's own button is
-  `content-desc="Pay"`, and the wallet row is `content-desc="Pay with GPay"`.
-* **iOS** — the identifiers `errorBanner` and `payButton`, with the payButton's
-  label required to carry the cell's amount. Identifiers rather than copy,
-  because the banner's wording is slated to change. Visibility is not required:
-  the banner sits below the pinned footer after a decline and is in the tree
-  while off-screen.
+**One rule, both platforms**, since the SDKs started publishing the same
+identifiers: `paycross.errorBanner` is in the tree, *and* `paycross.amount`
+carries this cell's amount. The banner says the submit failed; the header says
+the form is up again and that it is this cell's form, which an identifier alone
+never could — without it a sheet re-armed at some other amount, or a form that
+was never this cell's, satisfies the predicate.
+
+It used to be two rules. Android matched the two banner sentences word for word
+and the Pay button's text exactly, which is what made the `en-US` launch guard
+necessary; iOS already matched identifiers. Visibility is not required on
+either: the banner sits below the pinned footer after a decline and is in the
+tree while off-screen.
+
+Two things it deliberately does **not** read:
+
+* **The Pay button.** It would say "the form is being offered again", which the
+  amount header already says — both are drawn by the form, both gone while the
+  spinner is up. And iOS 0.7.0 does not publish it: the button there answers to
+  `paycross.sheet`, so asking would make the predicate false on every iOS cell.
+* **The amount off the Pay button.** Android's `paycross.payButton` is a `View`
+  whose *child* holds `Pay €10.00`; the tagged node's own text is empty.
 
 The banner is not unique to a retryable decline — it appears after any
-non-cancel submit failure — so a `rearmed` verdict needs the predicate **and**
-the merchant check (transaction `failed`, session still `open`).
+non-cancel submit failure, the card-removal failure included — so a `rearmed`
+verdict needs the predicate **and** the merchant check (transaction `failed`,
+session still `open`).
 
 ## The rig
 
@@ -757,11 +843,18 @@ the merchant check (transaction `failed`, session still `open`).
   `adb shell` output arrives with CRLF; `adb exec-out` (screenshots) does not.
 * A Flutter widget surfaces as `content-desc` with an empty `text`; the SDK's own
   Compose text does the opposite. Matching the wrong one cost an earlier run a
-  false 270-second timeout.
-* `launch()` asserts `ro.product.locale == en-US` and refuses to run otherwise,
-  because the Pay button's text is `NumberFormat` output under the device locale
-  and the predicate above matches it exactly. A re-imaged emulator fails loudly
-  rather than silently missing every Pay button.
+  false 270-second timeout. It only matters for the example app now: everything
+  the SDK draws is reached by `resource-id`.
+* **The identifiers are a debug-build contract.** Compose publishes a `testTag`
+  as a `resource-id` only when the host app is debuggable, so the driver must be
+  pointed at the debug example APK. A release build publishes none of them and
+  every matcher times out at once.
+* `launch()` **no longer asserts a locale.** It refused anything but `en-US`
+  while the Pay button's rendered text was the only handle on it; a device
+  drawing French is now a case the rig measures rather than refuses. What that
+  guard really protected is the amount half of `sheet_rearmed`, and
+  `wait_rearmed` diagnoses that directly — naming the amount the sheet was
+  showing, and blaming the rig rather than the SDK.
 * The logcat cutoff is asked of the **device**, not computed in WSL: `logcat -t`
   reads device-local time and the emulator runs `Europe/Kiev`. A UTC cutoff pulls
   the whole ring buffer (110,082 lines against 2,187), and then one unrelated
@@ -858,7 +951,9 @@ in the code's ambitions.
 |---|---|---|
 | PAN read-back | `type_card(card, *, verify_pan=True)` reads the field back after typing | none — `type_card(card)` |
 | Keyboard | dropped with a back key inside `type_card` | `dismiss_keyboard` is iOS-only, and on this simulator **nothing dismisses the CVV pad** |
-| Amount matching | exact node-text match; `launch()` asserts `en-US` exactly | the `.`/`,` separator may be swapped, end-anchored, so `launch()` only refuses a non-English locale — and an unreadable one passes, because a simulator that has never had the key written answers with a complaint rather than a locale |
+| Amount matching | — | *identical*: both read `paycross.amount`, both absorb a swapped `.`/`,` and both end-anchor. Neither `launch()` asserts a locale any more |
+| Pay button | `paycross.payButton`, correct | published as `paycross.sheet` on SDK 0.7.0, so `IosDriver._pay_button` carries a temporary fallback |
+| Scrolling | never — nothing on the sheet is below the fold | `scroll_to`, whose drag has to start on an inert node: a `TextField` swallows the pan |
 | WDA session | none | owns one; created with no `bundleId`, deletes whatever is open |
 | Console capture | none (logcat is pulled per window) | owns one, truncated per launch |
 | Screenshots | captured, but black (`FLAG_SECURE`) | **none at all** — the guard refuses every frame |
@@ -882,12 +977,20 @@ form** — `payButton` sits above the pad — so `type_card` asks best-effort. I
 *is* fatal inside `acs()`, where the pad covers the ACS page's decline outcomes
 and also swallows the swipe that would scroll them into view.
 
-The amount asymmetry follows from the locale guard. Android refuses to run
-anywhere but `en-US`, so there is nothing for its predicate to absorb. The
-iOS simulator's locale is `en_US@rg=lvzzzz` — US English, Latvia region — so the
-SDK renders `Pay €10,00` where the runner computes `€10.00`; the iOS match
-accepts the swap and then end-anchors, so `Pay €10,000.00` no longer satisfies
-€10.00.
+The amount asymmetry is gone, and its disappearance is the shape of this whole
+change. Android used to match the Pay button's rendered text exactly, so its
+`launch()` refused anything but `en-US` and there was nothing for its predicate
+to absorb. The rig's simulator is `en_US@rg=lvzzzz` — US English, Latvia region
+— so the iOS sheet renders `€10,00` where the runner computes `€10.00`, and the
+iOS match had to accept the swap and then end-anchor so that `€10,000.00` did
+not satisfy `€10.00`. Both platforms now read `paycross.amount` through the same
+`_carries_amount`, and both launch against whatever locale the device is in.
+
+What the swap does **not** do is move the currency symbol, so a French sheet's
+`10,00 €` is still not `€10.00`. That is the one thing a localized cell cannot
+assert on, `test_d6_cells` refuses one, and `wait_rearmed` raises naming the
+amount it really saw rather than reporting a re-arm that plainly happened as one
+that did not.
 
 ## Evidence
 

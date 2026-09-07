@@ -1,0 +1,38 @@
+# The shopper nearly walks away, and then does not.
+#
+# The other half of `cancel_on_form`. That cell raises the cancel confirmation
+# and says yes; this one raises it and says no, and then pays. Between them
+# both buttons of `paycross.cancelDialog` are pressed by something other than a
+# person -- `cancelDismiss` was reachable from no cell at all until this one.
+#
+# It belongs in the failure matrix rather than beside the control because what
+# it is really testing is a recovery: the sheet has been interrupted mid-flow
+# and has to come back usable. `dismiss_cancel` asserts the Pay button is back
+# before returning, and the success below is what says the form behind the
+# dialog kept the card that was typed into it.
+#
+# The dialog is raised differently on each platform and the verb hides it:
+# Android has no cancel control and is cancelled with the system back gesture,
+# which the SDK catches; iOS taps `paycross.cancel`. That asymmetry is why this
+# is one verb rather than a `tap` in the cell file.
+id: cancel_dismissed_then_paid
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - dismiss_cancel
+  - tap_pay
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded

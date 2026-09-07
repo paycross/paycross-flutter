@@ -9,6 +9,11 @@ flutter-paste-token.sh. Three properties of this setup shape everything here:
 * A Flutter widget surfaces as `content-desc` with an empty `text`, while the
   SDK's own Compose text surfaces as `text`. Matching the wrong one cost the
   2026-08-26 run a false 270-second timeout.
+
+The sheet itself is no longer matched either way: every control the SDK draws
+carries a `paycross.*` identifier, published as a `resource-id`. What is left
+on text and description is what has no identifier to use -- the example app's
+own Flutter widgets, the sandbox challenge page, and Google's wallet button.
 """
 
 from __future__ import annotations
@@ -111,10 +116,47 @@ SAVE_BOX_TIMEOUT_SECONDS = 15
 #: the cell's `problems`, and a wedged adb answers with a screenful.
 QUOTED_DEVICE_TEXT_CHARS = 80
 
-CARD_NUMBER = "Card number input"
-EXPIRY = "Expiry date input"
-CVV = "CVV input"
-CARDHOLDER = "Cardholder name input"
+#: The identifiers the SDK publishes, from 0.8.0. Compose is told to write a
+#: node's `testTag` as its `resource-id`, once per window, so each of these
+#: reaches a `uiautomator dump` -- but ONLY in a debuggable host app, which the
+#: debug example APK is and a release build is not. iOS publishes the same
+#: strings as accessibility identifiers, so the names below are the contract
+#: rather than this file's shorthand.
+#:
+#: These replaced content-desc and rendered-text matchers throughout. Two
+#: things measured against a real dump make that more than a tidy-up
+#: (2026-09-07, `evidence/train4/t7-probe/02-paste_token.uix`):
+#:
+#: * a card field's `content-desc` sits on a NON-CLICKABLE child `View` of the
+#:   tagged `EditText`, so the old matchers were tapping a wrapper and relying
+#:   on the touch bubbling down;
+#: * every rendered string the driver used to match is now drawn in French
+#:   when the session says so, and would have taken the driver with it.
+CARD_NUMBER = "paycross.cardNumber"
+EXPIRY = "paycross.expiry"
+CVV = "paycross.cvv"
+CARDHOLDER = "paycross.cardholderName"
+SAVE_CARD = "paycross.saveCard"
+PAY_BUTTON = "paycross.payButton"
+SAVED_CARDS = "paycross.savedCards"
+
+#: The two SDK-drawn dialogs. Each is its own window and publishes its own
+#: identifiers, which is what the 0.8.0 per-window flag fixed and what a dump
+#: taken on this rig confirms (`evidence/train4/dialog-ids/`). A dump taken
+#: while one is up holds ONLY the dialog -- the form behind it is not in the
+#: tree -- so anything checked after a dismissal needs a second look.
+CANCEL_DIALOG = "paycross.cancelDialog"
+CANCEL_CONFIRM = "paycross.cancelConfirm"
+CANCEL_DISMISS = "paycross.cancelDismiss"
+REMOVE_DIALOG = "paycross.removeDialog"
+REMOVE_CONFIRM = "paycross.removeConfirm"
+
+#: One stored card's row is `paycross.savedCard.<uuid>` and its bin is that
+#: plus `.delete`. The uuid is the session's own, so a driver that has not read
+#: the session finds a row by its prefix -- and has to exclude the bin, whose
+#: identifier starts with the row's.
+SAVED_CARD_PREFIX = "paycross.savedCard."
+SAVED_CARD_DELETE_SUFFIX = ".delete"
 #: How the sandbox's challenge page is recognised. More than one marker, and
 #: both of them text the page RENDERS, because this detector has already been
 #: broken once by a change that was nobody's fault here.
@@ -143,46 +185,27 @@ CARDHOLDER = "Cardholder name input"
 #: A bare `Sandbox` is deliberately NOT here: it is the badge text on the new
 #: design and far too generic to be evidence of anything.
 ACS_MARKERS = ("AUTHENTICATION OUTCOMES", "Sandbox 3DS Challenge")
-#: Rendered by Google Play services, not by the SDK -- so it moves with the
-#: GMS version and with the device locale. The SDK's own testTag is invisible
-#: to uiautomator because testTagsAsResourceId is never set; that is filed as
-#: payment-android-sdk#26, and until it lands this is the only handle there
-#: is. Confirmed
-#: against this campaign's own dumps, most recently 2026-08-30.
-GOOGLE_PAY_DESC = "Pay with GPay"
-
-#: The `semantics { contentDescription = ... }` on the ExposedDropdownMenuBox
-#: (SavedCardSelector.kt:35). Measured 2026-08-31: it DOES survive Compose's
-#: semantics merging, as a non-clickable `android.view.View`, with a clickable
-#: `android.widget.Spinner` at identical bounds carrying the collapsed text.
-#: It is composed only when the session snapshot holds at least one stored
-#: card, which is what makes its presence the whole `saved_card` predicate.
-SAVED_CARD_SELECTOR = "Saved card selector"
-
-#: The collapsed selector's text while nothing is chosen, and the menu row
-#: that goes back to a fresh card. Neither SDK auto-selects a stored card
-#: (PaymentSheet.swift:213-214, "auto-selecting a stored card is one
-#: unnoticed tap from charging it"), so this is what the sheet opens showing.
-NEW_CARD_ROW = "Use a new card"
-
-#: CardFormScreen.kt:311 renders `Text("Enter CVV for ${savedCard?.maskedPan}")`
-#: only on the saved-card branch, so this prefix appearing is the proof that
-#: the form really switched. A prefix and not an exact match: the masked PAN
-#: is part of the string and the driver has no way to know it.
-SAVED_CARD_CVV_PROMPT = "Enter CVV for "
-
-#: The shape the backend renders a stored card's PAN in -- six digits, a run of
-#: asterisks, the last four (`411111******0000`, measured). Matched by SHAPE
-#: because the driver cannot know which card a customer has stored.
+#: The wallet button is the one thing on the sheet still matched by a rendered
+#: string, and it is not a leftover.
 #:
-#: `fullmatch` and not `search`, deliberately: the COLLAPSED selector reads
-#: `411111******0000 (12/2028)` once a card is chosen (`SavedCardSelector.kt:89`),
-#: so a substring rule would re-find the selection it had just made and read a
-#: no-op as a success.
-_MASKED_PAN = re.compile(r"\d{6}\*+\d{4}")
-
-CANCEL_TITLE = "Cancel Payment?"
-CANCEL_CONFIRM = "Yes, Cancel"
+#: `paycross.walletButton` is attached (`GooglePaySection.kt:85`) and does NOT
+#: reach a uiautomator dump: the tag sits on an `AndroidView`, and the node in
+#: the dump belongs to Google's hosted `PayButton` rather than to a Compose
+#: semantics node, so `testTagsAsResourceId` has nothing to write it onto. This
+#: is the same shape as the dialog bug 0.8.0 fixed and it is still open --
+#: measured 2026-09-07, `evidence/train4/t7-probe/02-paste_token.uix` has the
+#: wallet row with `content-desc="Pay with GPay"` and no resource-id at all.
+#: The Android README's "assert its presence by id" is not true today. Filed as
+#: **payment-android-sdk#54**, together with `paycross.threeDS`, which the
+#: challenge `WebView` loses the same way. Neither costs this driver a
+#: workaround -- the wallet has Google's description and the challenge has
+#: `ACS_MARKERS`, both of which were the matchers here anyway.
+#:
+#: So this string stays, with its old caveat intact: it is rendered by Google
+#: Play services, so it moves with the GMS version and with the device locale,
+#: and a French device would take it with it. Confirmed against this campaign's
+#: own dumps, most recently 2026-09-07.
+GOOGLE_PAY_DESC = "Pay with GPay"
 
 #: What `logcat -t` will accept. Validated rather than trusted, because an
 #: unusable cutoff yields an empty log, which reads as "nothing crashed".
@@ -324,6 +347,39 @@ class AndroidDriver(Driver):
             ).centre
         )
 
+    def _tap_id(self, identifier: str, **kw) -> None:
+        """Taps the node the SDK published under `identifier`.
+
+        The centre of the tagged node, and not of anything around it. Every
+        control this reaches carries the tag on the clickable node itself --
+        the card fields on their `EditText`, the Pay button and the dialog
+        buttons on their own `View`, the save-card row on the `toggleable` Row
+        -- so unlike the content-desc matchers this replaced there is no
+        wrapper to bubble a touch down through.
+        """
+        if not identifier:
+            # An untagged node carries resource-id="", which is most of a real
+            # tree, so a tap would land on an arbitrary one instead of failing.
+            raise DriverError("refusing to tap on an empty identifier match")
+        self._tap(
+            self._find(tree.find_identifier, identifier, "the element", **kw).centre
+        )
+
+    def _saved_card_rows(self, nodes: list[tree.Node]) -> list[tree.Node]:
+        """Every stored card's ROW, each card's bin excluded.
+
+        Both carry an identifier starting with `SAVED_CARD_PREFIX` -- the bin's
+        is the row's plus `.delete` -- so the suffix is what separates them.
+        Matched by prefix because the uuid in the middle is the session's and
+        the driver has not read the session.
+        """
+        return [
+            n
+            for n in nodes
+            if n.identifier.startswith(SAVED_CARD_PREFIX)
+            and not n.identifier.endswith(SAVED_CARD_DELETE_SUFFIX)
+        ]
+
     # -- lifecycle -----------------------------------------------------------
 
     def install(self, app_path: str) -> None:
@@ -343,14 +399,17 @@ class AndroidDriver(Driver):
     def launch(self) -> None:
         if self.getprop("sys.boot_completed") != "1":
             raise DriverError("the emulator has not finished booting")
-        locale = self.getprop("ro.product.locale")
-        if locale != "en-US":
-            # The Pay button's text is the only handle the SDK gives, and it
-            # is NumberFormat output under the device locale.
-            raise DriverError(
-                f"device locale is {locale!r}, expected 'en-US': the sheet's Pay "
-                "button text would not match"
-            )
+        # No locale guard. This used to refuse anything but `en-US`, because
+        # the Pay button's rendered text was the only handle the SDK gave and
+        # that text is NumberFormat output under the device locale. Every
+        # control the driver touches is now reached by identifier, so the
+        # device's language is the device's business -- and a French device is
+        # a case this rig has to be able to MEASURE rather than refuse.
+        #
+        # `sheet_rearmed` still reads the amount, and still reads it in the
+        # runner's en-US spelling; see `tree.format_amount_en_us` for what that
+        # costs and which cells it excludes.
+        #
         # Fails OPEN, and the read-back in `airplane()` fails closed. The
         # asymmetry is deliberate: a device that has never had this setting
         # written answers `null`, and refusing to launch on that would break
@@ -403,8 +462,8 @@ class AndroidDriver(Driver):
         # is exactly the state it leaves.
         #
         # Measured on the D3 probe: one un-restored rotation, and the
-        # interleaved control after it failed with "no element named
-        # 'payButton' within 60s" -- which reads as an SDK finding and is a rig
+        # interleaved control after it failed looking for the Pay button, which
+        # was off screen -- a message that reads as an SDK finding and is a rig
         # fault. `cell_rules` refuses a cell with an odd number of turns; this
         # catches the cell that died between two of them, where the teardown
         # replay cannot help because `rotate` has no on/off pair.
@@ -480,7 +539,7 @@ class AndroidDriver(Driver):
     def paste_token(self, token_path: Path) -> None:
         self._enter_token_text(read_token(Path(token_path), verb="type"))
         self.tap_example_pay()
-        self._find(tree.find_content_desc, CARD_NUMBER, "the card form", timeout=60)
+        self._find(tree.find_identifier, CARD_NUMBER, "the card form", timeout=60)
 
     def present_token(self, token_path: Path) -> None:
         """The token and the example's Pay, with no wait for a sheet.
@@ -672,13 +731,13 @@ class AndroidDriver(Driver):
 
     def type_card(self, card: Card, *, verify_pan: bool = True) -> None:
         for field in (CARD_NUMBER, CARDHOLDER):
-            self._tap_desc(field)
+            self._tap_id(field)
             self._sleep(SETTLE_SECONDS)
             self._key(_KEYCODE_MOVE_END)
             for _ in range(24):
                 self._key(_KEYCODE_DEL)
 
-        self._tap_desc(CARD_NUMBER)
+        self._tap_id(CARD_NUMBER)
         self._sleep(SETTLE_SECONDS)
         self._type_digits(card.pan)
         self._sleep(SETTLE_SECONDS)
@@ -688,7 +747,7 @@ class AndroidDriver(Driver):
             if not any(n.text.replace(" ", "") == card.pan for n in nodes):
                 # What was seen, not what it is blamed on: a caret bug and a
                 # mistyped tap look identical from here.
-                field = tree.find_content_desc(nodes, CARD_NUMBER)
+                field = tree.find_identifier(nodes, CARD_NUMBER)
                 reads = field[0].text if field else None
                 raise DriverError(
                     f"after typing {card.pan} the card number field reads {reads!r}"
@@ -699,25 +758,13 @@ class AndroidDriver(Driver):
             (CVV, card.cvv),
             (CARDHOLDER, card.holder),
         ):
-            self._tap_desc(field)
+            self._tap_id(field)
             self._sleep(SETTLE_SECONDS)
             self._input_text(value)
             self._sleep(SETTLE_SECONDS)
 
         self._key(_KEYCODE_BACK)  # drop the IME so the Pay button is reachable
         self._sleep(SETTLE_SECONDS)
-
-    def _checkboxes(self, nodes: list[tree.Node]) -> list[tree.Node]:
-        """Every two-state control on screen.
-
-        By state rather than by anything readable, because the SDK's save
-        checkbox has nothing readable: it is a Compose `Checkbox` in a `Row`
-        whose only sibling is a separate, non-clickable `Text`, so the node
-        that toggles carries an empty `text` and an empty `content-desc`. Its
-        `checkable` flag is the only handle it has, and `tree.Node.checked` is
-        None for everything that is not one.
-        """
-        return [n for n in nodes if n.checked is not None]
 
     def save_card(self, *, timeout: float = SAVE_BOX_TIMEOUT_SECONDS) -> None:
         """Makes sure the save-card box is ticked, and proves that it is.
@@ -733,31 +780,38 @@ class AndroidDriver(Driver):
         its label, and only `saved_card_saved` fails, twenty minutes later,
         against a merchant record that is telling the truth. Reading the state
         back turns that into a message naming the cause.
+
+        This used to hunt the whole tree for anything two-state, because the
+        SDK's checkbox carried no name and its caption was a separate,
+        non-clickable sibling -- the label could not be tapped and the box
+        could not be found. `paycross.saveCard` is on the `toggleable` Row that
+        holds both, so one node now carries the identifier, the state and the
+        click, and the search and its "which of these is the save box" guard
+        are gone with it.
         """
-        found = self._poll(
-            lambda nodes: self._checkboxes(nodes) or None,
+        box = self._poll(
+            lambda nodes: next(iter(tree.find_identifier(nodes, SAVE_CARD)), None),
             timeout,
             SETTLE_SECONDS,
         )
-        if not found:
+        if box is None:
             # Almost always the cell rather than the device: without
             # `save_card_config` on the session `canSaveCard` is false and the
             # box is never composed.
             raise DriverError(
-                "the save-card checkbox never appeared within "
-                f"{timeout}s: the session's options are "
-                "missing save_card_config, or the form has not rendered"
+                f"no {SAVE_CARD} on screen within {timeout}s: the session's "
+                "options are missing save_card_config, or the form has not "
+                "rendered"
             )
-        if len(found) > 1:
-            # One today. Said out loud rather than silently taking the first,
-            # because a field group gaining a checkbox would otherwise make
-            # this tick an arbitrary one.
+        if box.checked is None:
+            # The identifier is there and the node under it is not two-state,
+            # which means the tag moved off the toggleable row. Said out loud:
+            # the tap below would otherwise land somewhere plausible and the
+            # read-back would blame the tap.
             raise DriverError(
-                f"{len(found)} checkboxes on screen at "
-                f"{[n.bounds for n in found]}; refusing to guess which one saves "
-                "the card"
+                f"{SAVE_CARD} is on screen at {box.bounds} but is not a "
+                "two-state control; the tag is no longer on the toggleable row"
             )
-        box = found[0]
         if box.checked:
             return
 
@@ -765,7 +819,9 @@ class AndroidDriver(Driver):
         self._sleep(SETTLE_SECONDS)
 
         after = self._poll(
-            lambda nodes: next((n for n in self._checkboxes(nodes) if n.checked), None),
+            lambda nodes: next(
+                (n for n in tree.find_identifier(nodes, SAVE_CARD) if n.checked), None
+            ),
             timeout,
             SETTLE_SECONDS,
         )
@@ -793,7 +849,7 @@ class AndroidDriver(Driver):
         would be the one way to lose digits that are about to be asked for
         again.
         """
-        self._tap_desc(CVV)
+        self._tap_id(CVV)
         self._sleep(SETTLE_SECONDS)
         self._input_text(cvv)
         self._sleep(SETTLE_SECONDS)
@@ -804,15 +860,26 @@ class AndroidDriver(Driver):
         self._sleep(SETTLE_SECONDS)
 
     def tap_pay(self, amount_text: str) -> None:
-        self._tap_text(f"Pay {amount_text}")
+        """Taps the sheet's Pay button. `amount_text` is not read.
+
+        It used to be the whole matcher -- `Pay €10.00`, exact, because the
+        button tagged nothing and its rendered text was the only handle. That
+        is what made the `en-US` guard in `launch` necessary and what a French
+        sheet would have broken. The parameter stays because the base class and
+        the runner pass it on both platforms, and iOS ignores it for the same
+        reason.
+        """
+        self._tap_id(PAY_BUTTON)
 
     def tap_google_pay(self, **kw) -> None:
-        # Tapped by bounds: the node carrying the description is a
-        # non-clickable wrapper, because the click handler lives on the
-        # AndroidView rather than on a Compose node. `**kw` reaches `_find`'s
-        # timeout, exactly as `_tap_text` and `_tap_desc` pass theirs -- the
-        # runner never uses it, and a test that means to reach the deadline
-        # would otherwise spend thirty real seconds getting there.
+        # Tapped by bounds and found by description, not by identifier: see
+        # GOOGLE_PAY_DESC for why `paycross.walletButton` is not in the dump.
+        # The node carrying the description is a non-clickable wrapper, because
+        # the click handler lives on the AndroidView rather than on a Compose
+        # node. `**kw` reaches `_find`'s timeout, exactly as `_tap_text` and
+        # `_tap_desc` pass theirs -- the runner never uses it, and a test that
+        # means to reach the deadline would otherwise spend thirty real seconds
+        # getting there.
         self._tap(
             self._find(
                 tree.find_content_desc, GOOGLE_PAY_DESC, "the Google Pay button", **kw
@@ -857,40 +924,38 @@ class AndroidDriver(Driver):
     def select_saved_card(self, *, timeout: float = 30) -> None:
         """Chooses the first stored card, and proves the form switched.
 
-        Three measured facts shape this (2026-08-31 dumps).
+        Three lines of matching where there used to be thirty, because the
+        sheet is a different shape and publishes identifiers now.
 
-        The dropdown opens as **its own window**: the dump taken after the
-        selector is tapped is 3.4 KB and holds only the popup -- the form
-        behind it is not in the tree at all. So the row search runs against
-        something that contains nothing else, which is why matching a PAN
-        shape is safe here and would not be on the full sheet.
+        It is a **radio list**, not the `ExposedDropdownMenuBox` this drove
+        until Train 2. There is no popup window to open, no collapsed text to
+        read and no masked PAN to recognise by shape: every row is a
+        `paycross.savedCard.<uuid>` node, tagged on the `selectable` Row
+        itself, so the first of them is tapped where it stands.
 
-        The row's text sits on a **non-clickable** `TextView` inside a
-        clickable `android.view.View`. Tapping the label nevertheless works,
-        because it is a CHILD of the clickable row and the touch bubbles up --
-        unlike the save checkbox, whose label is a SIBLING and where the same
-        tap does nothing. That difference is why this is three lines and
-        `save_card` is thirty.
+        The verification is `paycross.cardNumber` going away while
+        `paycross.cvv` stays. The two branches of the form are mutually
+        exclusive, so the card-number field is present before the selection and
+        gone after it -- and requiring the CVV field to still be there is what
+        keeps that from also being satisfied by a form that failed to render at
+        all. It replaces the old `Enter CVV for ` prompt check for one reason:
+        that prompt is a rendered string and reads
+        `Entrez le code de sécurité pour …` on a French sheet.
 
-        And the verification is the `Enter CVV for ` prompt rather than the
-        absence of the card-number field. Both are true after a selection, but
-        the prompt is the positive signal: it proves the saved-card branch
-        actually rendered, where an absence would also be satisfied by a form
-        that failed to render at all.
+        Without this check a selection that silently failed would leave the
+        cell typing its CVV into the FRESH form, submitting a blank card, and
+        reporting a saved-card payment -- with `saved_card_used` the only
+        assertion that would ever notice, an hour into a matrix run. So this
+        raises rather than returns.
         """
-        self._tap_desc(SAVED_CARD_SELECTOR, timeout=timeout)
-        self._sleep(SETTLE_SECONDS)
-
         row = self._poll(
-            lambda nodes: next(
-                (n for n in nodes if _MASKED_PAN.fullmatch(n.text)), None
-            ),
+            lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
             timeout,
             SETTLE_SECONDS,
         )
         if row is None:
             raise DriverError(
-                f"no stored-card row in the selector within {timeout}s: the "
+                f"no stored-card row on the sheet within {timeout}s: the "
                 "session's options are missing saved_cards, or this customer "
                 "has no stored card"
             )
@@ -898,28 +963,88 @@ class AndroidDriver(Driver):
         self._sleep(SETTLE_SECONDS)
 
         switched = self._poll(
-            lambda nodes: next(
-                (n for n in nodes if n.text.startswith(SAVED_CARD_CVV_PROMPT)),
-                None,
+            lambda nodes: (
+                True
+                if not tree.find_identifier(nodes, CARD_NUMBER)
+                and tree.find_identifier(nodes, CVV)
+                else None
             ),
             timeout,
             SETTLE_SECONDS,
         )
         if switched is None:
             raise DriverError(
-                f"after tapping the stored card at {row.centre} the sheet is "
-                f"still showing the new-card form ({SAVED_CARD_CVV_PROMPT!r} "
-                "never appeared); the CVV would be typed into a fresh card and "
-                "the payment would not use the stored one"
+                f"after tapping {row.identifier} at {row.centre} the sheet is "
+                f"still showing the new-card form ({CARD_NUMBER} is present); "
+                "the CVV would be typed into a fresh card and the payment would "
+                "not use the stored one"
+            )
+
+    def remove_saved_card(self, *, timeout: float = 30) -> None:
+        """Deletes the first stored card, and proves the row is gone.
+
+        The proof is the point, and it is not theoretical. Train 2 measured
+        exactly this path failing on TEST while looking like it had worked:
+        confirming the dialog left the row on the sheet and put
+        `Could not remove the card. Try again.` in the error banner, because
+        the web API lacked the IAM grant to write the session blob back. A
+        driver that tapped Confirm and moved on would have reported a removal
+        that never happened.
+
+        So the row's own identifier is read before the bin is tapped and waited
+        out afterwards. It carries the card's uuid, which makes it exact: this
+        is not "a row went away", it is "the row for the card whose bin was
+        tapped went away".
+
+        The dialog is its own window and a dump taken while it is up holds
+        NOTHING ELSE -- not the picker, not the form. So "the row is not in the
+        tree" is true of the dialog itself, and a check that asked only that
+        would answer yes the instant Confirm was tapped, whatever the backend
+        then did. The sheet has to be back first, which is what
+        `paycross.payButton` says: it is on the form in every state, including
+        the one where the last stored card has gone and the picker with it.
+        """
+        row = self._poll(
+            lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
+            timeout,
+            SETTLE_SECONDS,
+        )
+        if row is None:
+            raise DriverError(
+                f"no stored-card row on the sheet within {timeout}s: the "
+                "session's options are missing saved_cards, or this customer "
+                "has no stored card"
+            )
+        self._tap_id(row.identifier + SAVED_CARD_DELETE_SUFFIX, timeout=timeout)
+        self._sleep(SETTLE_SECONDS)
+
+        self._find(
+            tree.find_identifier, REMOVE_DIALOG, "the remove dialog", timeout=timeout
+        )
+        self._tap_id(REMOVE_CONFIRM, timeout=timeout)
+
+        def is_gone(nodes: list[tree.Node]) -> bool | None:
+            back = tree.find_identifier(nodes, PAY_BUTTON)
+            return (
+                True
+                if back and not tree.find_identifier(nodes, row.identifier)
+                else None
+            )
+
+        if self._poll(is_gone, timeout, SETTLE_SECONDS) is None:
+            raise DriverError(
+                f"{row.identifier} is still on the sheet {timeout}s after "
+                "confirming its removal; the card was not removed and the "
+                "shopper is being told so in the error banner"
             )
 
     def wait_saved_card(self, timeout: float = 30) -> bool:
         """Whether the sheet is offering a stored card.
 
-        The selector's presence is the whole predicate, because the SDK
-        composes `SavedCardSelector` only under `if (savedCards.isNotEmpty())`
-        (`CardFormScreen.kt:161`) -- there is no separate signal to read, and
-        an empty selector is not a state that exists.
+        The list's presence is the whole predicate, because the SDK composes
+        `SavedCardSelector` only under `if (savedCards.isNotEmpty())` -- there
+        is no separate signal to read, and an empty list is not a state that
+        exists.
 
         Answers False rather than raising, unlike `wait_acs`. "No stored card
         was offered" is a cell verdict -- the finding a D5 cell is there to
@@ -932,9 +1057,7 @@ class AndroidDriver(Driver):
         test pins the pair equal.
         """
         found = self._poll(
-            lambda nodes: next(
-                iter(tree.find_content_desc(nodes, SAVED_CARD_SELECTOR)), None
-            ),
+            lambda nodes: next(iter(tree.find_identifier(nodes, SAVED_CARDS)), None),
             timeout,
             SETTLE_SECONDS,
         )
@@ -947,16 +1070,56 @@ class AndroidDriver(Driver):
 
     def cancel_challenge(self) -> None:
         self.wait_acs()
-        self._confirm_cancel()
+        self._raise_cancel_dialog()
+        self._tap_id(CANCEL_CONFIRM)
 
     def cancel_form(self) -> None:
-        self._confirm_cancel()
+        self._raise_cancel_dialog()
+        self._tap_id(CANCEL_CONFIRM)
 
-    def _confirm_cancel(self) -> None:
-        # BackHandler is unconditional on both screens (PaymentActivity.kt).
+    def dismiss_cancel(self, *, timeout: float = 30) -> None:
+        """Raises the cancel dialog, backs out of it, and proves the form is back.
+
+        The path a shopper takes when they nearly abandoned the payment and
+        then did not. It is worth driving because it is the one dialog button
+        no cell ever pressed: `cancel_form` and `cancel_challenge` both confirm,
+        so `paycross.cancelDismiss` was shipped untested from this side.
+
+        The last check is not decoration, and it is two halves on purpose. The
+        dialog has to be GONE and the Pay button has to be BACK. On this
+        platform the dialog is its own window and a dump taken while it is up
+        holds only the dialog, so either half would do -- but the iOS
+        confirmation is drawn inside the sheet, where the Pay button never
+        left, and there only the first half means anything. One rule, so the
+        two drivers cannot drift into checking different things.
+        """
+        self._raise_cancel_dialog(timeout=timeout)
+        self._tap_id(CANCEL_DISMISS, timeout=timeout)
+        self._sleep(SETTLE_SECONDS)
+
+        def back(nodes: list[tree.Node]) -> bool | None:
+            gone = not tree.find_identifier(nodes, CANCEL_DIALOG)
+            return True if gone and tree.find_identifier(nodes, PAY_BUTTON) else None
+
+        if self._poll(back, timeout, SETTLE_SECONDS) is None:
+            raise DriverError(
+                "the sheet did not come back after the cancel dialog was "
+                "dismissed; the cell cannot carry on paying"
+            )
+
+    def _raise_cancel_dialog(self, *, timeout: float = 30) -> None:
+        """Back, then the dialog the SDK catches it with.
+
+        Android's sheet has no cancel control of its own -- `paycross.cancel`
+        is iOS-only -- so the gesture is the affordance and the dialog is the
+        first thing here that can be named. `BackHandler` is unconditional on
+        both screens (`PaymentActivity.kt`), so this reaches it from the form
+        and from the challenge alike.
+        """
         self._key(_KEYCODE_BACK)
-        self._find(tree.find_text_exact, CANCEL_TITLE, "the cancel dialog", timeout=30)
-        self._tap_text(CANCEL_CONFIRM)
+        self._find(
+            tree.find_identifier, CANCEL_DIALOG, "the cancel dialog", timeout=timeout
+        )
 
     def wait_rearmed(
         self, amount_text: str, timeout: float, *, interval: float = 2
@@ -964,10 +1127,12 @@ class AndroidDriver(Driver):
         # A device that will not dump raises out of _poll rather than answering
         # False: "the sheet did not re-arm" is a cell verdict and this is not.
         found = self._poll(
-            lambda nodes: tree.sheet_rearmed(nodes, "android", amount_text) or None,
+            lambda nodes: tree.sheet_rearmed(nodes, amount_text) or None,
             timeout,
             interval,
         )
+        if found is None:
+            self._blame_the_amount(amount_text)
         return found is not None
 
     def wait_google_pay(self, timeout: float = 30) -> bool:

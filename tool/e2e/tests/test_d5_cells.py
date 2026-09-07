@@ -32,7 +32,12 @@ PAIRS = (
     ("saved_card_3_challenge_save", "saved_card_4_challenge_pay"),
 )
 
-EXPECTED_IDS = {"control"} | {cell_id for pair in PAIRS for cell_id in pair}
+#: The cell that deletes what the first pair stored. Not in `PAIRS`: it is not
+#: a store/pay half, it is the third act of the same story and it has to run
+#: after both of them, which the filename ordering gives it.
+REMOVE = "saved_card_5_remove"
+
+EXPECTED_IDS = {"control", REMOVE} | {cell_id for pair in PAIRS for cell_id in pair}
 
 
 def text_of(cell_id):
@@ -52,7 +57,7 @@ def test_the_d5_cells_satisfy_the_shared_authoring_rules(platform):
     # dimension with no platform asymmetry designed into it -- unlike D2's
     # network cuts or D4's Android-only wallet -- so a cell that quietly
     # dropped a platform would shrink the run without failing anything.
-    assert len(loaded) == 5
+    assert len(loaded) == 6
 
 
 def test_the_control_cell_is_the_same_payment_in_every_dimension():
@@ -78,6 +83,36 @@ def test_each_pair_stores_before_it_pays(store, pay, platform):
         f"{pay} would run before {store}, so its session would be minted "
         "before the card it re-uses exists"
     )
+
+
+@pytest.mark.parametrize("platform", ["android", "ios"])
+def test_the_removal_cell_runs_after_the_pair_that_seeds_it(platform):
+    """It deletes what `saved_card_1_save` stored, so it cannot go first.
+
+    Ordered ahead of the pair it would find no card to delete and fail as
+    "this customer has no stored card" -- the same message a real seeding
+    failure gives, which would send the next reader after the wrong bug.
+    Ordered between the two it would delete the card `saved_card_2_pay` is
+    about to charge.
+
+    Re-running the directory is safe in the other direction: a PAN re-saved
+    after a removal comes back under the same uuid (measured on TEST
+    2026-09-06), so the first cell restores what this one deletes.
+    """
+    store, pay = PAIRS[0]
+    order = [c.id for c in cells.load_cells(D5, platform)]
+
+    assert order.index(REMOVE) > order.index(pay) > order.index(store)
+
+
+def test_the_removal_cell_deletes_the_card_its_own_customer_stored():
+    # Pointed at the other customer it would delete a card nothing in this
+    # directory stored, and pass while testing the wrong list.
+    store, _ = PAIRS[0]
+    reference = re.search(r'merchant_reference: "([^"]+)"', text_of(store)).group(1)
+
+    assert f'merchant_reference: "{reference}"' in text_of(REMOVE)
+    assert "allow_removal: true" in text_of(REMOVE)
 
 
 @pytest.mark.parametrize("store, pay", PAIRS)

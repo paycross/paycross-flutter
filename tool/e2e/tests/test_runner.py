@@ -2581,6 +2581,8 @@ def test_a_bare_wait_is_budgeted_from_its_own_argument(tmp_path):
         ("enter_token", 60),
         ("tap_example_pay", 30),
         ("relaunch", 90),
+        ("remove_saved_card", 180),
+        ("dismiss_cancel", 150),
     ],
 )
 def test_the_new_verbs_carry_their_own_budget(verb, seconds):

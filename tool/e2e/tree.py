@@ -26,15 +26,25 @@ LEGACY_LABEL_PREFIXES = (
     "Integration error",
 )
 
-#: `PaymentViewModel.kt` renders one of these after any non-cancel submit
-#: failure -- the first when the backend declined, the second when the request
-#: never got there. Both mean the same thing to `sheet_rearmed`: the sheet took
-#: a failure and offered the form again. Neither means "retryable decline" on
-#: its own; pass criterion 2's merchant check is what separates those.
-ANDROID_REARM_BANNERS = (
-    "Payment failed. Please try again.",
-    "Network error. Please try again.",
-)
+#: The two identifiers `sheet_rearmed` reads. Both SDKs publish these exact
+#: strings -- Android as a resource id, iOS as an accessibility identifier --
+#: which is what lets the predicate be one rule rather than one per platform.
+#:
+#: The banner used to be matched on Android by the two sentences
+#: `PaymentViewModel` renders after a failed submit. That was English, and the
+#: sheet now draws French, so the identifier is the only handle that survives a
+#: locale. It is also broader: the same banner carries the card-removal failure.
+#: That costs nothing here, because a re-arm verdict was never the banner alone
+#: -- pass criterion 2's merchant check is the other half, and no cell both
+#: removes a card and expects a re-arm.
+#: `paycross.payButton` is deliberately NOT read here. It would say "the form
+#: is being offered again", which the amount header already says -- both are
+#: drawn by the form and both are gone while the spinner is up or the challenge
+#: is showing. And it is the one identifier iOS 0.7.0 does not publish: the
+#: button there answers to `paycross.sheet` (see `drivers/ios.SHEET`), so
+#: asking for it would make this predicate answer False on every iOS cell.
+ERROR_BANNER = "paycross.errorBanner"
+AMOUNT = "paycross.amount"
 
 _BOUNDS = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 _CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
@@ -133,11 +143,18 @@ def parse_wda(xml: str | bytes) -> list[Node]:
 
 
 def find_text_exact(nodes: list[Node], text: str) -> list[Node]:
-    """Exact match on `text`, which is what separates the Android Pay button.
+    """Exact match on `text`, for the things that publish no identifier.
 
-    The header renders a bare `€10.00` node and the Google Pay row carries
-    `content-desc="Pay with GPay"`, so a substring or all-attribute match hits
-    three nodes where one is meant.
+    What is left on this matcher is the sandbox challenge page's outcome
+    buttons and the example app's own widgets -- neither is drawn by an SDK, so
+    neither has a `paycross.*` name to reach instead. The sheet's Pay button
+    was the reason this was exact, and is matched by identifier now.
+
+    Still exact rather than a substring, and the challenge page is why: it
+    renders a button per outcome, and `timeout` is inside
+    `authentication_timeout`. A substring match asked for the first would find
+    both and tap whichever came first in the tree, which is a cell measuring an
+    outcome it did not ask for.
     """
     return [n for n in nodes if n.text == text]
 
@@ -169,10 +186,16 @@ def label_from_tree(
 def format_amount_en_us(minor_units: int, currency: str) -> str:
     """What `NumberFormat.getCurrencyInstance` renders under `en-US`.
 
-    Computed rather than hardcoded because the Android Pay button's text is
-    the only handle the SDK offers -- it tags nothing -- so the matcher has to
-    track the cell's amount. The driver pins the emulator locale to `en-US`;
-    a different locale is a rig fault, not a cell failure.
+    Computed rather than hardcoded because `sheet_rearmed` has to know which
+    payment the sheet it is looking at belongs to, and the amount is the only
+    thing on the sheet that says. Nothing taps by it any more: both Pay buttons
+    are reached by identifier.
+
+    **This is the en-US spelling and only that.** A sheet drawn in French reads
+    `10,00 €`, which `_carries_amount` does not absorb -- it swaps `.` and `,`
+    and does not move the currency symbol. So a French cell may not expect a
+    re-arm today, and none does. Whoever writes the first one has to teach
+    `_separator_variants` about a trailing symbol first.
 
     Two minor digits are assumed, which is right for EUR/USD-style currencies
     and wrong for JPY. `cells.py` constrains a cell to positive integer minor
@@ -190,6 +213,10 @@ def format_amount_en_us(minor_units: int, currency: str) -> str:
 #: tail needs guarding: `amount_text` opens with the currency symbol, so a
 #: longer number cannot run into it from the left.
 _AMOUNT_CONTINUES = frozenset(".,0123456789")
+
+
+def _digits(text: str) -> str:
+    return "".join(character for character in text if character.isdigit())
 
 
 def _carries_amount(text: str, amount_text: str) -> bool:
@@ -216,12 +243,15 @@ def _separator_variants(amount_text: str) -> tuple[str, ...]:
     A swap rather than stripping the separators out: with them gone "€10.00"
     is a substring of "€1,000.00", and a sheet re-armed at a hundred times the
     amount would satisfy the predicate that exists to catch exactly that.
+
+    A swap and nothing more. The symbol stays where the runner put it, so this
+    does not reach a French sheet's `10,00 €` -- see `format_amount_en_us`.
     """
     swapped = amount_text.translate(str.maketrans(".,", ",."))
     return (amount_text,) if swapped == amount_text else (amount_text, swapped)
 
 
-def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
+def sheet_rearmed(nodes: list[Node], amount_text: str) -> bool:
     """The sheet took a failure and offered the form again.
 
     The native sheet is opaque to Dart, so this is the runner's only way to
@@ -229,38 +259,71 @@ def sheet_rearmed(nodes: list[Node], platform: str, amount_text: str) -> bool:
     criterion 2's merchant check (transaction `failed`, session still `open`),
     because the banner is not unique to a retryable decline.
 
-    `amount_text` is required on both platforms. Android has nothing but the
-    Pay button's text to match on; iOS matches the payButton identifier and
-    then asks that its label carry the amount, because an identifier says
-    nothing about which payment it belongs to -- without that half, a sheet
-    re-armed at a different amount, or a form that was never this cell's,
-    satisfies the predicate.
+    Two things have to hold, and each answers a different question. The banner
+    says the submit failed. The amount header says the form is up again AND
+    that it is THIS cell's form: an identifier is the same on every session, so
+    without the amount a sheet re-armed at a different one, or a form that was
+    never this cell's, satisfies the predicate.
 
-    Only iOS takes the amount's punctuation as the device's business -- see
-    `_separator_variants`, and `_carries_amount` for why a substring match
-    alone is not enough once it does. The Android emulator is asserted `en-US` in
-    `AndroidDriver.launch`, so there is nothing there for it to absorb, and an
-    exact node-text match is what keeps `Pay €10.00` off the header's bare
-    `€10.00` and off a Google Pay button.
+    The amount is read off `paycross.amount` and not off the Pay button, and
+    that is measured rather than tidy. Android's Pay button is a `View` whose
+    CHILD `TextView` holds `Pay €10.00`; the tagged node's own text is empty,
+    so the button cannot answer for the amount there. The header carries it as
+    its own text on Android and inside a `Total, ` caption on iOS, and a
+    substring search reads both.
+
+    No platform argument. It took one while Android had nothing but rendered
+    English to match on and iOS had identifiers; now both SDKs publish the same
+    three strings and the two branches were the same rule written twice.
     """
     if not amount_text:
         # An empty string is in every label, so this would match any sheet.
         raise ValueError("sheet_rearmed needs the cell's amount text")
-    if platform == "android":
-        return bool(
-            any(find_text_exact(nodes, banner) for banner in ANDROID_REARM_BANNERS)
-            and find_text_exact(nodes, f"Pay {amount_text}")
+    return bool(
+        find_identifier(nodes, ERROR_BANNER)
+        and any(
+            _carries_amount(node.text, amount_text)
+            for node in find_identifier(nodes, AMOUNT)
         )
-    if platform == "ios":
-        # Identifiers, not copy: issue-ios-followups.md item 3 proposes
-        # changing the banner's wording, which would break a text match
-        # mid-campaign. Visibility is not required -- CardFormView puts the
-        # banner last in the ScrollView, below the pinned footer.
-        return bool(
-            find_identifier(nodes, "errorBanner")
-            and any(
-                _carries_amount(node.text, amount_text)
-                for node in find_identifier(nodes, "payButton")
-            )
-        )
-    raise ValueError(f"unknown platform {platform!r}")
+    )
+
+
+def rearm_amount_mismatch(nodes: list[Node], amount_text: str) -> str | None:
+    """What the sheet's amount reads, when that is the only thing that failed.
+
+    Answers None whenever there is nothing to explain: no failure banner, no
+    amount node, or an amount that agrees.
+
+    This exists because of what the drivers stopped doing. Both used to refuse
+    to launch against a device that was not in English, since the Pay button
+    and the re-arm banner were matched as English strings. They are identifiers
+    now and the language is the device's business -- except here, where
+    `format_amount_en_us` computes one region's spelling of the amount and
+    nothing translates it. A sheet drawing `10,00 €` would make `sheet_rearmed`
+    answer False, and the cell would report "the sheet never re-armed" about a
+    sheet that plainly had: a rig fault wearing an SDK finding's clothes, which
+    is the expensive direction to be wrong in.
+
+    So a driver asks this before it answers False, and says which of the two it
+    is looking at.
+
+    It answers None for a sheet re-armed at a genuinely different AMOUNT. That
+    is not a spelling problem and not the rig's fault -- it is the finding the
+    amount half of `sheet_rearmed` exists to make, and turning it into a rig
+    fault would hide it. The digits tell the two apart.
+    """
+    if not amount_text:
+        raise ValueError("rearm_amount_mismatch needs the cell's amount text")
+    if not find_identifier(nodes, ERROR_BANNER):
+        return None
+    showing = find_identifier(nodes, AMOUNT)
+    if not showing or any(_carries_amount(n.text, amount_text) for n in showing):
+        return None
+    # The digits are what separate the two ways this predicate can fail, and
+    # only one of them is the rig's fault. A sheet spelling the SAME value
+    # another way -- `10,00 €` for `€10.00` -- has the same digits in the same
+    # order. A sheet re-armed at a DIFFERENT amount does not, and that is a
+    # cell verdict: it is the whole reason the amount is checked at all.
+    wanted = _digits(amount_text)
+    same_value = [n for n in showing if _digits(n.text) == wanted]
+    return same_value[0].text if same_value else None
