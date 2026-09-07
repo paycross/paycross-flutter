@@ -72,6 +72,32 @@ abstract final class PayCross {
   /// README and the release notes are the deprecation. The Android SDK says
   /// the same about `brandColor`, which Kotlin cannot annotate at all.
   ///
+  /// [locale] pins the language the native payment sheet draws in, as a
+  /// BCP 47 tag such as `fr` or `fr-CA`. Both SDKs ship English and French.
+  /// It is the first rung of a ladder they own: this override, then the
+  /// payment session's own `locale`, then the shopper's device languages,
+  /// then English. Each candidate is matched on its own — the whole tag, then
+  /// its primary subtag — and one that names a language neither SDK ships
+  /// falls through to the next rather than ending the ladder.
+  ///
+  /// The amount is not clamped to those two languages: it is formatted with
+  /// the first *well-formed* locale anyone named, region intact, so a German
+  /// shopper reads an English sheet over an amount written the way they
+  /// expect. A malformed tag is passed over for the amount too, so a typo
+  /// cannot both pick the wrong language and misprint the price.
+  ///
+  /// The string crosses exactly as it is written. This package does not
+  /// resolve it, validate it, lower-case it or turn `_` into `-`, because
+  /// both SDKs already do all four and a second opinion here could only
+  /// disagree with them. A malformed tag is skipped by the native resolver
+  /// rather than thrown on, so nothing passed here can fail a payment.
+  ///
+  /// Null means "not overridden", which lets the session's locale decide. It
+  /// is not a request for English.
+  ///
+  /// The sheet's language never touches the host app's. See LOCALIZATION.md
+  /// in either native SDK for the full rule and the string keys.
+  ///
   /// [googlePayMerchantId] is Android-only. It is the merchant id from the
   /// Google Business Console, and Google **requires** it for
   /// [PayCrossEnvironment.production] Google Pay requests; sandbox works
@@ -103,6 +129,7 @@ abstract final class PayCross {
     String? googlePayMerchantId,
     String? applePayMerchantId,
     PayCrossAppearance? appearance,
+    String? locale,
   }) async {
     if (testCardPrefill != null &&
         environment == PayCrossEnvironment.production) {
@@ -140,6 +167,7 @@ abstract final class PayCross {
           googlePayMerchantId: googlePayMerchantId,
           applePayMerchantId: applePayMerchantId,
           appearance: crossing,
+          locale: locale,
         ),
       ),
     );

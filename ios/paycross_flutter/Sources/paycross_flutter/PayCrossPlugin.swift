@@ -161,7 +161,10 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
                 // cannot both arrive and this coalesce cannot pick wrong.
                 ?? configuration.brandColorArgb.map {
                     .brand(PayCrossColor(argb: UInt32(truncatingIfNeeded: $0)))
-                }
+                },
+            // Straight through. The SDK owns the resolution ladder and skips a
+            // malformed tag; see its LOCALIZATION.md.
+            locale: configuration.locale
         )
         // googlePayMerchantId is deliberately ignored: Google Pay's in-app API is
         // Android and web only, so there is no iOS wallet for it to configure.

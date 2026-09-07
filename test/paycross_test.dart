@@ -559,6 +559,89 @@ void main() {
       expect(host.lastConfiguration?.applePayMerchantId, '');
     });
 
+    /// The whole point of the parameter: a merchant whose app already knows
+    /// the shopper reads French pins the sheet to it, and the tag has to
+    /// survive the crossing to be the first rung of either native's ladder.
+    test('a locale reaches the platform', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        locale: 'fr',
+      );
+
+      expect(host.lastConfiguration?.locale, 'fr');
+    });
+
+    /// Null is the ladder's first rung being empty, not a request for
+    /// English: the session's own locale is consulted next, and only then the
+    /// device. A plugin that sent 'en' here would take both of those away
+    /// from every merchant who set nothing.
+    test('an absent locale crosses as null', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(environment: PayCrossEnvironment.sandbox);
+
+      expect(host.lastConfiguration?.locale, isNull);
+    });
+
+    /// Unchanged, not corrected and not rejected. Both native SDKs skip a tag
+    /// that is not shaped like one and move to the next candidate, so a typo
+    /// costs a merchant nothing — and a plugin that threw on it would turn a
+    /// harmless mistake into a crash the natives were built not to have.
+    test('a malformed tag crosses unchanged', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      for (final tag in ['francais', 'fr-', 'f-r', '']) {
+        await PayCross.configure(
+          environment: PayCrossEnvironment.sandbox,
+          locale: tag,
+        );
+        expect(host.lastConfiguration?.locale, tag);
+      }
+    });
+
+    /// Not lower-cased and not hyphen-normalised here either. Both natives
+    /// already accept `FR_ca` and read `_` as `-`; doing it again in Dart
+    /// would be a second normaliser that only has to disagree once to send a
+    /// shopper a language nobody chose.
+    test('a locale is not normalised on the way across', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        locale: 'FR_ca',
+      );
+
+      expect(host.lastConfiguration?.locale, 'FR_ca');
+    });
+
+    /// The locale is not part of the appearance and must not travel with it.
+    /// A merchant themes the sheet in one release and pins its language in
+    /// another, and either half arriving on its own is the ordinary case.
+    test('a locale and an appearance are independent', () async {
+      final host = FakeHost();
+      PayCross.debugHostApi = (host);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        appearance: PayCrossAppearance.brand(const Color(0xFF6750A4)),
+      );
+      expect(host.lastConfiguration?.locale, isNull);
+      expect(host.lastConfiguration?.appearance, isNotNull);
+
+      await PayCross.configure(
+        environment: PayCrossEnvironment.sandbox,
+        locale: 'fr',
+      );
+      expect(host.lastConfiguration?.appearance, isNull);
+      expect(host.lastConfiguration?.locale, 'fr');
+    });
+
     /// The production guard is about test card prefill and nothing else. A
     /// production Apple Pay configuration is the normal case, not an error.
     test('a production Apple Pay configuration is allowed', () async {

@@ -19,6 +19,7 @@ import 'package:paycross_demo/demo/presets.dart';
 import 'package:paycross_demo/demo/run.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:paycross_demo/demo/surface.dart';
 import 'package:paycross_demo/demo/test_cards_screen.dart';
 import 'package:paycross_demo/demo/web_run.dart';
@@ -629,6 +630,13 @@ void main() {
       'paycross_demo_client_id': 'test-id',
       'paycross_demo_client_secret': 'test-secret',
     });
+    // And the language store the same screen reads, for the same reason: it
+    // is the `const SettingsScreen()` the tile pushes, so there is nothing to
+    // inject into. Without this the real `SharedPreferences` is behind it,
+    // which under `flutter test` does not fail but never answers -- and the
+    // language control stays disabled for the whole test with nothing to say
+    // why. An empty map is what a fresh install looks like.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
     // Emptied rather than uninstalled: the plugin offers no way back to the
     // real platform, and an empty store is what every other case in this
     // file already sees from one that is not there.
@@ -1173,6 +1181,13 @@ void main() {
       'paycross_demo_client_id': 'abcdef0123456789',
       'paycross_demo_client_secret': 'test-secret',
     });
+    // And the language store the same screen reads, for the same reason: it
+    // is the `const SettingsScreen()` the tile pushes, so there is nothing to
+    // inject into. Without this the real `SharedPreferences` is behind it,
+    // which under `flutter test` does not fail but never answers -- and the
+    // language control stays disabled for the whole test with nothing to say
+    // why. An empty map is what a fresh install looks like.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
     addTearDown(
       () => FlutterSecureStorage.setMockInitialValues(<String, String>{}),
     );
@@ -1512,6 +1527,7 @@ void main() {
               String? googlePayMerchantId,
               String? applePayMerchantId,
               PayCrossAppearance? appearance,
+              String? locale,
             }) async {
               applied.add(appearance);
             },
@@ -1573,6 +1589,7 @@ void main() {
               String? googlePayMerchantId,
               String? applePayMerchantId,
               PayCrossAppearance? appearance,
+              String? locale,
             }) async {
               applied.add(appearance);
               // Only the first call parks: the restore has to be able to run
@@ -1638,6 +1655,7 @@ void main() {
               String? googlePayMerchantId,
               String? applePayMerchantId,
               PayCrossAppearance? appearance,
+              String? locale,
             }) async {
               applied.add(appearance);
             },

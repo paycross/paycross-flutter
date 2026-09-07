@@ -631,6 +631,19 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
   var applePayMerchantId: String? = nil
   /// How the sheet looks. Honoured on both platforms.
   var appearance: PcAppearance? = nil
+  /// The language the payment sheet draws in, as a BCP 47 tag.
+  ///
+  /// Crosses exactly as the merchant wrote it, or as null. Nothing on this
+  /// side resolves it, validates it or lower-cases it: both native SDKs
+  /// already own one resolution ladder each — the override, then the payment
+  /// session's own locale, then the device, then English — and a second
+  /// opinion in Dart could only ever disagree with them. A tag neither SDK
+  /// ships strings for falls through that ladder, and a malformed one is
+  /// skipped, so no value here can make either sheet throw.
+  ///
+  /// Null means "not overridden", which is the ladder's first rung being
+  /// empty rather than a request for English.
+  var locale: String? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -641,6 +654,7 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
     let googlePayMerchantId: String? = nilOrValue(pigeonVar_list[3])
     let applePayMerchantId: String? = nilOrValue(pigeonVar_list[4])
     let appearance: PcAppearance? = nilOrValue(pigeonVar_list[5])
+    let locale: String? = nilOrValue(pigeonVar_list[6])
 
     return PcConfiguration(
       environment: environment,
@@ -648,7 +662,8 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
       testCardPrefill: testCardPrefill,
       googlePayMerchantId: googlePayMerchantId,
       applePayMerchantId: applePayMerchantId,
-      appearance: appearance
+      appearance: appearance,
+      locale: locale
     )
   }
   func toList() -> [Any?] {
@@ -659,13 +674,14 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
       googlePayMerchantId,
       applePayMerchantId,
       appearance,
+      locale,
     ]
   }
   static func == (lhs: PcConfiguration, rhs: PcConfiguration) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return PayCrossApiPigeonInternal.deepEquals(lhs.environment, rhs.environment) && PayCrossApiPigeonInternal.deepEquals(lhs.brandColorArgb, rhs.brandColorArgb) && PayCrossApiPigeonInternal.deepEquals(lhs.testCardPrefill, rhs.testCardPrefill) && PayCrossApiPigeonInternal.deepEquals(lhs.googlePayMerchantId, rhs.googlePayMerchantId) && PayCrossApiPigeonInternal.deepEquals(lhs.applePayMerchantId, rhs.applePayMerchantId) && PayCrossApiPigeonInternal.deepEquals(lhs.appearance, rhs.appearance)
+    return PayCrossApiPigeonInternal.deepEquals(lhs.environment, rhs.environment) && PayCrossApiPigeonInternal.deepEquals(lhs.brandColorArgb, rhs.brandColorArgb) && PayCrossApiPigeonInternal.deepEquals(lhs.testCardPrefill, rhs.testCardPrefill) && PayCrossApiPigeonInternal.deepEquals(lhs.googlePayMerchantId, rhs.googlePayMerchantId) && PayCrossApiPigeonInternal.deepEquals(lhs.applePayMerchantId, rhs.applePayMerchantId) && PayCrossApiPigeonInternal.deepEquals(lhs.appearance, rhs.appearance) && PayCrossApiPigeonInternal.deepEquals(lhs.locale, rhs.locale)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -676,10 +692,11 @@ struct PcConfiguration: Hashable, CustomStringConvertible {
     PayCrossApiPigeonInternal.deepHash(value: googlePayMerchantId, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: applePayMerchantId, hasher: &hasher)
     PayCrossApiPigeonInternal.deepHash(value: appearance, hasher: &hasher)
+    PayCrossApiPigeonInternal.deepHash(value: locale, hasher: &hasher)
   }
 
   public var description: String {
-    return "PcConfiguration(environment: \(String(describing: environment)), brandColorArgb: \(String(describing: brandColorArgb)), testCardPrefill: \(String(describing: testCardPrefill)), googlePayMerchantId: \(String(describing: googlePayMerchantId)), applePayMerchantId: \(String(describing: applePayMerchantId)), appearance: \(String(describing: appearance)))"
+    return "PcConfiguration(environment: \(String(describing: environment)), brandColorArgb: \(String(describing: brandColorArgb)), testCardPrefill: \(String(describing: testCardPrefill)), googlePayMerchantId: \(String(describing: googlePayMerchantId)), applePayMerchantId: \(String(describing: applePayMerchantId)), appearance: \(String(describing: appearance)), locale: \(String(describing: locale)))"
   }
 }
 

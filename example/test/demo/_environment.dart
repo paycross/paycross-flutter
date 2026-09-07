@@ -9,6 +9,7 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 DemoEnvironmentState fakeEnvironment({
   String? googlePayMerchantId,
   String? applePayMerchantId,
+  String? locale,
 }) => DemoEnvironmentState(
   configure:
       ({
@@ -16,9 +17,11 @@ DemoEnvironmentState fakeEnvironment({
         String? googlePayMerchantId,
         String? applePayMerchantId,
         PayCrossAppearance? appearance,
+        String? locale,
       }) async {},
   googlePayMerchantId: googlePayMerchantId,
   applePayMerchantId: applePayMerchantId,
+  locale: locale,
 );
 
 /// A [MaterialApp] with the environment mounted where the app mounts it:

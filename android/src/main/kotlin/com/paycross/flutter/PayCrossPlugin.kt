@@ -246,7 +246,10 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
             // applePayMerchantId is deliberately ignored: Apple Pay is iOS only,
             // so there is no Android wallet for it to configure. iOS forwards it
             // to the native SDK's applePayMerchantIdentifier.
-            appearance = configuration.appearance?.toNative()
+            appearance = configuration.appearance?.toNative(),
+            // Straight through. The SDK owns the resolution ladder and skips a
+            // malformed tag; see its LOCALIZATION.md.
+            locale = configuration.locale
         )
     }
 

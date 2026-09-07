@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/endpoints.dart';
 import 'package:paycross_demo/demo/environment.dart';
+import 'package:paycross_demo/demo/language.dart';
 import 'package:paycross_demo/demo/minter.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 import 'package:paycross_demo/demo/settings.dart';
@@ -15,9 +16,16 @@ import '_surface.dart';
 Widget _settings({
   required SecretStore store,
   Future<String> Function(Credentials)? verify,
+  LanguageStore? languageStore,
 }) => MaterialApp(
   home: SettingsScreen(
     store: store,
+    // Never the default. `SharedPreferences` under `flutter test` has no
+    // platform behind it and does not fail -- it never answers, so the real
+    // store would leave this screen's language read pending for the whole
+    // test rather than failing it.
+    languageStore:
+        languageStore ?? LanguageStore(backend: InMemoryLanguageBackend()),
     verifyCredentials: verify ?? (_) async => 'ok',
     readVersions: () async =>
         (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
@@ -37,6 +45,7 @@ Widget _settingsIn(
   state: state,
   home: SettingsScreen(
     store: store,
+    languageStore: LanguageStore(backend: InMemoryLanguageBackend()),
     verifyCredentials: verify ?? (_) async => 'ok',
     readVersions: () async =>
         (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
@@ -55,6 +64,7 @@ Future<Widget> _liveSettings({
   state: state,
   home: SettingsScreen(
     store: store,
+    languageStore: LanguageStore(backend: InMemoryLanguageBackend()),
     verifyCredentials: (_) async => 'ok',
     readVersions: () async =>
         (demo: '0.1.0+1', plugin: '0.1.0', nativeSdk: 'unknown'),
@@ -106,6 +116,50 @@ class _SlowBackend implements SecretBackend {
   Future<void> delete(String key) async => entries.remove(key);
 }
 
+/// Brings the language toggle into view.
+///
+/// Settings is a `ListView`, so a control below the fold is not built at all
+/// and a test that only pumps finds nothing. Which controls are on screen
+/// depends on the environment -- Live draws three more fields above this one
+/// -- and on the test window's height, so every test that touches the toggle
+/// scrolls to it rather than relying on either.
+Future<void> _revealLanguageToggle(WidgetTester tester) =>
+    tester.scrollUntilVisible(
+      find.byKey(const ValueKey('languageToggle')),
+      200,
+      // Named, and narrowed to one. The screen holds several Scrollables --
+      // every text field brings its own -- so both an unnamed finder and an
+      // unnarrowed descendant match more than one and throw.
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+
+/// A language backend whose read never answers, which is what a platform
+/// store with nothing behind it does.
+class _NeverAnsweringLanguageBackend implements LanguageBackend {
+  final Completer<String?> gate = Completer<String?>();
+
+  @override
+  Future<String?> read() => gate.future;
+
+  @override
+  Future<void> write(String value) async {}
+}
+
+/// A language backend whose write throws, standing in for a preference store
+/// that has stopped accepting them.
+class _FailingLanguageBackend implements LanguageBackend {
+  @override
+  Future<String?> read() async => null;
+
+  @override
+  Future<void> write(String value) async => throw StateError('no preferences');
+}
+
 /// Stores like the in-memory backend, and counts every write and delete.
 ///
 /// The spy the memory-only rule is checked against: in Live the count must
@@ -145,6 +199,7 @@ DemoEnvironmentState _stuckInLive() => DemoEnvironmentState(
         String? googlePayMerchantId,
         String? applePayMerchantId,
         PayCrossAppearance? appearance,
+        String? locale,
       }) async {
         if (environment == PayCrossEnvironment.sandbox) {
           throw StateError('no channel');
@@ -171,6 +226,7 @@ class _ParkedSwitch {
           String? googlePayMerchantId,
           String? applePayMerchantId,
           PayCrossAppearance? appearance,
+          String? locale,
         }) async {
           if (environment == parkOn) await gate.future;
         },
@@ -343,7 +399,16 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('restart the app'), findsOneWidget);
+    // Scoped to the field it is about. The language setting further down
+    // says the same true thing about itself, so an unscoped match would find
+    // two and this test would be about how many settings are read at launch.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('googlePayMerchantId')),
+        matching: find.textContaining('restart the app'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a save that fails says so and keeps what was typed', (
@@ -1765,5 +1830,163 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_message(tester), contains('client ID'));
+  });
+
+  group('the payment sheet language', () {
+    /// The setting is what a colleague chose last time, not a default the
+    /// screen invents. A toggle that opened on System over a stored French
+    /// would be one tap from writing English over their choice.
+    testWidgets('opens on the stored choice', (tester) async {
+      final backend = InMemoryLanguageBackend();
+      await LanguageStore(backend: backend).write(DemoLanguage.french);
+
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          languageStore: LanguageStore(backend: backend),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _revealLanguageToggle(tester);
+
+      final toggle = tester.widget<SegmentedButton<DemoLanguage>>(
+        find.byKey(const ValueKey('languageToggle')),
+      );
+      expect(toggle.selected, {DemoLanguage.french});
+    });
+
+    testWidgets('opens on System when nothing was chosen', (tester) async {
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+      await _revealLanguageToggle(tester);
+
+      final toggle = tester.widget<SegmentedButton<DemoLanguage>>(
+        find.byKey(const ValueKey('languageToggle')),
+      );
+      expect(toggle.selected, {DemoLanguage.system});
+    });
+
+    testWidgets('choosing a language writes it', (tester) async {
+      final backend = InMemoryLanguageBackend();
+
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          languageStore: LanguageStore(backend: backend),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _revealLanguageToggle(tester);
+
+      await tester.tap(find.text(DemoLanguage.french.label));
+      await tester.pumpAndSettle();
+
+      expect(backend.value, DemoLanguage.french.name);
+      final toggle = tester.widget<SegmentedButton<DemoLanguage>>(
+        find.byKey(const ValueKey('languageToggle')),
+      );
+      expect(toggle.selected, {DemoLanguage.french});
+    });
+
+    /// The same rule the credential buttons follow, and for the same reason:
+    /// before the read lands the toggle shows System because nothing has been
+    /// read yet, not because nothing is stored, and a tap on that emptiness
+    /// writes it straight over a good choice.
+    testWidgets('is dead until the stored choice has been read', (
+      tester,
+    ) async {
+      final backend = _NeverAnsweringLanguageBackend();
+
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          languageStore: LanguageStore(backend: backend),
+        ),
+      );
+      await tester.pump();
+      await _revealLanguageToggle(tester);
+
+      final toggle = tester.widget<SegmentedButton<DemoLanguage>>(
+        find.byKey(const ValueKey('languageToggle')),
+      );
+      expect(toggle.onSelectionChanged, isNull);
+      // And it says why. A dimmed control with nothing attached is the dead
+      // end the Live gate's own hint exists to avoid.
+      expect(find.byKey(const ValueKey('languageLoading')), findsOneWidget);
+    });
+
+    /// The reason goes away with the condition it describes, like
+    /// "Reading saved credentials…" above it. A note that outlives the wait
+    /// is noise on every later swipe.
+    testWidgets('the reason it was dead goes away once the read lands', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+      await _revealLanguageToggle(tester);
+
+      expect(find.byKey(const ValueKey('languageLoading')), findsNothing);
+    });
+
+    /// A choice that was not written will not survive the next launch, which
+    /// is the only launch that reads it. Silence there would be a screen
+    /// showing French over a store that still says English.
+    testWidgets('a write that fails is reported', (tester) async {
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          languageStore: LanguageStore(backend: _FailingLanguageBackend()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _revealLanguageToggle(tester);
+
+      await tester.tap(find.text(DemoLanguage.french.label));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('settingsMessage'))).data,
+        contains('language'),
+      );
+    });
+
+    /// A section this far down a long ListView is unreachable in practice
+    /// without one: the alternative is swiping through every credential field
+    /// to get to it.
+    testWidgets('its heading is a heading', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+      await _revealLanguageToggle(tester);
+
+      expect(
+        tester
+            .getSemantics(find.byKey(const ValueKey('languageHeading')))
+            .flagsCollection
+            .isHeader,
+        isTrue,
+      );
+      semantics.dispose();
+    });
+
+    /// It is the sheet's language, not the environment's, so it is offered on
+    /// both sides of the switch -- unlike the wallet id, which is Test only.
+    testWidgets('is offered in Live as well as Test', (tester) async {
+      await tester.pumpWidget(
+        await _liveSettings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _revealLanguageToggle(tester);
+
+      expect(find.byKey(const ValueKey('languageToggle')), findsOneWidget);
+    });
   });
 }

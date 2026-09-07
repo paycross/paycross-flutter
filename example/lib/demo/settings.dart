@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'endpoints.dart';
 import 'environment.dart';
+import 'language.dart';
 import 'live.dart';
 import 'minter.dart';
 import 'secrets.dart';
@@ -30,11 +31,17 @@ class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
     this.store = const SecretStore(),
+    this.languageStore = const LanguageStore(),
     this.verifyCredentials = mintThrowawaySession,
     this.readVersions = platformVersions,
   });
 
   final SecretStore store;
+
+  /// Where the payment sheet's language is kept. Its own store rather than a
+  /// field on [SecretStore]: a language is not a secret, and it is read at
+  /// launch by `main` from plain preferences rather than from a keychain.
+  final LanguageStore languageStore;
   final VerifyCredentials verifyCredentials;
   final Future<DemoVersions> Function() readVersions;
 
@@ -85,10 +92,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// return anything at all.
   Credentials? _stored;
 
+  /// The language the payment sheet is pinned to, as this screen last read or
+  /// wrote it.
+  DemoLanguage _language = DemoLanguage.system;
+
+  /// Whether the language read has come back.
+  ///
+  /// The toggle is dead until it has, for the reason [_loaded] keeps the
+  /// buttons dead: before the read lands the toggle shows System because
+  /// nothing has been read yet, not because nothing is stored, and a tap on
+  /// that emptiness would write it over a good choice.
+  bool _languageLoaded = false;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _loadLanguage();
   }
 
   @override
@@ -141,6 +161,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // install impossible to configure.
       _loaded = true;
     });
+  }
+
+  Future<void> _loadLanguage() async {
+    // Guarded inside the store, which answers System for a store it could not
+    // read -- the same answer `main` acts on, so the screen and the launch
+    // cannot disagree about an unreadable store.
+    final language = await widget.languageStore.read();
+    if (!mounted) return;
+    setState(() {
+      _language = language;
+      _languageLoaded = true;
+    });
+  }
+
+  Future<void> _chooseLanguage(DemoLanguage language) async {
+    // On screen first: the toggle is what the human just pressed, and a
+    // segment that springs back while a write is in flight reads as a refusal.
+    setState(() {
+      _language = language;
+      _message = null;
+    });
+    try {
+      await widget.languageStore.write(language);
+    } catch (problem) {
+      if (!mounted) return;
+      // Only the type, like every other store failure on this screen. What
+      // matters is that the choice on screen is not the choice the next
+      // launch will read, because the next launch is the only thing that
+      // reads it at all.
+      setState(
+        () => _message =
+            'Could not save the language: ${problem.runtimeType}. It applies '
+            'to this session only.',
+      );
+    }
   }
 
   /// Why what is typed cannot be used yet, or null if it can.
@@ -730,6 +785,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Text(_message!, key: const ValueKey('settingsMessage')),
             ),
           ],
+          const SizedBox(height: 32),
+          // Offered in both environments, unlike the wallet id above: this is
+          // the shopper's language rather than one merchant's configuration,
+          // and it is the same person reading the sheet on either side of the
+          // switch.
+          // A real heading, so a screen reader can jump to this section
+          // rather than swiping through every credential field to reach it.
+          // The note below stays a node of its own, read after the control it
+          // describes: a hint on a SegmentedButton would have to be attached
+          // to the group rather than to a segment, and that is not something
+          // this change can verify without a device.
+          Semantics(
+            header: true,
+            child: const Text(
+              'Payment sheet language',
+              key: ValueKey('languageHeading'),
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SegmentedButton<DemoLanguage>(
+            key: const ValueKey('languageToggle'),
+            segments: [
+              for (final language in DemoLanguage.values)
+                ButtonSegment(value: language, label: Text(language.label)),
+            ],
+            selected: {_language},
+            onSelectionChanged: _busy || !_languageLoaded
+                ? null
+                : (chosen) => _chooseLanguage(chosen.single),
+          ),
+          const SizedBox(height: 8),
+          // The reason travels with the control, like the credential buttons'
+          // "Reading saved credentials…" and the Live gate's hint: a dead
+          // control with nothing attached is a dead end, and to a screen
+          // reader the note below is a separate node rather than an
+          // explanation. Gone the moment the read lands, whatever it found,
+          // so it is not noise on every later swipe.
+          if (!_languageLoaded)
+            const Text(
+              key: ValueKey('languageLoading'),
+              'Reading the saved language…',
+            ),
+          const Text(
+            key: ValueKey('languageNote'),
+            'The language the native payment sheet draws in. System sets no '
+            'override, which leaves the payment session\'s own locale to '
+            'decide and the device after that. Read at launch — restart the '
+            'app after changing it. This app\'s own screens stay in English '
+            'either way.',
+          ),
           const SizedBox(height: 32),
           VersionPanel(readVersions: widget.readVersions),
         ],

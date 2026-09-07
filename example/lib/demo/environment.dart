@@ -34,6 +34,7 @@ typedef ConfigureSdk =
       String? googlePayMerchantId,
       String? applePayMerchantId,
       PayCrossAppearance? appearance,
+      String? locale,
     });
 
 /// The real one.
@@ -42,11 +43,13 @@ Future<void> configurePayCross({
   String? googlePayMerchantId,
   String? applePayMerchantId,
   PayCrossAppearance? appearance,
+  String? locale,
 }) => PayCross.configure(
   environment: environment,
   googlePayMerchantId: googlePayMerchantId,
   applePayMerchantId: applePayMerchantId,
   appearance: appearance,
+  locale: locale,
 );
 
 /// Which environment the app is in, and the Live credentials while it is
@@ -66,6 +69,7 @@ class DemoEnvironmentState extends ChangeNotifier {
     this.configure = configurePayCross,
     this.googlePayMerchantId,
     this.applePayMerchantId,
+    this.locale,
   });
 
   final ConfigureSdk configure;
@@ -85,6 +89,16 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// field rather than read from the constant on the way back so that the
   /// two directions have one source between them.
   final String? applePayMerchantId;
+
+  /// The language `main` configured the SDK with at launch, carried for the
+  /// same reason the two wallet identifiers are: re-pointing the SDK replaces
+  /// the whole configuration, so a locale left out of any call here is a
+  /// French sheet that silently goes back to English.
+  ///
+  /// Read once at launch and never changed, which is what the setting itself
+  /// says on the Settings screen. The demo's own screens are unaffected by
+  /// it; this is the sheet's language, not the app's.
+  final String? locale;
 
   /// True while a switch is waiting on the SDK.
   ///
@@ -170,6 +184,9 @@ class DemoEnvironmentState extends ChangeNotifier {
         // the null both SDKs read as "render no button".
         googlePayMerchantId: walletIdOrNull(liveGooglePayMerchantId),
         applePayMerchantId: walletIdOrNull(liveApplePayMerchantId),
+        // The shopper's language, not the environment's: it is the same
+        // person reading the sheet on either side of this switch.
+        locale: locale,
       );
     } catch (problem) {
       // Only the type. A platform exception's message is the one thing on
@@ -232,6 +249,7 @@ class DemoEnvironmentState extends ChangeNotifier {
     googlePayMerchantId: googlePayMerchantId,
     applePayMerchantId: applePayMerchantId,
     appearance: appearance,
+    locale: locale,
   );
 
   /// Returns to Test, or returns why it did not.
@@ -256,6 +274,7 @@ class DemoEnvironmentState extends ChangeNotifier {
         environment: PayCrossEnvironment.sandbox,
         googlePayMerchantId: googlePayMerchantId,
         applePayMerchantId: applePayMerchantId,
+        locale: locale,
       );
     } catch (problem) {
       // The same second drop the success path makes below, and for the same
@@ -311,6 +330,7 @@ class LiveModeScope extends StatefulWidget {
     this.state,
     this.googlePayMerchantId,
     this.applePayMerchantId,
+    this.locale,
   });
 
   final Widget child;
@@ -324,6 +344,11 @@ class LiveModeScope extends StatefulWidget {
 
   /// Passed on with the Google one, and for the same reason.
   final String? applePayMerchantId;
+
+  /// Passed on with the wallet identifiers, and for the same reason: every
+  /// re-point this scope's state makes has to carry it or the sheet's
+  /// language is lost at the first environment switch.
+  final String? locale;
 
   /// The state above [context], or null where there is none.
   ///
@@ -370,6 +395,7 @@ class _LiveModeScopeState extends State<LiveModeScope> {
       _own = DemoEnvironmentState(
         googlePayMerchantId: widget.googlePayMerchantId,
         applePayMerchantId: widget.applePayMerchantId,
+        locale: widget.locale,
       );
     }
   }

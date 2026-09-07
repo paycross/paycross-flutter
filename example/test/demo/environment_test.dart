@@ -37,11 +37,18 @@ class _RecordingConfigure {
   /// list with a leftover in it rather than as a passing test.
   final List<PayCrossAppearance?> appearances = <PayCrossAppearance?>[];
 
+  /// The locale of each call, in its own list for the reason the wallet
+  /// lists are in theirs: re-pointing the SDK replaces the whole
+  /// configuration, so a locale left out of one call is a sheet that goes
+  /// back to English and stays there until the app is relaunched.
+  final List<String?> locales = <String?>[];
+
   Future<void> call({
     required PayCrossEnvironment environment,
     String? googlePayMerchantId,
     String? applePayMerchantId,
     PayCrossAppearance? appearance,
+    String? locale,
   }) async {
     // Before the refusal, not after: this models a button being tapped while
     // the SDK call is in flight, and that happens whether the call goes on to
@@ -52,6 +59,7 @@ class _RecordingConfigure {
     merchantIds.add(googlePayMerchantId);
     appleMerchantIds.add(applePayMerchantId);
     appearances.add(appearance);
+    locales.add(locale);
     if (hold != null) await hold!.future;
   }
 }
@@ -786,6 +794,60 @@ void main() {
       await state.applyTestAppearance(themed);
 
       expect(configure.calls.last, PayCrossEnvironment.sandbox);
+    });
+  });
+
+  group('the launch locale', () {
+    /// Every re-point replaces the whole configuration, so the language has
+    /// to be re-sent on each one. Losing it on the way into Live would be a
+    /// French sheet that quietly becomes English at the moment the payments
+    /// start costing money.
+    test('rides into Live and back out again', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        locale: 'fr',
+      );
+
+      expect(await state.enterLive(liveConfirmationWord), isNull);
+      expect(await state.leaveLive(), isNull);
+
+      expect(configure.calls, [
+        PayCrossEnvironment.production,
+        PayCrossEnvironment.sandbox,
+      ]);
+      expect(configure.locales, ['fr', 'fr']);
+    });
+
+    /// A themed run re-points the SDK twice, and the appearance is the only
+    /// thing it means to change. The one it applies and the one it restores
+    /// both carry the language.
+    test('survives a themed run in both directions', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        locale: 'fr',
+      );
+
+      await state.applyTestAppearance(
+        PayCrossAppearance.brand(const Color(0xFF1E88E5)),
+      );
+      await state.applyTestAppearance(null);
+
+      expect(configure.locales, ['fr', 'fr']);
+      expect(configure.appearances.first, isNotNull);
+      expect(configure.appearances.last, isNull);
+    });
+
+    /// No language chosen is a null on the wire, which is the native ladder's
+    /// first rung left empty rather than a request for English.
+    test('is null when nothing was chosen', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(configure: configure.call);
+
+      expect(await state.enterLive(liveConfirmationWord), isNull);
+
+      expect(configure.locales, [isNull]);
     });
   });
 }
