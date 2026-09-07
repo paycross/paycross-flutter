@@ -218,6 +218,13 @@ VERB_BUDGET_SECONDS = {
     "tap_pay": 60,
     "tap_google_pay": 60,
     "select_saved_card": 60,
+    # Five waits at 30 s each before settles -- the row poll, the bin, the
+    # dialog, the confirm, and the poll that watches the row leave -- and the
+    # last of those is a real backend round trip rather than a frame.
+    "remove_saved_card": 180,
+    # Four at 30 s plus two alert settles: the sheet's cancel, the dialog, the
+    # dismissal, and the look that proves the sheet came back.
+    "dismiss_cancel": 150,
     "save_card": 60,
     "acs": 240,
     "cancel_challenge": 180,
