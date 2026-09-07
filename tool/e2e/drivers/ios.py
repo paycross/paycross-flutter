@@ -86,36 +86,71 @@ SHOT_STDERR = "[simctl-stderr]"
 #: so a window that looked non-empty would otherwise pass for app output.
 CONSOLE_SIZE = "[console-size]"
 
-CARDHOLDER = "cardholderName"
-CARD_NUMBER = "cardNumber"
-EXPIRY = "expiry"
-CVV = "cvv"
-PAY_BUTTON = "payButton"
-#: Tagged by CardFormView.swift:179 and never interactive -- the neutral target
-#: for the keyboard-dismissal fallback.
-AMOUNT = "amount"
-#: `Toggle("Save this card")` (CardFormView.swift:53). Rendered only under
+#: The identifiers the SDK publishes, from 0.7.0. They are set in every build
+#: -- an iOS `accessibilityIdentifier` is not surfaced to VoiceOver or to other
+#: apps, so there is nothing to gate -- and WDA reports one as a node's `name`.
+#: Android publishes the same strings as resource ids, so these names are the
+#: cross-platform contract rather than this file's shorthand.
+#:
+#: They all gained the `paycross.` prefix in Train 4. What went with the switch
+#: is every matcher that read a rendered STRING: the sheet draws French when
+#: the session says so, and a driver written against English copy would have
+#: passed on an English rig and failed on nobody's machine but the shopper's.
+CARDHOLDER = "paycross.cardholderName"
+CARD_NUMBER = "paycross.cardNumber"
+EXPIRY = "paycross.expiry"
+CVV = "paycross.cvv"
+PAY_BUTTON = "paycross.payButton"
+#: The sheet's own container, and -- on 0.7.0 -- the Pay button as well.
+#:
+#: `PaymentSheet.swift:923` puts `.payCrossIdentifier(.sheet)` on the `Group`
+#: wrapping `CardFormView`. The Pay button is the pinned footer, a direct child
+#: of that group rather than of the `ScrollView` inside it, so SwiftUI's outer
+#: identifier overrides the `.payButton` set on the button itself
+#: (`CardFormView.swift:453`). Everything inside the ScrollView keeps its own
+#: name, because the ScrollView is an element carrying `.sheet` and propagation
+#: stops there.
+#:
+#: Measured on the simulator 2026-09-07 -- `paycross.payButton` is not in the
+#: tree at all, and `paycross.sheet` is on two elements. See `_pay_button`.
+SHEET = "paycross.sheet"
+#: Never interactive -- also the neutral target for the keyboard-dismissal
+#: fallback. Its label carries a `Total, ` caption ahead of the amount.
+AMOUNT = "paycross.amount"
+#: The save-card `Toggle` (CardFormView.swift:119). Rendered only under
 #: `allowsSaving && state.source.isNewCard`, and measured 2026-08-31 to sit at
 #: y=840 on an 874-tall screen with `visible="false"` even before any keyboard
 #: is up -- so it has to be scrolled to, where Android's checkbox does not.
-SAVE_CARD_TOGGLE = "Save this card"
+SAVE_CARD = "paycross.saveCard"
 
-#: The saved-card rows carry NO accessibility identifier at all
-#: (`SavedCardPicker`, CardFormView.swift:230-276), so the only handle is the
-#: visible label -- `"\(brand.displayName) •••• \(last4)"` at :239, with four
-#: U+2022 BULLETs. This substring is what separates a stored-card row from the
-#: "Use a new card" row beside it, and it is the reason D5 files an
-#: accessibility issue against the iOS SDK.
-SAVED_CARD_BULLETS = "\u2022\u2022\u2022\u2022"
+#: The stored-card list and its rows. A row is `paycross.savedCard.<uuid>` and
+#: its bin is that plus `.delete`, so the prefix finds a row the driver has not
+#: read the session to learn the uuid of -- and the suffix is what keeps the
+#: bin out of the answer.
+#:
+#: These rows used to be matched on the four U+2022 BULLETs in their rendered
+#: label, because `SavedCardPicker` set no identifier on anything. That was the
+#: accessibility gap D5 filed; 0.7.0 closed it.
+SAVED_CARDS = "paycross.savedCards"
+SAVED_CARD_PREFIX = "paycross.savedCard."
+SAVED_CARD_DELETE_SUFFIX = ".delete"
 
-#: The row that goes back to a fresh card (CardFormView.swift:246). Composed
-#: only inside the picker, which is composed only when the session snapshot
-#: holds a stored card -- so its presence is the `saved_card` predicate.
-NEW_CARD_ROW = "Use a new card"
+THREE_DS_CANCEL = "paycross.threeDSCancel"
+#: The sheet's own Cancel. iOS-only: Android has no close control and is
+#: cancelled with the system back gesture.
+SHEET_CANCEL = "paycross.cancel"
 
-THREE_DS_CANCEL = "threeDSCancel"
-SHEET_CANCEL = "Cancel"
-CANCEL_CONFIRM = "Yes, Cancel"
+#: The two SDK-drawn confirmations and their buttons. Drawn in the sheet rather
+#: than raised as `.alert`s, and that is what lets them carry identifiers at
+#: all: SwiftUI does not forward a button's identifier onto the `UIAlertAction`
+#: it builds, measured nil on iOS 26.5 for both actions and for the alert's
+#: whole view tree.
+CANCEL_DIALOG = "paycross.cancelDialog"
+CANCEL_CONFIRM = "paycross.cancelConfirm"
+CANCEL_DISMISS = "paycross.cancelDismiss"
+REMOVE_DIALOG = "paycross.removeDialog"
+REMOVE_CONFIRM = "paycross.removeConfirm"
+
 PASTE_ITEM = "Paste"
 TOKEN_FIELD = "Session token"
 EXAMPLE_PAY = "Pay"
@@ -544,13 +579,13 @@ class IosDriver(Driver):
         state = self._device_state()
         if state != "Booted":
             raise DriverError(f"simulator {self._udid} is {state!r}, not booted")
-        locale = self._locale()
-        if locale and not locale.startswith("en"):
-            raise DriverError(
-                f"simulator locale is {locale!r}: the sheet's Pay button and the "
-                "re-arm banner are English strings, and the amount predicate "
-                "only absorbs a swapped decimal separator"
-            )
+        # No locale guard. This refused anything but English, because the Pay
+        # button and the re-arm banner were matched as English strings. Both
+        # are identifiers now, and a simulator drawing French is a case this
+        # rig has to be able to MEASURE rather than refuse. What the guard was
+        # really protecting -- a re-arm that reads as a miss because the amount
+        # is spelled another way -- is diagnosed in `wait_rearmed` instead,
+        # where it can name the amount the sheet was actually showing.
         # Before the terminate: the old capture still owns the app.
         self._stop_console()
         # Before the capture is started, so the termination a stale bundle-bound
@@ -620,30 +655,6 @@ class IosDriver(Driver):
 
     def relaunch(self) -> None:
         self.launch(truncate_console=False)
-
-    def _locale(self) -> str:
-        """The simulator's locale, or "" when it cannot be read.
-
-        Deliberately soft. The rig's simulator answers `en_US@rg=lvzzzz` and
-        the amount predicate absorbs that, so this is guarding the case the
-        predicate cannot: a non-English locale, where `Pay` is another word
-        entirely. A simulator that has never had the key written answers with
-        a complaint rather than a locale, and refusing on that would break a
-        rig for a cosmetic check -- so an unreadable locale passes.
-
-        Android refuses anything but `en-US` outright because its Pay-button
-        match is exact; this side tolerates more because it can.
-        """
-        said = self._remote(
-            f"xcrun simctl spawn {self._quoted_udid} defaults read -g AppleLocale "
-            "2>/dev/null"
-        ).strip()
-        # Wide enough to recognise every locale iOS actually writes, because
-        # a shape too narrow does not fail safe: an unrecognised answer is
-        # treated as unreadable and lets the simulator through. `zh_Hans_CN`
-        # has three subtags and `es-419` uses a hyphen and a UN M.49 region,
-        # and both were read as "cannot tell" by a `[a-z]{2}(_...)` shape.
-        return said if re.fullmatch(r"[a-z]{2,3}([_-][A-Za-z0-9@=_]+)?", said) else ""
 
     # -- finding and tapping -------------------------------------------------
 
@@ -736,8 +747,11 @@ class IosDriver(Driver):
         accessibilityIdentifier, so this reaches both the SDK's tagged controls
         and the example app's untagged Pay button with one matcher -- exactly
         what wda.py's by_name did. `identifier_only` turns the label half off,
-        which is how `cancel_form` avoids the challenge bar's Cancel item: that
-        one is *labelled* "Cancel" while its identifier is "threeDSCancel".
+        which is what everything on the SDK's sheet now passes: both cancels are
+        *labelled* "Cancel", and every other label on that sheet is drawn in
+        whatever language the session asked for. What is left matching a label
+        is the example app's own Pay and the sandbox challenge's outcome
+        buttons, neither of which the SDK draws or translates.
 
         `match` replaces the comparison for the one element whose name is not
         stable -- see `_is_token_field`. `name` is still what a failure is
@@ -1010,7 +1024,7 @@ class IosDriver(Driver):
     def paste_token(self, token_path: Path) -> None:
         self._enter_token_text(read_token(Path(token_path), verb="paste"))
         self.tap_example_pay()
-        self._find(PAY_BUTTON, timeout=SCREEN_TIMEOUT_SECONDS)
+        self._pay_button(timeout=SCREEN_TIMEOUT_SECONDS)
 
     def present_token(self, token_path: Path) -> None:
         """The token and the example's Pay, with no wait for a sheet.
@@ -1233,9 +1247,33 @@ class IosDriver(Driver):
         self._sleep(SETTLE_SECONDS)
 
     def tap_pay(self, amount_text: str) -> None:
-        # The amount is in the label, but payButton is a real identifier, so
-        # unlike Android there is nothing to compute here.
-        self.tap_identifier(PAY_BUTTON, identifier_only=True)
+        # `amount_text` is not read on either platform any more: Android taps
+        # the same identifier. The parameter stays because the base class and
+        # the runner pass it, and `wait_rearmed` still needs the amount.
+        self._tap_node(self._pay_button())
+
+    def _pay_button(self, *, timeout: float = 30) -> tree.Node:
+        """The Pay button, by its own name where the SDK publishes one.
+
+        On PayCross 0.7.0 it does not: the button answers to `paycross.sheet`,
+        for the reason written at that constant. So this prefers the contract
+        and falls back to the one element that can only be the Pay button --
+        a `Button` carrying the sheet's identifier, which the sheet's own
+        container (a `ScrollView`) is not.
+
+        The fallback is temporary and removes itself: the moment the SDK sets
+        `paycross.payButton` on that button, the first branch matches and the
+        second is never reached. It is here because without it no iOS cell runs
+        at all -- `paste_token`, `tap_pay` and `dismiss_cancel` all need this
+        element, and every one of them would time out.
+        """
+
+        def is_pay_button(node: tree.Node) -> bool:
+            if node.identifier == PAY_BUTTON:
+                return True
+            return node.identifier == SHEET and node.type == "Button"
+
+        return self._find(PAY_BUTTON, timeout=timeout, match=is_pay_button)
 
     def wait_label(
         self,
@@ -1251,17 +1289,20 @@ class IosDriver(Driver):
             raise self.no_label_error(timeout)
         return label
 
-    def _switch(self, name: str) -> tree.Node | None:
-        """The named two-state control, wherever it is in the tree.
+    def _switch(self, identifier: str) -> tree.Node | None:
+        """The two-state control with that identifier, wherever it is in the tree.
 
         Not `_find`: that prefers an on-screen node and this is asked before
         anything has been scrolled, when the answer is legitimately off-screen.
         `checked is not None` is what makes it the switch rather than the
-        StaticText beside it, which carries the same label.
+        StaticText beside it, which sits inside the same row.
+
+        Identifier only. It used to accept a label too, back when the toggle
+        was addressed as `"Save this card"`; a label match now could only ever
+        find the English sheet.
         """
         for node in self._nodes(tolerate=True):
-            named = name in (node.identifier, node.content_desc)
-            if node.checked is not None and named:
+            if node.checked is not None and node.identifier == identifier:
                 return node
         return None
 
@@ -1310,17 +1351,22 @@ class IosDriver(Driver):
         with no keyboard up. Android's checkbox is at y=1125 of 2400 and needs
         nothing.
 
-        It is **found** by its label and **tapped** somewhere else. SwiftUI
-        exposes the row as an `XCUIElementTypeSwitch` carrying the label as its
-        name, and its state as `value` "0"/"1" -- which `tree.parse_wda`
-        normalises into `checked` -- but tapping that row does nothing at all.
-        Only the unnamed control inside it responds, so `_toggle_control` is
-        not a nicety. Android has the same split for a different reason: there
-        the checkbox carries no label and the label is not clickable.
+        It is **found** by its identifier and **tapped** somewhere else.
+        SwiftUI exposes the row as an `XCUIElementTypeSwitch` carrying the
+        identifier as its name, and its state as `value` "0"/"1" -- which
+        `tree.parse_wda` normalises into `checked` -- but tapping that row does
+        nothing at all. Only the unnamed control inside it responds, so
+        `_toggle_control` is not a nicety. Android no longer has this split:
+        `paycross.saveCard` is on the `toggleable` row there and the row is
+        what responds.
 
         And "makes sure" rather than "taps", for the reason Android has too:
         tapping an already-on toggle turns it off, and the cell would assert a
         save its own action had just undone.
+
+        It is found by identifier rather than by `"Save this card"`, which is
+        what this matched until Train 4 and what a French sheet renders as
+        `Enregistrer cette carte`.
 
         The keyboard is dismissed first, best effort. `scroll_to` drags from
         `height * 0.75`, which is inside where a numeric pad sits, so a pad
@@ -1329,13 +1375,13 @@ class IosDriver(Driver):
         `type_card` and there is no pad to fight.
         """
         self.dismiss_keyboard(required=False)
-        if self._switch(SAVE_CARD_TOGGLE) is None:
+        if self._switch(SAVE_CARD) is None:
             raise DriverError(
-                f"no {SAVE_CARD_TOGGLE!r} toggle anywhere in the tree: the "
+                f"no {SAVE_CARD!r} toggle anywhere in the tree: the "
                 "session's options are missing save_card_config, or the form "
                 "has not rendered"
             )
-        node = self.scroll_to(SAVE_CARD_TOGGLE)
+        node = self.scroll_to(SAVE_CARD)
         if node.checked:
             self.scroll_back_to_top()
             return
@@ -1346,11 +1392,7 @@ class IosDriver(Driver):
 
         after = self._poll(
             lambda nodes: next(
-                (
-                    n
-                    for n in nodes
-                    if n.checked and SAVE_CARD_TOGGLE in (n.identifier, n.content_desc)
-                ),
+                (n for n in nodes if n.checked and n.identifier == SAVE_CARD),
                 None,
             ),
             timeout,
@@ -1359,7 +1401,7 @@ class IosDriver(Driver):
         if after is None:
             raise DriverError(
                 f"the tap at {target.centre} did not turn on "
-                f"{SAVE_CARD_TOGGLE!r}; "
+                f"{SAVE_CARD!r}; "
                 "the submit would carry card.save false and the payment would "
                 "store nothing"
             )
@@ -1372,31 +1414,23 @@ class IosDriver(Driver):
     def select_saved_card(self, *, timeout: float = 30) -> None:
         """Chooses the first stored card, and proves the form switched.
 
-        Matched on the four U+2022 bullets in the row's label, because that is
-        the only handle there is: `SavedCardPicker` (CardFormView.swift:230-276)
-        sets no accessibility identifier on anything, so the rows are plain
-        `Button`s and SwiftUI's concatenation of their children --
-        `"Visa •••• 0000, 12/28"` -- is what reaches the tree. The "Use a new
-        card" row sits directly below at the same size and has no bullets,
-        which is what separates the two.
+        Matched on `paycross.savedCard.<uuid>`, tagged on the row's `Button`
+        (`SavedCardPicker.swift:86`). Until 0.7.0 the picker set no identifier
+        on anything and the only handle was the four U+2022 bullets inside the
+        rendered label -- the gap D5 filed and this train closed.
 
         The verification is the point. `cardNumber` is in the tree before the
         selection and gone after it, because the two branches of the form are
-        mutually exclusive (`state.source.isNewCard`). Without that check a
-        selection that silently failed would leave the cell typing its CVV into
-        the FRESH form, submitting a blank card, and reporting a saved-card
-        payment -- with `saved_card_used` the only assertion that would ever
-        notice, an hour into a matrix run. So this raises rather than returns.
+        mutually exclusive (`state.source.isNewCard`), and `cvv` being still
+        there is what keeps "the form switched" from also being satisfied by a
+        form that failed to render at all. Without that check a selection that
+        silently failed would leave the cell typing its CVV into the FRESH
+        form, submitting a blank card, and reporting a saved-card payment --
+        with `saved_card_used` the only assertion that would ever notice, an
+        hour into a matrix run. So this raises rather than returns.
         """
         row = self._poll(
-            lambda nodes: next(
-                (
-                    n
-                    for n in nodes
-                    if SAVED_CARD_BULLETS in n.identifier and self._on_screen(n)
-                ),
-                None,
-            ),
+            lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
             timeout,
             POLL_INTERVAL_SECONDS,
         )
@@ -1411,35 +1445,103 @@ class IosDriver(Driver):
 
         switched = self._poll(
             lambda nodes: (
-                True if not self._matches_in(nodes, CARD_NUMBER, True) else None
+                True
+                if not self._matches_in(nodes, CARD_NUMBER, True)
+                and self._matches_in(nodes, CVV, True)
+                else None
             ),
             timeout,
             POLL_INTERVAL_SECONDS,
         )
         if switched is None:
             raise DriverError(
-                f"after tapping the stored card at {row.centre} the sheet is "
-                f"still showing the new-card form ({CARD_NUMBER!r} is present); "
+                f"after tapping {row.identifier} at {row.centre} the sheet is "
+                f"still showing the new-card form ({CARD_NUMBER} is present); "
                 "the CVV would be typed into a fresh card and the payment would "
                 "not use the stored one"
+            )
+
+    def _saved_card_rows(self, nodes: list[tree.Node]) -> list[tree.Node]:
+        """Every stored card's ROW that is on screen, each card's bin excluded.
+
+        Both carry an identifier starting with `SAVED_CARD_PREFIX` -- the bin's
+        is the row's plus `.delete` -- so the suffix is what separates them.
+        On screen, because WebKit and a scrolled sheet both keep nodes in the
+        tree at coordinates a tap cannot reach.
+        """
+        return [
+            n
+            for n in nodes
+            if n.identifier.startswith(SAVED_CARD_PREFIX)
+            and not n.identifier.endswith(SAVED_CARD_DELETE_SUFFIX)
+            and self._on_screen(n)
+        ]
+
+    def remove_saved_card(self, *, timeout: float = 30) -> None:
+        """Deletes the first stored card, and proves the row is gone.
+
+        The proof is the point, and it is not theoretical: Train 2 measured
+        this exact path failing on TEST while looking like it had worked, the
+        row staying on the sheet with `Could not remove the card. Try again.`
+        in the banner, because the web API could not write the session blob
+        back. A driver that tapped Confirm and moved on would have reported a
+        removal that never happened.
+
+        The row's own identifier carries the card's uuid, so the check is
+        exact: not "a row went away" but "the row for the card whose bin was
+        tapped went away".
+        """
+        row = self._poll(
+            lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        if row is None:
+            raise DriverError(
+                f"no stored-card row on the sheet within {timeout}s: the "
+                "session's options are missing saved_cards, or this customer "
+                "has no stored card"
+            )
+        self.tap_identifier(
+            row.identifier + SAVED_CARD_DELETE_SUFFIX,
+            timeout=timeout,
+            identifier_only=True,
+        )
+        self._sleep(ALERT_SETTLE_SECONDS)
+
+        self._find(REMOVE_DIALOG, timeout=timeout, identifier_only=True)
+        self.tap_identifier(REMOVE_CONFIRM, timeout=timeout, identifier_only=True)
+
+        gone = self._poll(
+            lambda nodes: (
+                True if not self._matches_in(nodes, row.identifier, True) else None
+            ),
+            timeout,
+            POLL_INTERVAL_SECONDS,
+        )
+        if gone is None:
+            raise DriverError(
+                f"{row.identifier} is still on the sheet {timeout}s after "
+                "confirming its removal; the card was not removed and the "
+                "shopper is being told so in the error banner"
             )
 
     def wait_saved_card(self, timeout: float = 30) -> bool:
         """Whether the sheet is offering a stored card.
 
-        Matched on the "Use a new card" row rather than on a stored card's own
-        label, and that is not a shortcut. `SavedCardPicker` is composed only
-        under `if !savedCards.isEmpty` (CardFormView.swift:30) and always
-        renders that row last (:245-250), so its presence is exactly equivalent
-        to "at least one stored card is offered" -- while a stored card's label
-        is `"<Brand> •••• <last4>"`, which the driver cannot predict without
-        knowing the PAN.
+        The picker's own container is the whole predicate: `SavedCardPicker` is
+        composed only under `if !savedCards.isEmpty`, so `paycross.savedCards`
+        being in the tree is exactly "at least one stored card is offered".
+        Android reads the same identifier for the same reason.
+
+        This used to match the "Use a new card" row, which was equivalent and
+        was English.
 
         False rather than a raise, for the reason Android's says: "no stored
         card was offered" is a cell verdict, not a broken device.
         """
         found = self._poll(
-            lambda nodes: self._pick(nodes, NEW_CARD_ROW, False, False),
+            lambda nodes: self._pick(nodes, SAVED_CARDS, True, False),
             timeout,
             POLL_INTERVAL_SECONDS,
         )
@@ -1484,15 +1586,35 @@ class IosDriver(Driver):
         # all here, and held the shopper to the 480-second poll deadline.
         self.tap_identifier(THREE_DS_CANCEL, timeout=120, identifier_only=True)
         self._sleep(ALERT_SETTLE_SECONDS)
-        self.tap_identifier(CANCEL_CONFIRM, timeout=30)
+        self.tap_identifier(CANCEL_CONFIRM, timeout=30, identifier_only=True)
 
     def cancel_form(self) -> None:
-        # Identifier-only. The challenge bar's item is *labelled* "Cancel" too,
-        # so a label match could reach threeDSCancel from the wrong screen once
-        # D2/D3 add cells that cancel from either.
+        # Identifier-only throughout. Both cancels are *labelled* "Cancel", so
+        # a label match could reach the challenge bar's item from the form; and
+        # the confirmation's buttons are labelled in whatever language the
+        # sheet is drawing, which is the whole reason this train happened.
         self.tap_identifier(SHEET_CANCEL, timeout=30, identifier_only=True)
         self._sleep(ALERT_SETTLE_SECONDS)
-        self.tap_identifier(CANCEL_CONFIRM, timeout=30)
+        self.tap_identifier(CANCEL_CONFIRM, timeout=30, identifier_only=True)
+
+    def dismiss_cancel(self) -> None:
+        """Raises the cancel dialog, backs out of it, and proves the form is back.
+
+        The path a shopper takes when they nearly abandoned the payment and
+        then did not. It is worth driving because it is the one dialog button
+        no cell ever pressed: `cancel_form` and `cancel_challenge` both confirm,
+        so `paycross.cancelDismiss` was shipped untested from this side.
+
+        `cancelDialog` is checked before the dismissal and `payButton` after
+        it, because "the dialog opened" and "the sheet came back" are two
+        different claims and only the second says the cell can carry on paying.
+        """
+        self.tap_identifier(SHEET_CANCEL, timeout=30, identifier_only=True)
+        self._sleep(ALERT_SETTLE_SECONDS)
+        self._find(CANCEL_DIALOG, timeout=30, identifier_only=True)
+        self.tap_identifier(CANCEL_DISMISS, timeout=30, identifier_only=True)
+        self._sleep(ALERT_SETTLE_SECONDS)
+        self._pay_button()
 
     def wait_rearmed(
         self,
@@ -1504,10 +1626,24 @@ class IosDriver(Driver):
         # A WDA that will not answer raises out of _poll rather than returning
         # False: "the sheet did not re-arm" is a cell verdict and this is not.
         found = self._poll(
-            lambda nodes: tree.sheet_rearmed(nodes, "ios", amount_text) or None,
+            lambda nodes: tree.sheet_rearmed(nodes, amount_text) or None,
             timeout,
             interval,
         )
+        if found is None:
+            # See AndroidDriver._blame_the_amount: the launch-time locale guard
+            # is gone from both drivers and this is what took its place.
+            showing = tree.rearm_amount_mismatch(
+                self._nodes(tolerate=True), amount_text
+            )
+            if showing is not None:
+                raise DriverError(
+                    f"the sheet re-armed showing {showing!r} where this cell "
+                    f"expects {amount_text!r}: the simulator is not drawing "
+                    "amounts in the spelling `tree.format_amount_en_us` "
+                    "computes, so the re-arm check cannot answer. This is the "
+                    "rig, not the SDK."
+                )
         return found is not None
 
     # -- evidence ------------------------------------------------------------
