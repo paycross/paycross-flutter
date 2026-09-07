@@ -1,0 +1,38 @@
+# Instant approve, no 3-D Secure at all. The baseline every other cell is
+# measured against, and the cell the runner re-runs to check the rig when
+# something else fails.
+#
+# The wait_result numbers across D0 are hang backstops, not expectations: a
+# cell that reaches its wait has already failed at something else, and the
+# number only decides how long the matrix waits before saying so. Measured
+# server settle on the 2026-08-28/29 runs was 2-21 s, so both values are an
+# order of magnitude clear of normal. They are sized by how much path is left
+# after the last action -- 180 s where an authorization still has to come back
+# through the provider (this cell, frictionless, and the two challenge cells),
+# 120 s where the shopper has already abandoned and only the sheet's own
+# teardown is outstanding (cancel_mid_challenge, and the tail of the re-arm
+# cell). Per-cell budgets in runner.py are computed from these and are the
+# real timeout: budget_for() sums a launch allowance, each verb's own
+# allowance and the wait_result seconds above, plus slack, and is checked
+# between steps rather than inside a driver call. A cell that trips its budget
+# has hung, not run slowly.
+id: control
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded

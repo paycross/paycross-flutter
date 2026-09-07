@@ -1,0 +1,58 @@
+# The shopper deletes a card they had stored, and it stays deleted.
+#
+# Runs last in this directory and depends on it. `saved_card_1_save` stores
+# card ...170000 against CUST-E2E-D5-INSTANT and `saved_card_2_pay` charges it;
+# this cell removes the row the two of them just proved works. Filename order
+# is execution order, which is what puts it after both.
+#
+# Re-running the whole directory is safe and that is not luck: re-saving a PAN
+# that was previously removed comes back under the SAME saved-card uuid
+# (measured on TEST 2026-09-06), so `saved_card_1_save` restores exactly what
+# this cell deletes. A run that stopped here leaves the customer with no card,
+# and the next run's first cell puts it back.
+#
+# `allow_removal` is what renders the bin at all; without it the rows have no
+# delete control and the session is the one `saved_card_2_pay` mints.
+# `preselect` is deliberately NOT asked for: it opens the sheet on a chosen
+# card with no card-number field, and `paste_token` waits for one.
+#
+# What proves the removal is inside `remove_saved_card`, not in the assertions
+# below: the driver reads the row's own identifier -- which carries the card's
+# uuid -- before it taps the bin, and waits for THAT row to leave the sheet.
+# It has to. On 2026-09-06 this exact path answered a confirmed removal by
+# leaving the row in place and putting `Could not remove the card. Try again.`
+# in the error banner, because the web API could not write the session blob
+# back (io.paycross, fixed by TEST PR #543). A cell that only tapped Confirm
+# would have passed straight through that.
+#
+# The payment is then abandoned, because there is nothing left to assert with
+# it: this cell is about the list, not about a charge. `txn_count: 0` is the
+# real assertion of the tail -- a session that grew a transaction out of a
+# card removal would be a finding.
+id: saved_card_5_remove
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+  options:
+    saved_cards:
+      show: all
+      allow_removal: true
+    customer:
+      merchant_reference: "CUST-E2E-D5-INSTANT"
+actions:
+  - paste_token
+  - expect saved_card
+  - remove_saved_card
+  - cancel_form
+  - wait_result 120
+expected:
+  label: "result:cancelled"
+  merchant:
+    session_status: open
+    txn_count: 0
+    no_succeeded_txn: true

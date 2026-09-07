@@ -1,0 +1,48 @@
+# The same payment as the control, with the sheet drawn in French.
+#
+# One field differs from `control.yaml`: the session asks for `locale: fr`.
+# Everything else -- card, amount, actions, assertions -- is the control's,
+# because the claim is that the language changes what the shopper reads and
+# nothing else.
+#
+# This cell could not have existed before Train 4. Both drivers matched the
+# sheet's rendered English -- the Pay button by the text `Pay €10.00`, the
+# save toggle by `Save this card`, the confirmation by `Yes, Cancel` -- and the
+# Android driver refused to launch against a device whose locale was not
+# `en-US` for exactly that reason. The `paycross.*` identifiers are what make
+# the language the shopper's business rather than the driver's, and this cell
+# is the thing that would fail if that ever stopped being true.
+#
+# `locale` is a top-level field of the create-session request, defaulted to
+# `en` server-side (paycross-core, `ParsePaymentInput`), and it reaches the
+# SDKs in the session payload. It is second in the resolution ladder: a
+# merchant's `Configuration(locale:)` override wins over it, the device's
+# languages lose to it. The override half cannot be a cell -- the example app
+# reads it from `--dart-define=PAYCROSS_LOCALE` at BUILD time, and the runner
+# installs one binary for the whole matrix -- so it is covered by a second
+# build in the campaign's evidence rather than here.
+#
+# The label is the example app's own and stays English: the demo is not
+# localized, and `result:success:<txn>` is a contract string rather than copy.
+id: french_session
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+  options:
+    locale: fr
+actions:
+  - paste_token
+  - type_card
+  - tap_pay
+  - wait_result 180
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded
