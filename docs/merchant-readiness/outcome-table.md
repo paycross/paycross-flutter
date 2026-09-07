@@ -152,7 +152,7 @@ Both platforms agree in the other direction: an absent or empty recovery becomes
 
 | condition | how it arises | Android | iOS | merchant state | notes for the guide |
 |---|---|---|---|---|---|
-| provider never answers | PAN `…0051` | `result:failure:retry:6be72178-…` | `result:failure:retry:1baa933d-…` | txn `failed`, **`failure: null`** | The schema gap: a transaction failed by this path renders no `failure` block at all. Filed as **io.paycross#871**. |
+| provider never answers | PAN `…0051` | `result:failure:retry:6be72178-…` | `result:failure:retry:1baa933d-…` | txn `failed`, **`failure: null`** | The schema gap: a transaction failed by this path renders no `failure` block at all. Filed against the PayCross API as the `failure: null` gap. |
 | network cut before submit | airplane on, then cancel | `result:cancelled` | *n/a (R6)* | session `open`, **0 txns** | nothing was submitted |
 | network cut during challenge | airplane on mid-challenge | `result:failure:retry:1c6ea3aa-…` | *n/a (R6)* | session `open`, txn `threeds_challenge_requested`, `threeds_result: null` | **Defensible.** Nothing succeeded, no liability shifted. |
 | **network cut during polling** | airplane on after approval | `result:failure:retry:5fa5525c-…` | *n/a (R6)* | session **`completed`**, txn **`succeeded`**, 3DS `authenticated`/`challenge`, **`liability_shifted: true`**, eci `05` | **The divergence a merchant must handle.** See below. |
@@ -388,10 +388,9 @@ observations of the symptom.
 **Carried forward as a runner follow-up, not an issue.** The verification step
 is small and exact: **capture the `/api/submit-card` response and the first
 `/status/{id}` response for this cell.** If the submit really does answer
-`success: true` on an expired session, that is a backend issue on
-`paycross-core`, in the same family as
-[io.paycross#871](https://github.com/paycross/io.paycross/issues/871) — two
-read paths disagreeing about one transaction.
+`success: true` on an expired session, that is a PayCross API issue, in the
+same family as the `failure: null` gap — two read paths disagreeing about one
+transaction.
 
 Until then the cell keeps its `<any>` sentinel, for the reason given above.
 

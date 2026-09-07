@@ -175,9 +175,8 @@ basis could easily be wrong in its particulars. The verification step is
 small and exact, and belongs to whoever next has the rig: **capture the
 `/api/submit-card` response and the first `/status/{id}` response for this
 cell.** If the submit really does answer `success: true` on an expired
-session, that is a backend issue on `paycross-core`, in the same family as
-[io.paycross#871](https://github.com/paycross/io.paycross/issues/871) — two
-read paths disagreeing about one transaction.
+session, that is a PayCross API issue, in the same family as the
+`failure: null` gap — two read paths disagreeing about one transaction.
 
 ### Why this cell stays `<any>`, and the tooling gap it exposes
 
@@ -523,7 +522,7 @@ open: what happens when the shopper actually pays into it.
 
 ### 3. A failed transaction can render `failure: null`
 
-Filed as **paycross/io.paycross#871**. Measured here on
+Filed against the PayCross API as the `failure: null` gap. Measured here on
 `timeout_provider_never_answers` (Android txn `99bc1afe-…`, `failed`,
 `failure: null`) and `airplane_during_challenge` (txn `036268f0-…`, same).
 
@@ -537,8 +536,8 @@ failed`; only the code path that set it differs.
 
 | # | repo | subject |
 |---|---|---|
-| [payment-testing-tool#17](https://github.com/paycross/payment-testing-tool/issues/17) | `payment_testing_go` | `declined_expired.json` / `declined_invalid_cvv.json` no longer decline |
-| [io.paycross#871](https://github.com/paycross/io.paycross/issues/871) | `paycross-core` | a failed transaction can render `failure: null` |
+| payment-testing-tool#17 | the payment testing tool | `declined_expired.json` / `declined_invalid_cvv.json` no longer decline |
+| the `failure: null` gap | the PayCross API | a failed transaction can render `failure: null` |
 | [payment-android-sdk#25](https://github.com/paycross/payment-android-sdk/issues/25) | `payment-android-sdk` | poll deadline reports `Recovery.RETRY` over a succeeded, liability-shifted payment |
 
 ## The run was interrupted by a ~10 h host sleep

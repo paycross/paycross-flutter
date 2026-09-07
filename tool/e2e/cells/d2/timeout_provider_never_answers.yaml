@@ -21,8 +21,8 @@
 # 2. The transaction reaches status `failed` with `failure: null`.
 #    markAsFailed writes metadata['failure_reason'] while FormatsFailure
 #    reads metadata['error'], so no failure block is ever rendered -- which
-#    contradicts the published schema and is filed as an issue on
-#    paycross-core / api-docs. Asserting failure_recovery here would be
+#    contradicts the published schema and is filed as a server-side issue.
+#    Asserting failure_recovery here would be
 #    asserting the bug.
 #
 # wait_result 600 clears the iOS deadline with room; the cell's budget

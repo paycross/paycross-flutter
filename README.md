@@ -44,7 +44,7 @@ The [example app](example/lib/main.dart) is this quickstart as a runnable screen
   pub.dev.
 - **[Changelog](https://developers.pay-cross.com/resources/changelogs/flutter/)** —
   mirrored from [`CHANGELOG.md`](CHANGELOG.md).
-- **[Support](https://developers.pay-cross.com/resources/support/)** — where questions go.
+- **[Support](https://developers.pay-cross.com/resources/support/)** — questions go to support@pay-cross.com.
 
 ## Contributing and security
 

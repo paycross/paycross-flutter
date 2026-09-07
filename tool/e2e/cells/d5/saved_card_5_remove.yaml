@@ -22,7 +22,7 @@
 # It has to. On 2026-09-06 this exact path answered a confirmed removal by
 # leaving the row in place and putting `Could not remove the card. Try again.`
 # in the error banner, because the web API could not write the session blob
-# back (io.paycross, fixed by TEST PR #543). A cell that only tapped Confirm
+# back (a server-side defect, since fixed on TEST). A cell that only tapped Confirm
 # would have passed straight through that.
 #
 # The payment is then abandoned, because there is nothing left to assert with
