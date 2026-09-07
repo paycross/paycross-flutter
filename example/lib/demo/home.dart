@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../shop/catalogue.dart';
+import '../shop/shop_screen.dart';
 import 'editor.dart';
 import 'endpoints.dart';
 import 'environment.dart';
@@ -63,10 +65,13 @@ Future<MintedSession> liveMintWithCredentials(
 /// How long the credential read gets before a run gives up on it.
 ///
 /// A platform store with nothing behind it does not fail, it never answers --
-/// the same shape `run.dart` bounds its bookkeeping against. Unbounded, one
-/// wedged Keychain would leave [runInFlight] set for the rest of the process
-/// and neither entrance could start a run again.
-const Duration _credentialReadTimeout = Duration(seconds: 5);
+/// the same shape `present.dart` bounds its bookkeeping against. Unbounded,
+/// one wedged Keychain would leave [runInFlight] set for the rest of the
+/// process and neither entrance could start a run again.
+///
+/// Public because the storefront's checkout reads the same store for the same
+/// reason and must not invent a second deadline for it.
+const Duration credentialReadTimeout = Duration(seconds: 5);
 
 /// True while [runPreset] is reading the credentials for a run.
 ///
@@ -128,7 +133,7 @@ Future<void> runPreset(
   runInFlight = true;
   final credentials = await store
       .read()
-      .timeout(_credentialReadTimeout, onTimeout: () => null)
+      .timeout(credentialReadTimeout, onTimeout: () => null)
       .whenComplete(() {
         runInFlight = false;
       });
@@ -796,6 +801,18 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('PayCross Demo'),
         actions: [
+          // Hidden in Live for a stronger reason than the cheat sheet below
+          // is: the storefront's Pay button mints on the credentials in the
+          // secure store and asks nothing first, so in production it would be
+          // a real card spent on one tap, past every refusal a Live tile
+          // climbs. The red banner sits over every route too, and a shop with
+          // LIVE — REAL MONEY across the top is not a shop.
+          if (!live)
+            IconButton(
+              icon: const Icon(Icons.storefront),
+              tooltip: 'Shop',
+              onPressed: () => Navigator.of(context).push(shopRoute()),
+            ),
           // Seven sandbox PANs, under a heading that says "test cards", on the
           // one screen where a real card is what is required. The sheet itself
           // is untouched; in Live there is simply no way in.
@@ -849,6 +866,25 @@ class _HomeScreenState extends State<HomeScreen> {
           live
               ? const LiveProfileStrip()
               : ActiveProfileStrip(store: widget.store),
+          // Above the scenarios, because it is what somebody showing the SDK
+          // to a person outside the team opens: a shop, with none of the
+          // vocabulary the tiles below are full of. Not one of them, so it
+          // carries neither a pencil nor a browser button.
+          if (!live)
+            Card(
+              key: const ValueKey('shopTile'),
+              child: ListTile(
+                leading: const Icon(Icons.storefront),
+                title: const Text(shopName),
+                subtitle: const Text(
+                  'Buy something, the way a shopper would. The same mint and '
+                  'the same sheet as the scenarios below.',
+                ),
+                onTap: _busy
+                    ? null
+                    : () => Navigator.of(context).push(shopRoute()),
+              ),
+            ),
           // Three tiles, drawn from one list and run by one function. The
           // order is the order they are worth running: the smoke first, then
           // the pair, whose second half has nothing to offer until the first

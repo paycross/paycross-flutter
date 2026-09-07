@@ -2,26 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
-import '../e2e_label.dart';
 import '../e2e_mode.dart';
 import 'environment.dart';
 import 'history.dart';
 import 'minter.dart';
-import 'outcome.dart';
+import 'present.dart';
 import 'presets.dart';
 import 'version_panel.dart';
-
-/// How long the two bookkeeping steps after a payment get before the screen
-/// stops waiting on them.
-///
-/// Neither is bounded by anything else: a platform channel with nothing behind
-/// it never answers rather than failing. Without this the "Copy bug report"
-/// button would simply never appear, and nobody would know why.
-///
-/// Deliberately not applied to `present`, which the plugin forbids bounding --
-/// a shorter deadline there abandons a live payment while the native SDK keeps
-/// polling, and the card may still be charged.
-const Duration _bookkeepingTimeout = Duration(seconds: 5);
 
 /// Mint, pay, show what happened.
 ///
@@ -109,41 +96,7 @@ class _RunScreenState extends State<RunScreen> {
       _sessionId = minted.id;
     });
 
-    String? label;
-    String human;
-    String? transactionId;
-    var refused = false;
-    try {
-      final paid = await widget.present(minted.token);
-      label = labelForResult(paid);
-      human = humanOutcome(paid);
-      refused = paid is PayCrossFailure;
-      transactionId = switch (paid) {
-        PayCrossSuccess(:final transactionId) => transactionId,
-        PayCrossFailure(:final transactionId) => transactionId,
-        // The whole point of the pending case: this is the id to reconcile
-        // against, so it must reach History like any other.
-        PayCrossPending(:final transactionId) => transactionId,
-        PayCrossCancelled(:final transactionId) => transactionId,
-      };
-    } on PayCrossIntegrationError catch (problem) {
-      label = labelForError(problem);
-      human = humanError(problem);
-    } catch (problem) {
-      // The plugin documents that only a PayCrossIntegrationError escapes
-      // `presentPayment`, and its own guard converts PlatformException. This
-      // arm is for what that guard cannot see -- a MissingPluginException on
-      // a build where the plugin did not register, say. Unhandled, it left
-      // the screen on "Waiting for the payment sheet…" for good, after a
-      // payment that may have charged.
-      //
-      // The type only, never the message: this text is stored and copied,
-      // and nothing promises what an unknown exception's message carries.
-      //
-      // No contract label: there is no outcome to name, and inventing one
-      // would let a cell pass on a run that never reached the sheet.
-      human = 'The payment sheet failed unexpectedly: ${problem.runtimeType}';
-    }
+    final run = await presentSession(widget.present, minted.token);
 
     if (!mounted) return;
     // The outcome, the moment it is known and before anything else is asked
@@ -152,55 +105,26 @@ class _RunScreenState extends State<RunScreen> {
     // lost to one that never answers.
     setState(() {
       _stage = 'Done.';
-      _contractLabel = label;
-      _human = human;
-      _transactionId = transactionId;
-      _refused = refused;
+      _contractLabel = run.label;
+      _human = run.human;
+      _transactionId = run.transactionId;
+      _refused = run.result is PayCrossFailure;
     });
 
-    final versions = await _versionsOrUnknown();
-    final entry = HistoryEntry(
-      at: DateTime.now(),
-      presetName: widget.preset.name,
+    final entry = await recordRun(
+      history: widget.history,
+      readVersions: widget.readVersions,
+      scenario: widget.preset.name,
       sessionId: minted.id,
-      transactionId: transactionId,
-      outcome: human,
-      demoVersion: versions.demo,
-      pluginVersion: versions.plugin,
-      nativeSdkVersion: versions.nativeSdk,
+      transactionId: run.transactionId,
+      outcome: run.human,
       live: widget.live,
     );
-    await _remember(entry);
 
     if (!mounted) return;
     // Only now: the bug report quotes the versions, so the button appears
     // once there is a complete entry behind it.
     setState(() => _entry = entry);
-  }
-
-  /// Writes the run to History, and never lets that failure lose the outcome.
-  ///
-  /// A payment has already happened by the time this runs, and it may have
-  /// taken money. A store that cannot be written costs a missing row; letting
-  /// it throw would cost the screen, which would sit on "Waiting for the
-  /// payment sheet…" with no way to tell a hang from a completed charge.
-  Future<void> _remember(HistoryEntry entry) async {
-    try {
-      await widget.history.append(entry).timeout(_bookkeepingTimeout);
-    } catch (_) {
-      // Nothing to say on screen: the entry is held in memory either way, so
-      // the outcome card and its bug report render unchanged.
-    }
-  }
-
-  Future<DemoVersions> _versionsOrUnknown() async {
-    try {
-      return await widget.readVersions().timeout(_bookkeepingTimeout);
-    } catch (_) {
-      // A throw and a read that never answers are the same thing to this
-      // screen, and "unknown" is the honest rendering of both.
-      return unknownVersions;
-    }
   }
 
   @override

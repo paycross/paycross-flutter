@@ -88,6 +88,45 @@ different strip — "Live — no credentials this session", or "Live — client 
 and six characters — and it has no secure store in reach at all: it can only
 show what is in memory for this session.
 
+## The shop
+
+The first tile on Home, and the storefront icon in the bar, open **PayCross
+Store**: three products, a product page, a checkout summary, the payment
+sheet, and a thank-you page with an order number on it. It exists so that a
+wallet review — and anybody being shown the SDK who does not work here — sees
+a purchase rather than a harness. Nothing on those five screens says
+"sandbox", names a scenario or quotes a test card.
+
+It is not a separate integration. Checkout mints through the same minter, on
+the same merchant credentials from Settings, with the same body shape the
+scenarios send: the product's price in euros under an order number of the
+form `ORDER-<timestamp>`, no stored cards asked for and none offered. It
+presents through the same native sheet, and it writes the run to History like
+any other, filed under `shop:<product>`.
+
+To pay you need credentials, exactly as a scenario does. Pay on a phone
+nobody has set up opens Settings instead of minting.
+
+What happens after the sheet closes:
+
+| Outcome | What the shop does |
+|---|---|
+| Approved | The thank-you page: the order number, the item and what was paid. The checkout and the product page are removed with it, so back cannot reach a live Pay button for an order already bought. **Continue shopping** returns to the product list. |
+| Cancelled | Back on the checkout with "Payment cancelled." and Pay usable again. |
+| Refused | Back on the checkout with a sentence a shopper can act on — "Your card was declined. Please try another card." — and Pay usable again. |
+| Unresolved | Back on the checkout with "do not pay again, we will email you", and **Pay left dead**. Nobody knows whether that payment took the money, so a second one could charge the same card twice. |
+
+The shop speaks to shoppers, so it does not print what a scenario prints: no
+recovery token, no transaction id, no "reconcile server-side". None of that
+detail is lost — History records the wording a scenario would have shown, so
+the run is still reportable in full from the **Copy bug report** button.
+
+**The shop is Test only.** In Live there is no tile and no bar action. Two
+reasons: its Pay button asks nothing before it charges, so in production one
+tap would spend a real card past every refusal a Live tile makes you climb;
+and the red `LIVE — REAL MONEY` banner sits over every screen in the app, so
+a shop in Live would not look like a shop anyway.
+
 ## Home: the scenarios
 
 This is what Home looks like in Test. In Live it has one tile and none of
