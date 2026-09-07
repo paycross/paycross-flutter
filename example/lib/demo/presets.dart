@@ -85,17 +85,22 @@ Map<String, Object?> sandboxAddressEntry() => <String, Object?>{
   'address': jsonDecode('{$_sandboxBilling}'),
 };
 
+/// The sandbox default, and spelled here rather than taken from `live.dart`'s
+/// `liveDefaultCurrency`: that file imports this one, and the two defaults are
+/// one value by coincidence rather than by rule. Every sandbox preset below
+/// leaves it alone, so their bodies are the bytes they always were -- which is
+/// what the automated matrix runs against.
+const String _sandboxCurrency = 'EUR';
+
+/// What a session is filed under when the caller does not say.
+const String _demoReference = 'DEMO-{{timestamp}}';
+
 String _body({
   required int amount,
-  // The sandbox default, and spelled here rather than taken from
-  // `live.dart`'s `liveDefaultCurrency`: that file imports this one, and the
-  // two defaults are one value by coincidence rather than by rule. Every
-  // sandbox preset below leaves it alone, so their bodies are the bytes they
-  // always were -- which is what the automated matrix runs against.
-  String currency = 'EUR',
+  String currency = _sandboxCurrency,
   String? extraTopLevel,
   String? customer,
-  String reference = 'DEMO-{{timestamp}}',
+  String reference = _demoReference,
   // Nullable, and defaulted to the sandbox fake. A Live body carries no
   // identity at all: the one it is charged under is typed in Settings, held
   // for one session, and spliced in at mint time by `withLiveIdentity` --
@@ -121,7 +126,17 @@ String _body({
 }''';
 
 /// The body every scenario without special needs mints.
-String defaultBody({int amount = 1000}) => _body(amount: amount);
+///
+/// [currency] and [reference] are here for the storefront, which mints this
+/// same shape at a product's price under an order number of its own. Their
+/// defaults are the sandbox ones, so every preset below is the bytes it
+/// always was -- and the shop cannot end up sending a differently-shaped
+/// body than the scenario a failure would be compared against.
+String defaultBody({
+  int amount = 1000,
+  String currency = _sandboxCurrency,
+  String reference = _demoReference,
+}) => _body(amount: amount, currency: currency, reference: reference);
 
 /// Renders the checkbox that lets the shopper store the card.
 final String cofStoreBody = _body(
