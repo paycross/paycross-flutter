@@ -24,9 +24,7 @@ covers this and the Swift Package Manager route.
 
 ```dart
 await PayCross.configure(environment: PayCrossEnvironment.sandbox);
-
 final result = await PayCross.presentPayment(sessionToken);
-
 switch (result) {
   case PayCrossSuccess(:final transactionId):        // paid; verify server-side
   case PayCrossFailure(:final recovery) when recovery.isRetryable: // retryable
@@ -36,9 +34,7 @@ switch (result) {
 }
 ```
 
-`PayCrossResult` is sealed, so the switch is exhaustive and a case added later is
-a compile error rather than a silently unhandled outcome. The
-[example app](example/lib/main.dart) is this quickstart as a runnable screen.
+The [example app](example/lib/main.dart) is this quickstart as a runnable screen.
 
 ## Documentation
 
