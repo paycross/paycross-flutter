@@ -13,7 +13,7 @@ from tool.e2e import cells
 
 #: 4111111111153055 approves without 3DS on TEST (a sandbox routing gap), and
 #: 4111111111150069 / 4111111111150127 lost their magic entries in
-#: payment-sandbox 66db130 and now approve too. A cell that used one would
+#: the sandbox's 66db130 and now approve too. A cell that used one would
 #: quietly measure an approval and call it a decline.
 APPROVING_PANS = ("4111111111153055", "4111111111150069", "4111111111150127")
 

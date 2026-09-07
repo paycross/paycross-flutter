@@ -54,7 +54,7 @@ RETRY_BACKOFF_SECONDS = 2.0
 
 DEFAULT_TOKEN_LIFETIME_SECONDS = 3600.0
 
-#: What the TEST deployment does today: cognito-m2m issues a 3600 s token and
+#: What the TEST deployment does today: the M2M endpoint issues a 3600 s token and
 #: the API-Gateway cache in front of it holds for 3300 s. Named because the
 #: margin below is only correct relative to these two numbers -- if the infra
 #: changes, this is the pair to re-measure.
@@ -239,7 +239,7 @@ def _refresh_after(raw: dict[str, Any], now: float) -> tuple[float, list[str]]:
     cache, and a cached hit arrives with a full `expires_in` restated as
     though the token had just been minted -- so a client starting partway
     through a token's life is told it has the whole thing. `exp` is inside the
-    signed payload and is not rewritten by the cache (cognito-m2m#1).
+    signed payload and is not rewritten by the cache (tracked internally).
 
     `expires_in` remains the fallback for a token that is not a JWT, or whose
     payload carries no usable `exp`. Falling back to the distrusted field is
@@ -253,7 +253,7 @@ def _refresh_after(raw: dict[str, Any], now: float) -> tuple[float, list[str]]:
         warnings.append(
             f"the access token is a JWT but its 'exp' is {unusable}; falling "
             "back to expires_in, which the API-Gateway cache is known to "
-            "restate -- cognito-m2m#1"
+            "restate -- tracked internally"
         )
     elif exp is not None and exp < now - IMPLAUSIBLE_EXP_AGE_SECONDS:
         warnings.append(

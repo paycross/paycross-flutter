@@ -161,7 +161,7 @@ SAVED_CARD_DELETE_SUFFIX = ".delete"
 #: both of them text the page RENDERS, because this detector has already been
 #: broken once by a change that was nobody's fault here.
 #:
-#: `payment-sandbox` 687bf4e ("Redesign challenge page to match payment page
+#: The sandbox's 687bf4e ("Redesign challenge page to match payment page
 #: design system") replaced `<strong>Sandbox 3DS Challenge</strong>` with
 #: `<div class="sandbox-badge">Sandbox</div>`. The phrase survives only in
 #: `<title>`, which never reaches an accessibility tree -- a WebView exposes

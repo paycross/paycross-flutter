@@ -1862,7 +1862,7 @@ REDESIGNED_ACS = (FIXTURES / "android-acs-redesigned.uix").read_text()
 
 
 def test_wait_acs_recognises_the_redesigned_sandbox_page():
-    # MEASURED, and it cost a whole android run. `payment-sandbox` 687bf4e
+    # MEASURED, and it cost a whole android run. The sandbox's 687bf4e
     # ("Redesign challenge page to match payment page design system") replaced
     # `<strong>Sandbox 3DS Challenge</strong>` with
     # `<div class="sandbox-badge">Sandbox</div>`, and the phrase now survives

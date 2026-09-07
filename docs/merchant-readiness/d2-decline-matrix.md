@@ -536,7 +536,7 @@ failed`; only the code path that set it differs.
 
 | # | repo | subject |
 |---|---|---|
-| payment-testing-tool#17 | the payment testing tool | `declined_expired.json` / `declined_invalid_cvv.json` no longer decline |
+| tracked internally | the payment testing tool | `declined_expired.json` / `declined_invalid_cvv.json` no longer decline |
 | the `failure: null` gap | the PayCross API | a failed transaction can render `failure: null` |
 | [payment-android-sdk#25](https://github.com/paycross/payment-android-sdk/issues/25) | `payment-android-sdk` | poll deadline reports `Recovery.RETRY` over a succeeded, liability-shifted payment |
 

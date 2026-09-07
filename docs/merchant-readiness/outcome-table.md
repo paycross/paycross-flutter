@@ -58,12 +58,12 @@ the rig dumps, and it identifies the build precisely
 
 | observation | means |
 |---|---|
-| `Sandbox` badge present | the redesigned page (`payment-sandbox` `687bf4e`) |
+| `Sandbox` badge present | the redesigned page (sandbox `687bf4e`) |
 | `Sandbox 3DS Challenge` **absent** from the tree | the old `<strong>` is gone; the phrase survives only in `<title>`, which no accessibility tree exposes |
 | headings `AUTHENTICATION OUTCOMES` / `ISSUER DECLINES` / `TECHNICAL / OTHER` | the three group labels `origin/main` declares, CSS-uppercased |
 | **27** outcome buttons | exactly the 27 outcome constants in `origin/main`'s `internal/sandboxcore/outcome.go`, which `internal/challenge/render.go` groups 6 + 13 + 8 into the three headings above |
 
-**TEST is deployed at, or behaviourally identical to, `payment-sandbox`
+**TEST is deployed at, or behaviourally identical to, the sandbox's
 `origin/main` (1d45a9a).** The four-month gap between that redesign being
 written (2026-04-13) and reaching TEST — the drift that broke every Android
 challenge cell mid-campaign — is closed. R1 holds on the same source:
@@ -311,7 +311,7 @@ Three windows of rig defects existed during Phases 1–2. Each is closed on
 ### Window A — the sandbox ACS page redesign (**Android only**)
 
 `AndroidDriver.wait_acs` matched the page by its heading text. When the TEST
-deployment caught up to `payment-sandbox` `687bf4e` overnight on 2026-08-30/31,
+deployment caught up to the sandbox's `687bf4e` overnight on 2026-08-30/31,
 the string it looked for stopped being rendered and every Android cell that
 waits for a challenge failed. Fixed by `ACS_MARKERS` (#37). **iOS was never
 affected** — its driver matches `threeDSCancel` and the outcome buttons by

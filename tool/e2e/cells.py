@@ -99,7 +99,7 @@ _LITERAL_TOKEN = re.compile(r"[A-Za-z0-9._~-]{1,200}")
 #: `assets/challenge.html.tmpl:142-153` renders each of them as
 #: `<button data-outcome="{{.}}">{{.}}</button>` -- so the visible text a
 #: driver taps is the token verbatim, and every token here is reachable.
-#: Values from `internal/sandboxcore/outcome.go` on payment-sandbox
+#: Values from the sandbox's `internal/sandboxcore/outcome.go`
 #: `origin/main` (read 2026-08-31; the local working tree runs behind).
 #:
 #: A membership check rather than the shape check this used to be. `[a-z_]+`

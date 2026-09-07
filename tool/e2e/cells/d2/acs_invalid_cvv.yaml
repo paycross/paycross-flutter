@@ -1,6 +1,6 @@
 # A CVV failure, reached through the ACS page rather than through a PAN.
 #
-# `declined_invalid_cvv.json` (PAN ...0127) no longer declines: payment-sandbox
+# `declined_invalid_cvv.json` (PAN ...0127) no longer declines: the sandbox
 # 66db130 removed its magic entry, so it falls through DefaultOutcome and
 # APPROVES. That is filed as a template/sandbox issue; the coverage stays
 # here, on the challenge card, where invalid_cvv is one of the ISSUER DECLINES

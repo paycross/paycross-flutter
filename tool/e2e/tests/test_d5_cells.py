@@ -242,7 +242,7 @@ def test_no_pay_cell_types_a_card(_store, pay):
 def test_every_pan_is_quoted_and_is_one_the_sandbox_still_recognises():
     # The same rule D2 states, for the same two reasons: an unquoted PAN with
     # a leading zero is YAML octal, and a PAN whose scenario was removed from
-    # payment-sandbox approves instead of doing what the cell says. `0000` is
+    # the sandbox approves instead of doing what the cell says. `0000` is
     # the instant approve, `3220` the challenge card.
     live = {"0000", "3220"}  # scenarios.go, the two D5 uses
     for path in sorted(D5.glob("*.yaml")):

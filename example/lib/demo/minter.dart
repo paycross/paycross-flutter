@@ -406,7 +406,7 @@ class Minter {
   /// describes *this* token: the M2M endpoint sits behind a cache, and a
   /// cached hit arrives with a full `expires_in` restated as though the
   /// token had just been minted, so a client starting partway through a
-  /// token's life is told it has the whole thing (cognito-m2m#1). `exp` is
+  /// token's life is told it has the whole thing (tracked internally). `exp` is
   /// inside the signed payload and the cache does not rewrite it.
   DateTime _deadlineFor(String token, Object? expiresIn) {
     // No clock-skew guard, unlike `sandbox.py`'s IMPLAUSIBLE_EXP_AGE_SECONDS:
