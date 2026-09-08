@@ -1,0 +1,63 @@
+# The third rung of the locale ladder: a device in French, and nothing else
+# asking for a language.
+#
+# This is the case Train 4's exit checklist could not show on either platform,
+# and the case flutter#60 was filed for. Both halves of why are here, because
+# both are easy to get wrong again.
+#
+# **The session has to name a tag the SDKs have no words for.** `locale` is a
+# top-level field of the create-session request and core DEFAULTS it to `en`
+# (paycross-core, `ParsePaymentInput`), so a session that names none still
+# arrives carrying one -- and the session rung sits above the device rung, so
+# an ordinary session ends the ladder before the device is ever consulted.
+# `zz` is well-formed, matches nothing the SDKs ship, and therefore falls
+# through: `LocaleResolution.resolve` on Android tries the whole tag, then its
+# primary subtag, then moves to the next candidate rather than stopping. An
+# empty `locale` is not the way -- the API answers 400.
+#
+# **The device language is per-APP, not the system's.** The rig's emulator
+# runs a `google_apis_playstore` image, which is a production build: `setprop
+# persist.sys.locale` is refused and there is no `adb root`. `device_language`
+# writes the app's own locale list instead, which is the list the SDK reads,
+# and reads it back -- the write reports nothing at all either way, and an
+# uninstrumented write is exactly what left this case unsettled the first
+# time. iOS gets the same list as a launch argument.
+#
+# The relaunch is not optional and `cell_rules` enforces it: neither platform
+# redraws a running app in a language it was given afterwards.
+#
+# **What the amount does here is worth knowing before it surprises someone.**
+# The language the words are drawn in and the locale the amount is punctuated
+# with are resolved separately -- the first is narrowed to what the SDK ships
+# strings for, the second is the first tag anyone named, kept whole -- so this
+# cell draws `Payer` beside an amount formatted under `zz`. That is documented
+# SDK behaviour rather than a defect, and it is why `expect french_sheet`
+# matches the VERB and not the whole caption.
+#
+# No `expect rearmed`, and it could not have one: see the D6 test that says so.
+id: french_device
+platforms: [android, ios]
+card:
+  pan: "4111111111170000"
+  expiry: "12/28"
+  cvv: "123"
+session:
+  amount: 1000
+  currency: EUR
+  options:
+    locale: zz
+actions:
+  - device_language fr
+  - relaunch
+  - paste_token
+  - type_card
+  - expect french_sheet
+  - tap_pay
+  - wait_result 180
+  - device_language default
+expected:
+  label: "result:success:<txn>"
+  merchant:
+    session_status: completed
+    txn_count: 1
+    txn_status: succeeded

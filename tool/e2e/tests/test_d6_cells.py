@@ -25,7 +25,7 @@ from tool.e2e import cells
 CELLS = Path(__file__).resolve().parents[1] / "cells"
 D6 = CELLS / "d6"
 
-EXPECTED_IDS = {"control", "french_session"}
+EXPECTED_IDS = {"control", "french_device", "french_session"}
 
 
 @pytest.mark.parametrize("platform", ["android", "ios"])
@@ -85,10 +85,47 @@ def test_the_french_cell_differs_from_the_control_only_in_its_locale(platform):
     assert control.session.options == {}
     assert french.session.amount == control.session.amount
     assert french.session.currency == control.session.currency
-    assert [(a.verb, a.arg) for a in french.actions] == [
-        (a.verb, a.arg) for a in control.actions
-    ]
+    # The PAYMENT is the control's, verb for verb. The French cell adds one
+    # action the control has not got and it is a LOOK: `expect french_sheet`
+    # observes and drives nothing, so the two cells still make the same
+    # payment in the same order. Compared with the looks removed rather than
+    # by allowing any extra action, so a real divergence -- a tap, a wait, a
+    # different card field -- still fails this.
+    assert _driving(french) == _driving(control)
+    assert ("expect", "french_sheet") in [(a.verb, a.arg) for a in french.actions]
     assert (
         french.expected_for(platform).merchant
         == control.expected_for(platform).merchant
     )
+
+
+@pytest.mark.parametrize("platform", ["android", "ios"])
+def test_the_device_cell_asks_for_a_language_nothing_else_can_supply(platform):
+    """The two things that make the device rung reachable at all.
+
+    Either one missing and the cell measures a rung above the one it names,
+    quietly and with a green result. The session tag has to be one the SDKs
+    ship no words for, or core's `en` default ends the ladder before the
+    device is consulted; and the language has to be set on the DEVICE, or
+    there is nothing for the ladder to fall through to.
+    """
+    device = {c.id: c for c in cells.load_cells(D6, platform)}["french_device"]
+    actions = [(a.verb, a.arg) for a in device.actions]
+
+    assert device.session.options == {"locale": "zz"}
+    assert ("device_language", "fr") in actions
+    assert ("expect", "french_sheet") in actions
+    # And it puts the device back. `cell_rules` says the same thing for every
+    # cell in every dimension; it is restated here because this is the first
+    # cell that changes a language, and the cost of forgetting is every later
+    # cell's sheet drawn in French.
+    assert actions[-1] == ("device_language", cells.DEVICE_LANGUAGE_DEFAULT)
+
+
+def _driving(cell) -> list[tuple[str, str | None]]:
+    """A cell's actions with the pure observations removed.
+
+    `expect` is the only verb that touches nothing: every other one enters
+    text, presses a control, spends time or changes the device.
+    """
+    return [(a.verb, a.arg) for a in cell.actions if a.verb != "expect"]

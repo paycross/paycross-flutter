@@ -237,6 +237,7 @@ def test_arg_actions_still_reads_as_a_set_of_verbs():
         "acs",
         "airplane",
         "background",
+        "device_language",
         "dont_keep_activities",
         "enter_token",
         "expect",

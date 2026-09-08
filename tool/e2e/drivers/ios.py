@@ -38,7 +38,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .. import tree
-from ..cells import Card
+from ..cells import DEVICE_LANGUAGE_DEFAULT, Card
 from .base import Driver, DriverError, device_text, read_token, rig_path
 
 #: The ssh alias for the Mac, overridable with PAYCROSS_E2E_SSH_HOST.
@@ -155,7 +155,8 @@ REMOVE_CONFIRM = "paycross.removeConfirm"
 #: The system's Paste, in every language a cell can put the app in.
 #:
 #: This is UIKit's own edit menu rather than anything the demo draws, so it is
-#: localized by the APP's language. Matched in English alone it took the driver
+#: localized by the APP's language -- and `device_language` is a verb whose
+#: whole job is to change that. Matched in English alone it took the driver
 #: with it: a demo launched with `-AppleLanguages "(fr)"` offers `Coller`, and
 #: `paste_token` failed there with "no element named 'Paste'" before any cell
 #: reached the sheet. Measured on the simulator 2026-09-08.
@@ -377,6 +378,10 @@ class IosDriver(Driver):
         #: crash_lines and fail every later cell in the matrix.
         self._console_from: int | None = None
         self._console_pid: int | None = None
+        #: The language list the next cold start hands the app, as
+        #: `simctl launch` argv. Empty is the simulator's own, which is what
+        #: every cell but a D6 one wants. See `device_language`.
+        self._launch_languages: tuple[str, ...] = ()
 
     # -- transport -----------------------------------------------------------
 
@@ -565,7 +570,7 @@ class IosDriver(Driver):
             + (f": > {CONSOLE_LOG} && " if truncate else "")
             + f"wc -c < {CONSOLE_LOG} && "
             f"( nohup xcrun simctl launch --console-pty {self._quoted_udid} "
-            f"{self._bundle} "
+            f"{self._bundle}{self._language_argv()} "
             f">> {CONSOLE_LOG} 2>&1 < /dev/null & echo $! )"
         )
         fields = said.split()
@@ -1301,6 +1306,62 @@ class IosDriver(Driver):
             "no equivalent: there is no activity to not keep. A cell using it "
             "must be platforms: [android]."
         )
+
+    def device_language(self, tag: str) -> None:
+        """Sets the languages the app sees, from its NEXT cold start.
+
+        `simctl launch` hands everything after the bundle id to the app as
+        argv, and `-AppleLanguages "(fr)"` there lands in `UserDefaults`'
+        ARGUMENT domain -- which is the domain the SDK reads since PayCross
+        0.7.1. `DeviceLanguages.swift` takes the raw `AppleLanguages` key out
+        of `UserDefaults` rather than asking `Locale.preferredLanguages`,
+        because Foundation intersects that one with the HOST APP's own
+        localizations and a merchant app shipping only `Base.lproj` therefore
+        reported `["en"]` on a phone set to French.
+
+        Nothing on the simulator is written, so there is no state a later cell
+        could inherit and `DEVICE_LANGUAGE_DEFAULT` is just the argument going
+        away. The teardown is still declared, because the runner's replay is
+        what makes the two platforms behave the same way and because the
+        argument would otherwise outlive the cell inside this object.
+
+        Writing `AppleLanguages` into a preferences domain instead is
+        deliberately NOT done. It is a global-domain key: written through any
+        `UserDefaults`, a private suite included, it lands in the simulator's
+        own `.GlobalPreferences.plist` and relocalizes every later process on
+        that device -- a whole simulator left French for whatever runs next,
+        and `removePersistentDomain` does not undo it. Measured 2026-09-07;
+        the repair was a `defaults write -g` by hand.
+
+        Does not relocalize the running app, and cannot: the argument domain
+        is read at start-up. A cell that means to be read in the new language
+        says `relaunch` next, and `cell_rules` refuses one that does not.
+        """
+        self._launch_languages = () if tag == DEVICE_LANGUAGE_DEFAULT else (tag,)
+
+    def _language_argv(self) -> str:
+        """`-AppleLanguages "(fr)"` for the launch line, or nothing at all.
+
+        The parenthesised form is how `UserDefaults` parses an array out of
+        argv -- it is old-style plist syntax, not a shell construct -- so it is
+        quoted as one word for the remote shell and left alone otherwise.
+
+        Empty string rather than an empty list, because the caller is building
+        one command line and an absent argument has to leave no space behind.
+        """
+        if not self._launch_languages:
+            return ""
+        listed = ",".join(self._launch_languages)
+        return f" -AppleLanguages {shlex.quote(f'({listed})')}"
+
+    def _pay_buttons(self, nodes: list[tree.Node]) -> list[tree.Node]:
+        """Every node `_is_pay_button` accepts, fallback included.
+
+        The fallback is why this is not `find_identifier`: until PayCross
+        0.7.1 the button published its container's name, and a tree recorded
+        against an older build still has to be readable.
+        """
+        return [node for node in nodes if _is_pay_button(node)]
 
     # D4's whole vocabulary, refused here rather than left to `Driver`'s
     # declaration for the same reason `airplane` is: the refusal names this

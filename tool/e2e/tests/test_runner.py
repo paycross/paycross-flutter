@@ -2197,6 +2197,7 @@ def test_every_expectation_has_a_deadline_and_a_predicate(what):
     driver.wait_google_pay = lambda timeout: False
     driver.wait_no_google_pay = lambda timeout: False
     driver.wait_saved_card = lambda timeout: False
+    driver.wait_french_sheet = lambda timeout: False
 
     observed, _ = runner._observe(step_for(driver), what)
 
@@ -2726,6 +2727,35 @@ def test_the_replay_covers_every_declared_teardown_pair(tmp_path):
         ("dont_keep_activities", False),
     ]
     assert result_json(tmp_path)["teardown_replayed"] == ["dont_keep_activities off"]
+
+
+def test_the_replay_puts_a_device_language_back(tmp_path):
+    # The pair that has no `on`. Every tag but `default` is a change, so the
+    # replay cannot look for a literal `on` and has to compare against the
+    # RESTORING argument instead. A cell that died holding a language would
+    # otherwise draw every later cell's sheet in it.
+    driver = dying_at_the_label(FakeDriver())
+    driver.device_language = lambda tag: driver.actions.append(("device_language", tag))
+    driver.relaunch = lambda: driver.actions.append(("relaunch", None))
+    directory = cell_dir_with(
+        tmp_path,
+        [
+            "device_language fr",
+            "relaunch",
+            "paste_token",
+            "tap_pay",
+            "wait_result 60",
+            "device_language default",
+        ],
+    )
+
+    run(directory, tmp_path, driver)
+
+    assert [a for a in driver.actions if a[0] == "device_language"] == [
+        ("device_language", "fr"),
+        ("device_language", "default"),
+    ]
+    assert result_json(tmp_path)["teardown_replayed"] == ["device_language default"]
 
 
 def test_a_cell_that_reached_its_own_teardown_is_not_made_to_do_it_twice(tmp_path):
