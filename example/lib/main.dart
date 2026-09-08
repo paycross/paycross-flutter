@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
 import 'automation_screen.dart';
+import 'demo/appearance_store.dart';
 import 'demo/deeplink.dart';
 import 'demo/environment.dart';
 import 'demo/home.dart';
@@ -31,6 +32,24 @@ const String _googlePayMerchantId = String.fromEnvironment(
 /// Settings instead.
 const String _locale = String.fromEnvironment('PAYCROSS_LOCALE');
 
+/// How the payment sheet should look, as the compact JSON `DemoAppearance`
+/// reads: `{"brandLight":"00875A","brandDark":"57D9A3","themeMode":"dark",
+/// "cornerRadius":16,"buttonCornerRadius":28,"fontScale":1.2}`. Every field is
+/// optional and an absent one changes nothing.
+///
+/// Read only by the automation build, where there is no Settings screen to
+/// theme the sheet on: it is how a matrix cell asks for a green sheet with
+/// round corners. Empty means "not supplied", which is the sheet as it comes.
+///
+/// A string this build cannot read costs the cell its theme and says so on
+/// the log, rather than costing it the launch -- which is why it is decoded
+/// through `DemoAppearance.fromJson` rather than by anything that throws.
+/// Before this existed the only way to run a themed cell was to edit this
+/// file by hand for the duration of a smoke.
+///
+/// The demo build ignores this and reads what a colleague set in Settings.
+const String _appearance = String.fromEnvironment('PAYCROSS_APPEARANCE');
+
 /// The secure store `main` reads the saved merchant id from.
 ///
 /// A variable rather than a parameter: `main` is the entrypoint and cannot
@@ -47,13 +66,20 @@ SecretStore mainSecretStore = const SecretStore();
 @visibleForTesting
 LanguageStore mainLanguageStore = const LanguageStore();
 
+/// The preference store `main` reads the chosen appearance from.
+///
+/// A variable for the same reason [mainLanguageStore] is one, and read in the
+/// same guarded arm.
+@visibleForTesting
+AppearanceStore mainAppearanceStore = const AppearanceStore();
+
 /// How long either launch read gets before the app starts without it.
 ///
-/// Both reads block the first frame, and both cross a platform channel that
-/// can go quiet rather than throw — which is the failure `preset_store.dart`
-/// and `history.dart` bound their own writes against. Five seconds is the
-/// bound they chose, and one number for both reads here so that a store which
-/// stalls costs the same wherever it is.
+/// All three reads block the first frame, and all three cross a platform
+/// channel that can go quiet rather than throw — which is the failure
+/// `preset_store.dart` and `history.dart` bound their own writes against. Five
+/// seconds is the bound they chose, and one number for every read here so that
+/// a store which stalls costs the same wherever it is.
 const Duration _launchReadTimeout = Duration(seconds: 5);
 
 /// Runs a real payment against sandbox with no backend of your own.
@@ -77,6 +103,11 @@ Future<void> main() async {
   final locale = kE2e
       ? (_locale.isEmpty ? null : _locale)
       : await _storedLocale();
+  // The same shape again. The automation arm decodes a build constant, which
+  // costs no await and cannot throw, so the frozen build's budget is unmoved.
+  final appearance = kE2e
+      ? DemoAppearance.fromJson(_appearance).toAppearance()
+      : await _storedAppearance();
   // Awaited so a fast first tap on Pay cannot race the configure call.
   await PayCross.configure(
     environment: PayCrossEnvironment.sandbox,
@@ -91,12 +122,18 @@ Future<void> main() async {
     // first rung of, and both skip a tag they cannot read rather than
     // throwing, so a typo in the define costs a cell nothing.
     locale: locale,
+    // Passed through untouched, like the locale. Nothing here can be refused
+    // by the call: every way an appearance is built in this app drops the
+    // numbers `configure` would raise on, which matters because this await is
+    // not caught and there is no frame yet to report it on.
+    appearance: appearance,
   );
   runApp(
     ExampleApp(
       googlePayMerchantId: merchantId,
       applePayMerchantId: testApplePayMerchantId,
       locale: locale,
+      appearance: appearance,
     ),
   );
 }
@@ -137,12 +174,27 @@ Future<String?> _storedLocale() async =>
       onTimeout: () => DemoLanguage.system,
     )).tag;
 
+/// The sheet theme a colleague set in Settings, or null.
+///
+/// Read here and nowhere else, which is why Settings tells the reader that a
+/// change takes effect next launch. Bounded here rather than in the store, and
+/// unguarded beyond that, for the two reasons [_storedLocale] gives:
+/// `AppearanceStore.read` already answers `DemoAppearance.none` for anything
+/// it cannot read, and it is this caller rather than the Settings screen that
+/// cannot afford silence.
+Future<PayCrossAppearance?> _storedAppearance() async =>
+    (await mainAppearanceStore.read().timeout(
+      _launchReadTimeout,
+      onTimeout: () => DemoAppearance.none,
+    )).toAppearance();
+
 class ExampleApp extends StatelessWidget {
   const ExampleApp({
     super.key,
     this.googlePayMerchantId,
     this.applePayMerchantId,
     this.locale,
+    this.appearance,
   });
 
   /// What `configure` was given at launch, carried down so that returning
@@ -157,6 +209,12 @@ class ExampleApp extends StatelessWidget {
   /// reason the wallet identifiers are: re-pointing the SDK replaces the whole
   /// configuration, so every later call has to send it again.
   final String? locale;
+
+  /// The sheet theme `configure` was given at launch, carried down for the
+  /// same reason: without it the first themed preset run would end by clearing
+  /// the colours a colleague set in Settings, and they would stay cleared
+  /// until the app was relaunched.
+  final PayCrossAppearance? appearance;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -176,6 +234,7 @@ class ExampleApp extends StatelessWidget {
             googlePayMerchantId: googlePayMerchantId,
             applePayMerchantId: applePayMerchantId,
             locale: locale,
+            appearance: appearance,
             child: child!,
           ),
     home: kE2e ? const CheckoutScreen() : const DemoHome(),

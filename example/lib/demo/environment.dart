@@ -70,6 +70,7 @@ class DemoEnvironmentState extends ChangeNotifier {
     this.googlePayMerchantId,
     this.applePayMerchantId,
     this.locale,
+    this.appearance,
   });
 
   final ConfigureSdk configure;
@@ -99,6 +100,22 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// says on the Settings screen. The demo's own screens are unaffected by
   /// it; this is the sheet's language, not the app's.
   final String? locale;
+
+  /// The theme `main` configured the SDK with at launch, carried for the
+  /// reason the locale is: every re-point replaces the whole configuration,
+  /// so a theme left out of one is a sheet that goes back to its platform
+  /// colours and stays there until the app is relaunched.
+  ///
+  /// What [applyTestAppearance] puts back, which is why that method takes
+  /// null to mean "as it was at launch" rather than "unthemed".
+  ///
+  /// Deliberately not sent to production by [enterLive]. Unlike the language,
+  /// which belongs to the shopper and is the same person's on both sides of
+  /// the switch, a brand colour belongs to a merchant -- and the merchant in
+  /// Live is a different one, whose own colour is set in its back office. A
+  /// Test theme painted over a production sheet would misrepresent exactly
+  /// the thing somebody crossed into Live to look at.
+  final PayCrossAppearance? appearance;
 
   /// True while a switch is waiting on the SDK.
   ///
@@ -244,11 +261,15 @@ class DemoEnvironmentState extends ChangeNotifier {
   /// Re-pointing replaces the whole configuration, so both wallet identifiers
   /// go back in each time — a merchant id left out of the way back is a
   /// Google Pay button that stops appearing until the app is relaunched.
-  Future<void> applyTestAppearance(PayCrossAppearance? appearance) => configure(
+  Future<void> applyTestAppearance(PayCrossAppearance? forThisRun) => configure(
     environment: PayCrossEnvironment.sandbox,
     googlePayMerchantId: googlePayMerchantId,
     applePayMerchantId: applePayMerchantId,
-    appearance: appearance,
+    // Null is the way back rather than a clearing, which is what the launch
+    // theme is here for: a themed tile that ended by clearing the colours a
+    // colleague set in Settings would leave them cleared until the next
+    // launch, and look exactly like the setting having no effect.
+    appearance: forThisRun ?? appearance,
     locale: locale,
   );
 
@@ -275,6 +296,10 @@ class DemoEnvironmentState extends ChangeNotifier {
         googlePayMerchantId: googlePayMerchantId,
         applePayMerchantId: applePayMerchantId,
         locale: locale,
+        // Restored on the way back, with the wallet identifiers and the
+        // language: this is the environment the theme belongs to, and it is
+        // the only call that can put it back.
+        appearance: appearance,
       );
     } catch (problem) {
       // The same second drop the success path makes below, and for the same
@@ -331,6 +356,7 @@ class LiveModeScope extends StatefulWidget {
     this.googlePayMerchantId,
     this.applePayMerchantId,
     this.locale,
+    this.appearance,
   });
 
   final Widget child;
@@ -349,6 +375,9 @@ class LiveModeScope extends StatefulWidget {
   /// re-point this scope's state makes has to carry it or the sheet's
   /// language is lost at the first environment switch.
   final String? locale;
+
+  /// Passed on with the language, and for the same reason.
+  final PayCrossAppearance? appearance;
 
   /// The state above [context], or null where there is none.
   ///
@@ -396,6 +425,7 @@ class _LiveModeScopeState extends State<LiveModeScope> {
         googlePayMerchantId: widget.googlePayMerchantId,
         applePayMerchantId: widget.applePayMerchantId,
         locale: widget.locale,
+        appearance: widget.appearance,
       );
     }
   }

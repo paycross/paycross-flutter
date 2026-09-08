@@ -18,6 +18,35 @@ Demo and E2E runner only. No Dart API change, and `lib/` is untouched.
   `french_device`, which mints a session naming a language neither SDK ships so
   the ladder falls past it to the device, and `french_session` now asserts the
   copy it only used to pay through.
+* The example app's Settings screen gains an appearance editor: a brand colour
+  for light mode and one for dark, whether the sheet follows the phone or is
+  pinned to one palette, the corner radius, the button corner radius and a font
+  scale. It is kept in `SharedPreferences` beside the language and read once at
+  launch, so a restart applies it. "Load the themed preset" fills the fields in
+  with what the Themed sheet tile on Home runs and leaves them editable; that
+  tile is unchanged. Merchants evaluating the SDK could not try a colour of
+  their own before this — the app had one hard-coded theme and no way in.
+* Every number `PayCross.configure` refuses is refused in the field it was
+  typed in: a font scale outside 0.8 to 1.3, a negative or non-numeric radius,
+  a brand colour that is not six or eight hex digits. The launch awaits
+  `configure` before the first frame and does not catch it, so a stored value
+  the SDK would raise on is a blank app rather than an odd-looking sheet — and
+  the stored string is not always one this build wrote.
+* A themed run and a trip through Live now put the chosen theme back rather
+  than clearing it. Re-pointing the SDK replaces the whole configuration, so
+  the launch appearance travels with the wallet identifiers and the locale, and
+  `null` means "as it was at launch" rather than "unthemed". The theme is
+  deliberately not sent to production: a brand colour belongs to a merchant,
+  and the merchant in Live is a different one whose colour is set in its own
+  back office.
+* The automation build takes an appearance from
+  `--dart-define=PAYCROSS_APPEARANCE=<json>`, so a matrix cell can run a themed
+  sheet and screenshot it. The JSON is the editor's own six fields, all
+  optional:
+  `{"brandLight":"00875A","brandDark":"57D9A3","themeMode":"dark","cornerRadius":16,"buttonCornerRadius":28,"fontScale":1.2}`.
+  A string the build cannot read costs the cell its theme and says so on the
+  log rather than costing it the launch. Running a themed cell used to mean
+  editing the entrypoint by hand for the duration of a smoke.
 * The iOS driver matches the system's paste item in French as well as English.
   It is UIKit's edit menu rather than anything the demo draws, so it moves with
   the app's language and took `paste_token` with it.

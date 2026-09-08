@@ -850,4 +850,76 @@ void main() {
       expect(configure.locales, [isNull]);
     });
   });
+
+  group('the launch appearance', () {
+    /// The theme a colleague set in Settings, which `main` reads once and
+    /// hands down. Every re-point replaces the whole configuration, so a call
+    /// that leaves it out is a sheet that goes back to its platform colours
+    /// and stays there until the app is relaunched.
+    test('is what a themed run is restored to, not nothing', () async {
+      final configure = _RecordingConfigure();
+      final launch = PayCrossAppearance.brand(const Color(0xFF1E88E5));
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        appearance: launch,
+      );
+
+      await state.applyTestAppearance(
+        PayCrossAppearance.brand(const Color(0xFF00875A)),
+      );
+      await state.applyTestAppearance(null);
+
+      expect(
+        configure.appearances.first?.light?.brand,
+        const Color(0xFF00875A),
+      );
+      expect(configure.appearances.last, same(launch));
+    });
+
+    /// Coming back out of Live is the other way the SDK is re-pointed, and it
+    /// is the only call that can put the theme back.
+    test('is restored on the way out of Live', () async {
+      final configure = _RecordingConfigure();
+      final launch = PayCrossAppearance.brand(const Color(0xFF1E88E5));
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        appearance: launch,
+      );
+
+      expect(await state.enterLive(liveConfirmationWord), isNull);
+      expect(await state.leaveLive(), isNull);
+
+      expect(configure.appearances.last, same(launch));
+    });
+
+    /// Deliberately not carried into Live, unlike the language beside it. A
+    /// brand colour belongs to a merchant rather than to the shopper, and the
+    /// merchant in Live is a different one whose colour is set in its own back
+    /// office -- so a Test theme painted over a production sheet would
+    /// misrepresent the thing somebody crossed into Live to look at.
+    test('does not ride into Live', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(
+        configure: configure.call,
+        appearance: PayCrossAppearance.brand(const Color(0xFF1E88E5)),
+      );
+
+      expect(await state.enterLive(liveConfirmationWord), isNull);
+
+      expect(configure.calls, [PayCrossEnvironment.production]);
+      expect(configure.appearances, [isNull]);
+    });
+
+    /// No theme set is a null on the wire, which leaves the colour the
+    /// merchant set in the back office to apply and the platform's own after
+    /// it.
+    test('is null when nothing was set', () async {
+      final configure = _RecordingConfigure();
+      final state = DemoEnvironmentState(configure: configure.call);
+
+      await state.applyTestAppearance(null);
+
+      expect(configure.appearances, [isNull]);
+    });
+  });
 }
