@@ -971,7 +971,9 @@ Every path and host above is this workstation's, and every one is a default
 rather than a constant: `PAYCROSS_E2E_ADB`, `PAYCROSS_E2E_STAGING_DIR` and
 `PAYCROSS_E2E_WINDOWS_STAGING` on Android, `PAYCROSS_E2E_SSH_HOST` and
 `PAYCROSS_E2E_MAC_ENV` on iOS. Set any of them to run on a second machine
-without editing a driver. An empty value counts as unset.
+without editing a driver. An empty value counts as unset. `PAYCROSS_E2E_ADB`
+is the one a rig usually has to set: it falls back to `adb.exe` off `PATH`,
+which is only there if the Windows SDK's `platform-tools` already is.
 
 ### Deliberate asymmetries between the drivers
 

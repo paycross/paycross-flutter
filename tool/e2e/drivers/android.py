@@ -30,11 +30,9 @@ from .. import tree
 from ..cells import DEVICE_LANGUAGE_DEFAULT, Card
 from .base import Driver, DriverError, device_text, read_token, rig_path
 
-#: This rig's Windows adb, overridable with PAYCROSS_E2E_ADB.
-ADB = rig_path(
-    "PAYCROSS_E2E_ADB",
-    "/mnt/c/Users/Syllo/AppData/Local/Android/Sdk/platform-tools/adb.exe",
-)
+#: The Windows adb, off PATH. PAYCROSS_E2E_ADB names a specific binary, which
+#: is what a rig whose Windows SDK is not on PATH sets.
+ADB = rig_path("PAYCROSS_E2E_ADB", "adb.exe")
 PACKAGE = "com.paycross.flutterdemo"
 
 #: Every adb call is bounded. A wedged emulator would otherwise hold the whole

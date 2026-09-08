@@ -173,7 +173,8 @@ def test_run_turns_a_timeout_into_a_driver_error(monkeypatch):
 
 
 def test_run_turns_a_missing_adb_into_a_driver_error(monkeypatch):
-    # adb.exe lives on the Windows side of a mount that is not always there.
+    # adb.exe is a Windows binary reached over a mount, and is not on every
+    # PATH that runs these tests.
     def explode(argv, **kwargs):
         raise FileNotFoundError(2, "No such file or directory", android.ADB)
 
@@ -1088,7 +1089,9 @@ def test_the_rig_paths_are_overridable_from_the_environment(monkeypatch):
 
 
 def test_the_rig_paths_fall_back_to_this_workstation():
-    assert android.ADB.endswith("adb.exe")
+    # adb is the exception: its fallback names no home directory, because a
+    # default that did would put one machine's account in a public repo.
+    assert android.ADB == "adb.exe"
     assert android.STAGING_DIR == "/mnt/c/dev/tmp"
     assert android.WINDOWS_STAGING == r"C:\dev\tmp"
 

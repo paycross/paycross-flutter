@@ -21,6 +21,10 @@ Demo and E2E runner only. No Dart API change, and `lib/` is untouched.
 * The iOS driver matches the system's paste item in French as well as English.
   It is UIKit's edit menu rather than anything the demo draws, so it moves with
   the app's language and took `paste_token` with it.
+* The Android driver's `adb` default is `adb.exe` off `PATH` rather than one
+  workstation's SDK directory, which is not a path a public repository should
+  carry. `PAYCROSS_E2E_ADB` still names a specific binary, and setting it is
+  what a rig whose `platform-tools` are not on `PATH` now does.
 
 ## 0.7.1
 

@@ -30,11 +30,13 @@ from ..cells import Card
 def rig_path(name: str, default: str) -> str:
     """A rig constant, overridable from the environment.
 
-    Every path and host below this line is one workstation's: an adb that
-    lives in a Windows SDK directory, an ssh alias out of one ~/.ssh/config,
-    a Homebrew prefix. The defaults are this rig's and stay the documented
+    Every path and host below this line is one workstation's: a staging
+    directory on a Windows mount, an ssh alias out of one ~/.ssh/config, a
+    Homebrew prefix. The defaults are this rig's and stay the documented
     ones, but a second machine -- the nightly in #5, someone else's laptop --
-    must be able to move them without forking the driver.
+    must be able to move them without forking the driver. A default that
+    would have to spell out a home directory is not one: `adb.exe` is taken
+    off PATH instead, and the variable is how a rig points at its own.
 
     Empty is treated as unset: an exported-but-blank variable is a shell
     accident, and honouring it would swap a working path for nothing.
