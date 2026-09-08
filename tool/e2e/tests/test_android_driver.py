@@ -1817,7 +1817,7 @@ def test_dont_keep_activities_refuses_a_setting_that_did_not_take():
 
 # -- the per-app locale: the write, the read-back, and what it refuses --------
 #
-# Every string below is what emulator-5554 (API 35) really answered on
+# Every string below is what the rig's emulator (API 35) really answered on
 # 2026-09-07. The write side reports nothing whether it worked or not, so the
 # read-back is the only evidence there is that a language reached the app --
 # which is the gap flutter#60 was filed for.

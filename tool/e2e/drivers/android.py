@@ -221,8 +221,8 @@ _LOGCAT_CUTOFF = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$")
 #:
 #: An unset list reads `[]`. A package the device does not hold answers
 #: `Unknown package <id> for userId 0` -- with a ZERO exit and no brackets at
-#: all, which is why this is parsed rather than trusted. Measured on
-#: emulator-5554, API 35, 2026-09-07.
+#: all, which is why this is parsed rather than trusted. Measured on the rig's
+#: emulator, API 35, 2026-09-07.
 _APP_LOCALES = re.compile(r"\bare \[(?P<tags>[^\]]*)\]")
 
 

@@ -6,10 +6,10 @@
 # both are easy to get wrong again.
 #
 # **The session has to name a tag the SDKs have no words for.** `locale` is a
-# top-level field of the create-session request and core DEFAULTS it to `en`
-# (paycross-core, `ParsePaymentInput`), so a session that names none still
-# arrives carrying one -- and the session rung sits above the device rung, so
-# an ordinary session ends the ladder before the device is ever consulted.
+# top-level field of the create-session request and the API DEFAULTS it to
+# `en` server-side, so a session that names none still arrives carrying one --
+# and the session rung sits above the device rung, so an ordinary session ends
+# the ladder before the device is ever consulted.
 # `zz` is well-formed, matches nothing the SDKs ship, and therefore falls
 # through: `LocaleResolution.resolve` on Android tries the whole tag, then its
 # primary subtag, then moves to the next candidate rather than stopping. An
