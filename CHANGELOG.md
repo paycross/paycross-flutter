@@ -1,9 +1,6 @@
-## Demo 0.1.13 (2026-09-08)
+## Unreleased
 
-Demo and E2E runner only. No Dart API change, and `lib/` is untouched, so the
-plugin stays at 0.7.1 and nothing here is published to pub.dev. The demo app
-rides its own release train: this is the `demo-v0.1.13` tag, and what it builds
-is a signed APK and app bundle attached to a GitHub release.
+Demo and E2E runner only. No Dart API change, and `lib/` is untouched.
 
 * The example app declares `CFBundleLocalizations` — `en` and `fr` — in its iOS
   `Info.plist`. It ships no `.lproj` folder for either and needs none: the key
