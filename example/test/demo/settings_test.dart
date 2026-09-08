@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/appearance_store.dart';
 import 'package:paycross_demo/demo/endpoints.dart';
 import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/language.dart';
@@ -17,9 +18,14 @@ Widget _settings({
   required SecretStore store,
   Future<String> Function(Credentials)? verify,
   LanguageStore? languageStore,
+  AppearanceStore? appearanceStore,
 }) => MaterialApp(
   home: SettingsScreen(
     store: store,
+    // Never the default, for the reason the language store never is.
+    appearanceStore:
+        appearanceStore ??
+        AppearanceStore(backend: InMemoryAppearanceBackend()),
     // Never the default. `SharedPreferences` under `flutter test` has no
     // platform behind it and does not fail -- it never answers, so the real
     // store would leave this screen's language read pending for the whole
@@ -45,6 +51,7 @@ Widget _settingsIn(
   state: state,
   home: SettingsScreen(
     store: store,
+    appearanceStore: AppearanceStore(backend: InMemoryAppearanceBackend()),
     languageStore: LanguageStore(backend: InMemoryLanguageBackend()),
     verifyCredentials: verify ?? (_) async => 'ok',
     readVersions: () async =>
@@ -64,6 +71,7 @@ Future<Widget> _liveSettings({
   state: state,
   home: SettingsScreen(
     store: store,
+    appearanceStore: AppearanceStore(backend: InMemoryAppearanceBackend()),
     languageStore: LanguageStore(backend: InMemoryLanguageBackend()),
     verifyCredentials: (_) async => 'ok',
     readVersions: () async =>
@@ -124,9 +132,20 @@ class _SlowBackend implements SecretBackend {
 /// -- and on the test window's height, so every test that touches the toggle
 /// scrolls to it rather than relying on either.
 Future<void> _revealLanguageToggle(WidgetTester tester) =>
+    _reveal(tester, const ValueKey('languageToggle'));
+
+/// Brings the outcome line back into view.
+///
+/// It sits above every control this file scrolls down to, and a `ListView`
+/// does not build what is off the top of it -- so a test that scrolls to a
+/// control and then reads the message has to come back up for it.
+Future<void> _revealSettingsMessage(WidgetTester tester) =>
+    _reveal(tester, const ValueKey('settingsMessage'), delta: -200);
+
+Future<void> _reveal(WidgetTester tester, Key key, {double delta = 200}) =>
     tester.scrollUntilVisible(
-      find.byKey(const ValueKey('languageToggle')),
-      200,
+      find.byKey(key),
+      delta,
       // Named, and narrowed to one. The screen holds several Scrollables --
       // every text field brings its own -- so both an unnamed finder and an
       // unnarrowed descendant match more than one and throw.
@@ -148,6 +167,28 @@ class _NeverAnsweringLanguageBackend implements LanguageBackend {
 
   @override
   Future<void> write(String value) async {}
+}
+
+/// An appearance backend whose read never answers. The appearance twin of
+/// [_NeverAnsweringLanguageBackend], and there for the same reason.
+class _NeverAnsweringAppearanceBackend implements AppearanceBackend {
+  final Completer<String?> gate = Completer<String?>();
+
+  @override
+  Future<String?> read() => gate.future;
+
+  @override
+  Future<void> write(String value) async {}
+}
+
+/// An appearance backend whose write throws. The appearance twin of
+/// [_FailingLanguageBackend].
+class _FailingAppearanceBackend implements AppearanceBackend {
+  @override
+  Future<String?> read() async => null;
+
+  @override
+  Future<void> write(String value) async => throw StateError('no preferences');
 }
 
 /// A language backend whose write throws, standing in for a preference store
@@ -1947,6 +1988,7 @@ void main() {
 
       await tester.tap(find.text(DemoLanguage.french.label));
       await tester.pumpAndSettle();
+      await _revealSettingsMessage(tester);
 
       expect(
         tester.widget<Text>(find.byKey(const ValueKey('settingsMessage'))).data,
@@ -1987,6 +2029,326 @@ void main() {
       await _revealLanguageToggle(tester);
 
       expect(find.byKey(const ValueKey('languageToggle')), findsOneWidget);
+    });
+  });
+
+  group('the payment sheet appearance', () {
+    /// The section merchants evaluating the SDK reach for: today the app has
+    /// one hard-coded themed tile and no way to try a colour of their own.
+    testWidgets('every control is on the screen', (tester) async {
+      useTallSurface(tester);
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+
+      for (final key in <String>[
+        'brandLight',
+        'brandDark',
+        'appearanceThemeMode',
+        'cornerRadius',
+        'buttonCornerRadius',
+        'fontScale',
+        'appearancePreset',
+      ]) {
+        expect(find.byKey(ValueKey(key)), findsOneWidget, reason: key);
+      }
+    });
+
+    /// Every control carries the identifier the campaign drivers read out of
+    /// the accessibility tree, which is the other half of what issue 56 asks
+    /// for: a build that can be driven to a themed sheet.
+    testWidgets('every control carries its semantics id', (tester) async {
+      useTallSurface(tester);
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+
+      for (final field in <String>[
+        'brandLight',
+        'brandDark',
+        'themeMode',
+        'cornerRadius',
+        'buttonCornerRadius',
+        'fontScale',
+        'preset',
+      ]) {
+        expect(
+          find.bySemanticsIdentifier('settings.appearance.$field'),
+          findsOneWidget,
+          reason: field,
+        );
+      }
+      semantics.dispose();
+    });
+
+    testWidgets('a stored theme is what the fields show', (tester) async {
+      useTallSurface(tester);
+      final backend = InMemoryAppearanceBackend();
+      await AppearanceStore(
+        backend: backend,
+      ).write(DemoAppearance.themedPreset);
+
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          appearanceStore: AppearanceStore(backend: backend),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('00875A'), findsOneWidget);
+      expect(find.text('57D9A3'), findsOneWidget);
+      expect(find.text('16'), findsOneWidget);
+      expect(find.text('28'), findsOneWidget);
+      final toggle = tester.widget<SegmentedButton<PayCrossThemeMode>>(
+        find.byKey(const ValueKey('appearanceThemeMode')),
+      );
+      expect(toggle.selected, {PayCrossThemeMode.dark});
+    });
+
+    testWidgets('a typed colour is written', (tester) async {
+      useTallSurface(tester);
+      final backend = InMemoryAppearanceBackend();
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          appearanceStore: AppearanceStore(backend: backend),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('brandLight')),
+        '1E88E5',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        DemoAppearance.fromJson(backend.value).brandLight,
+        const Color(0xFF1E88E5),
+      );
+    });
+
+    testWidgets('a chosen theme mode is written', (tester) async {
+      useTallSurface(tester);
+      final backend = InMemoryAppearanceBackend();
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          appearanceStore: AppearanceStore(backend: backend),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(themeModeLabel(PayCrossThemeMode.dark)));
+      await tester.pumpAndSettle();
+
+      expect(
+        DemoAppearance.fromJson(backend.value).themeMode,
+        PayCrossThemeMode.dark,
+      );
+    });
+
+    /// The bound is `PayCross.configure`'s, and `main` awaits that call before
+    /// `runApp` without catching it -- so a scale refused here is the
+    /// difference between a sheet with ordinary type and an app that never
+    /// draws.
+    testWidgets('an out-of-range font scale is refused, and said so', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      final backend = InMemoryAppearanceBackend();
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          appearanceStore: AppearanceStore(backend: backend),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('fontScale')), '5');
+      await tester.pumpAndSettle();
+
+      expect(DemoAppearance.fromJson(backend.value).fontScale, isNull);
+      expect(find.text('Between 0.8 and 1.3.'), findsOneWidget);
+    });
+
+    testWidgets('a scale inside the bound is written', (tester) async {
+      useTallSurface(tester);
+      final backend = InMemoryAppearanceBackend();
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          appearanceStore: AppearanceStore(backend: backend),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('fontScale')), '1.2');
+      await tester.pumpAndSettle();
+
+      expect(DemoAppearance.fromJson(backend.value).fontScale, 1.2);
+      expect(find.text('Between 0.8 and 1.3.'), findsNothing);
+    });
+
+    /// An untouched field is not a mistake yet, and a section that opens with
+    /// five red errors reads as a broken screen.
+    testWidgets('an empty field is not an error', (tester) async {
+      useTallSurface(tester);
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Between 0.8 and 1.3.'), findsNothing);
+      expect(find.text('Six or eight hex digits, like 00875A.'), findsNothing);
+      expect(find.text('Zero or more.'), findsNothing);
+    });
+
+    testWidgets('the preset button loads the themed tile and writes it', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      final backend = InMemoryAppearanceBackend();
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          appearanceStore: AppearanceStore(backend: backend),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('appearancePreset')));
+      await tester.pumpAndSettle();
+
+      expect(
+        DemoAppearance.fromJson(backend.value),
+        DemoAppearance.themedPreset,
+      );
+      expect(DemoAppearance.fromJson(backend.value).fontScale, isNull);
+      expect(find.text('00875A'), findsOneWidget);
+    });
+
+    /// Dead until the store answers, for the reason the language toggle is:
+    /// the fields are empty because nothing has been read yet, not because
+    /// nothing is stored.
+    testWidgets('the controls are dead until the stored theme has been read', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          appearanceStore: AppearanceStore(
+            backend: _NeverAnsweringAppearanceBackend(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('brandLight')))
+            .enabled,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<SegmentedButton<PayCrossThemeMode>>(
+              find.byKey(const ValueKey('appearanceThemeMode')),
+            )
+            .onSelectionChanged,
+        isNull,
+      );
+      expect(find.byKey(const ValueKey('appearanceLoading')), findsOneWidget);
+    });
+
+    testWidgets('the reason it was dead goes away once the read lands', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('appearanceLoading')), findsNothing);
+    });
+
+    /// A theme that was not written will not survive the next launch, which is
+    /// the only launch that reads it.
+    testWidgets('a write that fails is reported', (tester) async {
+      useTallSurface(tester);
+      await tester.pumpWidget(
+        _settings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+          appearanceStore: AppearanceStore(
+            backend: _FailingAppearanceBackend(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(themeModeLabel(PayCrossThemeMode.dark)));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('settingsMessage'))).data,
+        contains('appearance'),
+      );
+    });
+
+    /// A section this far down a long ListView is unreachable in practice
+    /// without a heading to jump to.
+    testWidgets('its heading is a heading', (tester) async {
+      useTallSurface(tester);
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .getSemantics(find.byKey(const ValueKey('appearanceHeading')))
+            .flagsCollection
+            .isHeader,
+        isTrue,
+      );
+      semantics.dispose();
+    });
+
+    /// [useTallSurface] builds every row at once, which is a testing
+    /// convenience rather than a size any phone has. Three segments and five
+    /// labelled fields have to fit the width people actually hold.
+    testWidgets('the section fits a phone', (tester) async {
+      usePhoneSurface(tester);
+      await tester.pumpWidget(
+        _settings(store: SecretStore(backend: InMemorySecretBackend())),
+      );
+      await tester.pumpAndSettle();
+      await _reveal(tester, const ValueKey('appearanceThemeMode'), delta: 60);
+
+      expect(find.byKey(const ValueKey('appearanceThemeMode')), findsOneWidget);
+      expect(find.text(themeModeLabel(PayCrossThemeMode.dark)), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    /// The sheet is the same sheet on both sides of the switch, like the
+    /// language above it.
+    testWidgets('is offered in Live as well as Test', (tester) async {
+      useTallSurface(tester);
+      await tester.pumpWidget(
+        await _liveSettings(
+          store: SecretStore(backend: InMemorySecretBackend()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('appearanceHeading')), findsOneWidget);
     });
   });
 }

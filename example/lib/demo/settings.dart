@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:paycross_flutter/paycross_flutter.dart';
 
+import 'appearance_store.dart';
 import 'endpoints.dart';
 import 'environment.dart';
 import 'language.dart';
@@ -32,6 +34,7 @@ class SettingsScreen extends StatefulWidget {
     super.key,
     this.store = const SecretStore(),
     this.languageStore = const LanguageStore(),
+    this.appearanceStore = const AppearanceStore(),
     this.verifyCredentials = mintThrowawaySession,
     this.readVersions = platformVersions,
   });
@@ -42,6 +45,11 @@ class SettingsScreen extends StatefulWidget {
   /// field on [SecretStore]: a language is not a secret, and it is read at
   /// launch by `main` from plain preferences rather than from a keychain.
   final LanguageStore languageStore;
+
+  /// Where the payment sheet's theme is kept. Its own store beside the
+  /// language's, and plain preferences for the same reason: how a sheet looks
+  /// is not a secret, and `main` reads it at launch from the same place.
+  final AppearanceStore appearanceStore;
   final VerifyCredentials verifyCredentials;
   final Future<DemoVersions> Function() readVersions;
 
@@ -56,6 +64,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _liveConfirm = TextEditingController();
   final _liveName = TextEditingController();
   final _liveEmail = TextEditingController();
+  final _brandLight = TextEditingController();
+  final _brandDark = TextEditingController();
+  final _cornerRadius = TextEditingController();
+  final _buttonCornerRadius = TextEditingController();
+  final _fontScale = TextEditingController();
 
   // There is deliberately no currency field here any more. This screen held
   // one, picked off a list of three and handed over by "Use for this
@@ -104,11 +117,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// that emptiness would write it over a good choice.
   bool _languageLoaded = false;
 
+  /// Whether the sheet follows the device or is pinned, as this screen last
+  /// read or wrote it. The five text fields hold the rest of the theme.
+  PayCrossThemeMode _themeMode = PayCrossThemeMode.system;
+
+  /// Whether the appearance read has come back.
+  ///
+  /// Every appearance control is dead until it has, for the reason the
+  /// language toggle is: before the read lands the fields are empty because
+  /// nothing has been read yet, not because nothing is stored, and a
+  /// keystroke on that emptiness would write it over a good theme.
+  bool _appearanceLoaded = false;
+
   @override
   void initState() {
     super.initState();
     _load();
     _loadLanguage();
+    _loadAppearance();
   }
 
   @override
@@ -119,6 +145,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _liveConfirm.dispose();
     _liveName.dispose();
     _liveEmail.dispose();
+    _brandLight.dispose();
+    _brandDark.dispose();
+    _cornerRadius.dispose();
+    _buttonCornerRadius.dispose();
+    _fontScale.dispose();
     super.dispose();
   }
 
@@ -196,6 +227,94 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'to this session only.',
       );
     }
+  }
+
+  Future<void> _loadAppearance() async {
+    // Guarded inside the store, which answers `DemoAppearance.none` for
+    // anything it cannot read -- the same answer `main` acts on, so the screen
+    // and the launch cannot disagree about an unreadable store.
+    final appearance = await widget.appearanceStore.read();
+    if (!mounted) return;
+    setState(() {
+      _showAppearance(appearance);
+      _appearanceLoaded = true;
+    });
+  }
+
+  /// Puts a theme on screen. Call inside `setState`.
+  ///
+  /// An empty field is how "leave this alone" is typed, so a null field is
+  /// cleared rather than written as the word null -- and clearing is also
+  /// what the preset button does to the font scale, which the preset does not
+  /// set.
+  void _showAppearance(DemoAppearance appearance) {
+    _brandLight.text = appearance.brandLight == null
+        ? ''
+        : hexOf(appearance.brandLight!);
+    _brandDark.text = appearance.brandDark == null
+        ? ''
+        : hexOf(appearance.brandDark!);
+    _themeMode = appearance.themeMode;
+    _cornerRadius.text = _lengthText(appearance.cornerRadius);
+    _buttonCornerRadius.text = _lengthText(appearance.buttonCornerRadius);
+    _fontScale.text = _lengthText(appearance.fontScale);
+  }
+
+  /// What is on screen right now, with every field this app would refuse left
+  /// out.
+  ///
+  /// Left out rather than refused wholesale: a half-typed colour beside a
+  /// good radius should cost the colour and keep the radius, and the field
+  /// that was refused is carrying its own `errorText` while it is.
+  DemoAppearance get _typedAppearance => DemoAppearance(
+    brandLight: colorFromHex(_brandLight.text.trim()),
+    brandDark: colorFromHex(_brandDark.text.trim()),
+    themeMode: _themeMode,
+    cornerRadius: _typedLength(_cornerRadius, isValidLength),
+    buttonCornerRadius: _typedLength(_buttonCornerRadius, isValidLength),
+    fontScale: _typedLength(_fontScale, isValidFontScale),
+  );
+
+  /// Writes what is on screen, and says so when it could not.
+  ///
+  /// Called on every keystroke and every segment, like the language toggle
+  /// beside it: there is no Save for a theme, and one that had to be pressed
+  /// would be one more thing to forget between typing a colour and relaunching
+  /// to see it. A half-typed colour writes as no colour and is corrected by
+  /// the next keystroke, which costs nothing -- the store is read once, at
+  /// launch.
+  Future<void> _writeAppearance() async {
+    setState(() => _message = null);
+    try {
+      await widget.appearanceStore.write(_typedAppearance);
+    } catch (problem) {
+      if (!mounted) return;
+      // Only the type, like every other store failure on this screen. What
+      // matters is that the theme on screen is not the theme the next launch
+      // will read, because the next launch is the only thing that reads it.
+      setState(
+        () => _message =
+            'Could not save the appearance: ${problem.runtimeType}. It '
+            'applies to this session only.',
+      );
+    }
+  }
+
+  Future<void> _chooseThemeMode(PayCrossThemeMode mode) async {
+    // On screen first, for the reason the language toggle sets itself first:
+    // a segment that springs back while a write is in flight reads as a
+    // refusal.
+    setState(() => _themeMode = mode);
+    await _writeAppearance();
+  }
+
+  /// Loads the theme the one themed preset tile runs with.
+  ///
+  /// A starting point rather than a mode: what it writes is ordinary typed
+  /// values, and the next keystroke in any field edits them like any others.
+  Future<void> _loadThemedPreset() async {
+    setState(() => _showAppearance(DemoAppearance.themedPreset));
+    await _writeAppearance();
   }
 
   /// Why what is typed cannot be used yet, or null if it can.
@@ -837,9 +956,257 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'either way.',
           ),
           const SizedBox(height: 32),
+          // Offered in both environments, like the language above it and for
+          // the same reason: a merchant evaluating the SDK wants to see their
+          // own colours on the sheet, and the sheet is the same sheet on
+          // either side of the switch. What each environment does with it
+          // differs -- in Live the production merchant's own back-office
+          // colour is what a brand left empty falls back to -- and no field
+          // here reaches the app's own screens.
+          Semantics(
+            header: true,
+            child: const Text(
+              'Payment sheet appearance',
+              key: ValueKey('appearanceHeading'),
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Semantics(
+            identifier: 'settings.appearance.brandLight',
+            child: TextField(
+              key: const ValueKey('brandLight'),
+              controller: _brandLight,
+              // Dead until the read lands, for the reason the toggle above is:
+              // the field is empty because nothing has been read yet, not
+              // because nothing is stored, and a keystroke on that emptiness
+              // would write it over a good theme.
+              enabled: _appearanceLoaded,
+              autocorrect: false,
+              enableSuggestions: false,
+              onChanged: (_) => _writeAppearance(),
+              decoration: InputDecoration(
+                labelText: 'Brand colour, light mode (hex)',
+                helperText:
+                    'The Pay button and the selection controls. Empty leaves '
+                    'the colour set in the back office.',
+                helperMaxLines: 2,
+                errorText: _hexProblem(_brandLight),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            identifier: 'settings.appearance.brandDark',
+            child: TextField(
+              key: const ValueKey('brandDark'),
+              controller: _brandDark,
+              enabled: _appearanceLoaded,
+              autocorrect: false,
+              enableSuggestions: false,
+              onChanged: (_) => _writeAppearance(),
+              decoration: InputDecoration(
+                labelText: 'Brand colour, dark mode (hex)',
+                helperText:
+                    'Its own colour rather than the light one dimmed: a brand '
+                    'that reads on white is often unreadable on near-black.',
+                helperMaxLines: 3,
+                errorText: _hexProblem(_brandDark),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            identifier: 'settings.appearance.themeMode',
+            child: SegmentedButton<PayCrossThemeMode>(
+              key: const ValueKey('appearanceThemeMode'),
+              segments: [
+                for (final mode in PayCrossThemeMode.values)
+                  ButtonSegment(value: mode, label: Text(themeModeLabel(mode))),
+              ],
+              selected: {_themeMode},
+              onSelectionChanged: _busy || !_appearanceLoaded
+                  ? null
+                  : (chosen) => _chooseThemeMode(chosen.single),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            key: ValueKey('appearanceThemeModeNote'),
+            'System follows the phone. Light and Dark pin the sheet, and only '
+            'the sheet — this app\'s own screens follow the phone either way.',
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            identifier: 'settings.appearance.cornerRadius',
+            child: TextField(
+              key: const ValueKey('cornerRadius'),
+              controller: _cornerRadius,
+              enabled: _appearanceLoaded,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              onChanged: (_) => _writeAppearance(),
+              decoration: InputDecoration(
+                labelText: 'Corner radius',
+                helperText:
+                    'The card inputs, the saved-card rows and the field '
+                    'groups. Zero is a square corner; empty is the '
+                    'platform\'s own.',
+                helperMaxLines: 3,
+                errorText: _numberProblem(
+                  _cornerRadius,
+                  isValidLength,
+                  'Zero or more.',
+                ),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            identifier: 'settings.appearance.buttonCornerRadius',
+            child: TextField(
+              key: const ValueKey('buttonCornerRadius'),
+              controller: _buttonCornerRadius,
+              enabled: _appearanceLoaded,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              onChanged: (_) => _writeAppearance(),
+              decoration: InputDecoration(
+                labelText: 'Button corner radius',
+                helperText:
+                    'The Pay button and the wallet buttons. Empty falls back '
+                    'to the corner radius above.',
+                helperMaxLines: 2,
+                errorText: _numberProblem(
+                  _buttonCornerRadius,
+                  isValidLength,
+                  'Zero or more.',
+                ),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            identifier: 'settings.appearance.fontScale',
+            child: TextField(
+              key: const ValueKey('fontScale'),
+              controller: _fontScale,
+              enabled: _appearanceLoaded,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              onChanged: (_) => _writeAppearance(),
+              decoration: InputDecoration(
+                labelText: 'Font scale',
+                // The bound is the SDK's, and it is stated here rather than
+                // only enforced, because a field that silently refuses 1.5 is
+                // one a colleague retypes rather than corrects. Refused here
+                // as well as stated: the SDK raises on anything outside it,
+                // and the launch does not catch that.
+                helperText:
+                    'Multiplies every size in the sheet, on top of the '
+                    'phone\'s own text-size setting. Between $minFontScale '
+                    'and $maxFontScale; empty leaves every size alone.',
+                helperMaxLines: 3,
+                errorText: _numberProblem(
+                  _fontScale,
+                  isValidFontScale,
+                  'Between $minFontScale and $maxFontScale.',
+                ),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            identifier: 'settings.appearance.preset',
+            child: OutlinedButton(
+              key: const ValueKey('appearancePreset'),
+              onPressed: _busy || !_appearanceLoaded ? null : _loadThemedPreset,
+              child: const Text('Load the themed preset'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // The reason travels with the controls, like the language toggle's
+          // note and the credential buttons' "Reading saved credentials…":
+          // five dead fields with nothing attached is a dead end. Gone the
+          // moment the read lands, whatever it found.
+          if (!_appearanceLoaded)
+            const Text(
+              key: ValueKey('appearanceLoading'),
+              'Reading the saved appearance…',
+            ),
+          const Text(
+            key: ValueKey('appearanceNote'),
+            'How the native payment sheet looks. Every field is optional and '
+            'an empty one changes nothing: the colour the merchant set in the '
+            'back office applies first, and the platform\'s own default after '
+            'that. "Load the themed preset" fills these in with what the '
+            'Themed sheet tile on Home runs, which you can then edit. Read at '
+            'launch — restart the app after changing it.',
+          ),
+          const SizedBox(height: 32),
           VersionPanel(readVersions: widget.readVersions),
         ],
       ),
     );
   }
 }
+
+/// A number as a field holds it, with a whole number written without its
+/// trailing zero: 16 rather than 16.0, which is what the person typed.
+String _lengthText(double? value) {
+  if (value == null) return '';
+  return value == value.roundToDouble()
+      ? value.toInt().toString()
+      : value.toString();
+}
+
+/// The number in [field], or null where there is nothing this app will store.
+///
+/// Null for an empty field and null for a number [valid] refuses, which are
+/// the same thing to `PayCross.configure`: no opinion about that property.
+double? _typedLength(TextEditingController field, bool Function(double) valid) {
+  final typed = double.tryParse(field.text.trim());
+  return typed != null && valid(typed) ? typed : null;
+}
+
+/// Why a filled colour field is wrong, or null while it is not.
+///
+/// Only once there is text to be wrong about, like the Live identity fields:
+/// an untouched field is not a mistake yet, and a section that opens with
+/// five red errors reads as a broken screen.
+String? _hexProblem(TextEditingController field) {
+  final typed = field.text.trim();
+  if (typed.isEmpty || colorFromHex(typed) != null) return null;
+  return 'Six or eight hex digits, like 00875A.';
+}
+
+/// Why a filled number field is wrong, or null while it is not.
+String? _numberProblem(
+  TextEditingController field,
+  bool Function(double) valid,
+  String rule,
+) {
+  final typed = field.text.trim();
+  if (typed.isEmpty) return null;
+  final value = double.tryParse(typed);
+  if (value == null) return 'Type a number.';
+  return valid(value) ? null : rule;
+}
+
+/// What a theme mode reads as on screen.
+///
+/// Spelt out rather than derived from the enum's name, so the sheet's own
+/// three words do not change the day somebody renames a constant.
+String themeModeLabel(PayCrossThemeMode mode) => switch (mode) {
+  PayCrossThemeMode.system => 'System',
+  PayCrossThemeMode.light => 'Light',
+  PayCrossThemeMode.dark => 'Dark',
+};

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:paycross_demo/demo/appearance_store.dart';
 import 'package:paycross_demo/demo/environment.dart';
 import 'package:paycross_demo/demo/home.dart';
 import 'package:paycross_demo/demo/language.dart';
@@ -109,6 +110,28 @@ class _ThrowingLanguageBackend implements LanguageBackend {
   Future<void> write(String value) async => throw StateError('no preferences');
 }
 
+/// An appearance backend whose read never answers. The appearance twin of
+/// [_NeverAnsweringLanguageBackend].
+class _NeverAnsweringAppearanceBackend implements AppearanceBackend {
+  final Completer<String?> gate = Completer<String?>();
+
+  @override
+  Future<String?> read() => gate.future;
+
+  @override
+  Future<void> write(String value) async {}
+}
+
+/// An appearance backend whose reads throw. The appearance twin of
+/// [_ThrowingLanguageBackend].
+class _ThrowingAppearanceBackend implements AppearanceBackend {
+  @override
+  Future<String?> read() async => throw StateError('no preferences');
+
+  @override
+  Future<void> write(String value) async => throw StateError('no preferences');
+}
+
 /// A store whose reads throw, standing in for a device whose Keychain or
 /// KeyStore is unavailable at launch.
 class _ThrowingBackend implements SecretBackend {
@@ -136,6 +159,12 @@ void main() {
     // a bound on their writes for. `main` awaits this read before `runApp`,
     // so an unanswering one hangs the whole test file rather than failing it.
     app.mainLanguageStore = LanguageStore(backend: InMemoryLanguageBackend());
+    // And the appearance store, for the same reason and with the same
+    // failure: `main` awaits this read too, and a real preference store under
+    // `flutter test` never answers it.
+    app.mainAppearanceStore = AppearanceStore(
+      backend: InMemoryAppearanceBackend(),
+    );
     // `runInFlight` is top-level, so a test that ends while a read is still in
     // flight leaves it set and the next test silently cannot start a run at
     // all. Reset rather than tearDown: it also covers a test that dies.
@@ -145,6 +174,7 @@ void main() {
   tearDown(() {
     app.mainSecretStore = const SecretStore();
     app.mainLanguageStore = const LanguageStore();
+    app.mainAppearanceStore = const AppearanceStore();
   });
 
   testWidgets('the demo build configures with the stored merchant id', (
@@ -240,30 +270,90 @@ void main() {
     expect(host.lastConfiguration?.locale, isNull);
   });
 
-  /// The failure both launch reads actually have. Neither store throws when
-  /// the platform is not there; both go quiet, and `main` awaits them before
-  /// `runApp` — so without a bound this is a launch that never draws a frame.
-  /// Both bounds are five seconds, the one `preset_store.dart` and
-  /// `history.dart` already use.
-  testWidgets('two stores that go quiet do not stall the launch', (
+  /// The failure all three launch reads actually have. None of the stores
+  /// throws when the platform is not there; all three go quiet, and `main`
+  /// awaits them before `runApp` — so without a bound this is a launch that
+  /// never draws a frame. Every bound is five seconds, the one
+  /// `preset_store.dart` and `history.dart` already use.
+  testWidgets('three stores that go quiet do not stall the launch', (
     tester,
   ) async {
     app.mainSecretStore = SecretStore(backend: _NeverAnsweringSecretBackend());
     app.mainLanguageStore = LanguageStore(
       backend: _NeverAnsweringLanguageBackend(),
     );
+    app.mainAppearanceStore = AppearanceStore(
+      backend: _NeverAnsweringAppearanceBackend(),
+    );
 
     var launched = false;
     unawaited(app.main().then((_) => launched = true));
-    // Past both bounds, in this test's own fake clock. They run one after the
-    // other, so the launch needs more than one of them to get through.
-    await tester.pump(const Duration(seconds: 11));
+    // Past all three bounds, in this test's own fake clock. They run one after
+    // another, so the launch needs more than one of them to get through.
+    await tester.pump(const Duration(seconds: 16));
     await tester.pump();
 
     expect(launched, isTrue);
     expect(host.lastConfiguration, isNotNull);
     expect(host.lastConfiguration?.googlePayMerchantId, isNull);
     expect(host.lastConfiguration?.locale, isNull);
+    expect(host.lastConfiguration?.appearance, isNull);
+  });
+
+  testWidgets('the demo build configures with the stored appearance', (
+    tester,
+  ) async {
+    final backend = InMemoryAppearanceBackend();
+    await AppearanceStore(backend: backend).write(DemoAppearance.themedPreset);
+    app.mainSecretStore = SecretStore(backend: InMemorySecretBackend());
+    app.mainAppearanceStore = AppearanceStore(backend: backend);
+
+    await app.main();
+    await tester.pump();
+
+    final appearance = host.lastConfiguration?.appearance;
+    expect(appearance?.light?.brand, 0xFF00875A);
+    expect(appearance?.dark?.brand, 0xFF57D9A3);
+    expect(appearance?.themeMode, g.PcThemeMode.dark);
+    expect(appearance?.shapes?.cornerRadius, 16);
+    expect(appearance?.shapes?.buttonCornerRadius, 28);
+  });
+
+  /// No appearance at all rather than an empty one, so that a colleague who
+  /// has set nothing sees what a merchant who wrote no appearance code sees:
+  /// the colour set in the back office, and the platform's own after it.
+  testWidgets('a store with no appearance configures with null', (
+    tester,
+  ) async {
+    app.mainSecretStore = SecretStore(backend: InMemorySecretBackend());
+    app.mainAppearanceStore = AppearanceStore(
+      backend: InMemoryAppearanceBackend(),
+    );
+
+    await app.main();
+    await tester.pump();
+
+    expect(host.lastConfiguration, isNotNull);
+    expect(host.lastConfiguration?.appearance, isNull);
+  });
+
+  /// The read happens before `runApp` and `configure` raises on an appearance
+  /// it cannot draw, so an unavailable preference store must cost the sheet
+  /// its theme and not the app its launch.
+  testWidgets('an appearance store that throws configures with null', (
+    tester,
+  ) async {
+    app.mainSecretStore = SecretStore(backend: InMemorySecretBackend());
+    app.mainAppearanceStore = AppearanceStore(
+      backend: _ThrowingAppearanceBackend(),
+    );
+
+    await app.main();
+    await tester.pump();
+
+    expect(host.lastConfiguration, isNotNull);
+    expect(host.lastConfiguration?.appearance, isNull);
+    expect(tester.takeException(), isNull);
   });
 
   /// The read happens before `runApp`, so a preference store that is
@@ -597,6 +687,10 @@ void main() {
     // re-point the state makes reads back, so dropping it here leaves the
     // sheet French at launch and English from the first environment switch.
     expect(handedOn, contains('locale: locale'));
+    // And the theme. Without this copy the first themed preset run ends by
+    // clearing the colours a colleague set in Settings, and they stay cleared
+    // until the app is relaunched.
+    expect(handedOn, contains('appearance: appearance'));
   });
 
   test('the frozen build still awaits one thing and reads no storage', () {
@@ -628,19 +722,29 @@ void main() {
     // exactly one runs in the frozen build. A fourth would fail here whichever
     // arm it landed on, which is the point -- this counts rather than
     // matching, because the await worth catching is the one nobody predicted.
-    expect('await '.allMatches(collapsed).length, 3);
+    expect('await '.allMatches(collapsed).length, 4);
     expect(collapsed, contains('await PayCross.configure('));
     // The leading colon is the proof of the guard: both reads sit in the
     // false arm of a `kE2e ? … : …`, so neither is reached by the frozen
     // build at all.
     expect(collapsed, contains(': await _storedGooglePayMerchantId();'));
     expect(collapsed, contains(': await _storedLocale();'));
+    expect(collapsed, contains(': await _storedAppearance();'));
+    // The automation arm of the same conditional, which is a constant decoded
+    // rather than a store read: `DemoAppearance.fromJson` answers "no theme"
+    // for anything it cannot read, so a define with a typo in it costs the
+    // cell its colours rather than its launch.
+    expect(
+      collapsed,
+      contains('? DemoAppearance.fromJson(_appearance).toAppearance()'),
+    );
 
     // And the storage reads are reached only through those guarded arms. A
     // direct read here would be another await, but it would also be a read on
     // a device whose keychain the automation runner never unlocks.
     expect(code, isNot(contains('mainSecretStore')));
     expect(code, isNot(contains('mainLanguageStore')));
+    expect(code, isNot(contains('mainAppearanceStore')));
   });
 
   test('the automation build installs no environment scope', () {
