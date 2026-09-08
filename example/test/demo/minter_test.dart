@@ -137,7 +137,7 @@ void main() {
 
     test('is replaced from the JWT exp, never from expires_in', () async {
       // The token endpoint sits behind an API-Gateway cache that restates a
-      // full expires_in on a cached hit (cognito-m2m#1). This token is
+      // full expires_in on a cached hit (tracked internally). This token is
       // already 59 minutes old: expires_in says an hour of life, exp says
       // one minute, and only exp is right.
       final minter = minterOver(

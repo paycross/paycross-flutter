@@ -863,7 +863,7 @@ def test_a_string_exp_warns_and_still_schedules_from_expires_in():
 
     assert len(_token_fetches(transport)) == 1
     assert len(client.warnings) == 1
-    assert "cognito-m2m#1" in client.warnings[0]
+    assert "tracked internally" in client.warnings[0]
     assert "'exp'" in client.warnings[0]
 
 

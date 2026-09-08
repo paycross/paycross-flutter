@@ -285,7 +285,7 @@ on the sandbox challenge page.
 The TEST sandbox does not route them, and an unrouted PAN defaults to approve.
 They appear in older harnesses and in the native Android demo's seed list, so
 somebody always tries one, watches a "decline" succeed, and files an SDK bug.
-It is not an SDK bug — it is `io.paycross#870`. Reach `card_expired` and
+It is not an SDK bug; it is a sandbox routing gap. Reach `card_expired` and
 `invalid_cvv` through the challenge card's ACS page instead.
 
 ## Running a scenario from the command line
@@ -338,7 +338,8 @@ that owns the problem:
 - `paycross-flutter` — the Flutter plugin, or this demo app itself.
 - `payment-android-sdk` / `payment-ios-sdk` — something the native SDK did on
   that one platform.
-- `io.paycross` — a sandbox or backend gap, like a card that does not route.
+- The PayCross sandbox or API — a gap like a card that does not route.
+  Report those through [support](https://developers.pay-cross.com/resources/support/).
 
 Paste the bug report block, say what you expected, and say what you saw.
 
@@ -526,9 +527,9 @@ same bug-report block every other run gets.
   lives inside the SDK payment sheet, so it turns up on all three runs above
   and you pick it there instead of typing a card. It appears only where the
   merchant has Apple Pay switched on, the app carries the Apple Merchant ID
-  for the environment it is in, the device has a card in Wallet, the session
-  loaded at all, and the session is not an account-funding one — when any of
-  the five is missing there is no button and no error. A session that never
+  for the environment it is in, the device has a card in Wallet, and the
+  session loaded at all — when any of the four is missing there is no button
+  and no error. A session that never
   loaded is the one worth suspecting first: a timeout or a 5xx on the lookup
   is swallowed, and from the outside it looks exactly like a lost identifier.
   A Live run pays with the real card in Wallet.
@@ -598,4 +599,5 @@ through to the hook process.
 
 Integrating the plugin in your own app is a different job: the whole
 integration is [`lib/main.dart`](lib/main.dart) plus the
-[package README](../README.md).
+[Flutter guide](https://developers.pay-cross.com/guides/flutter/) on the developer
+portal, which the [package README](../README.md) links to.

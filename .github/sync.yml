@@ -1,0 +1,3 @@
+paycross/api-docs:
+  - source: .sync/flutter.md
+    dest: content/resources/changelogs/flutter.md

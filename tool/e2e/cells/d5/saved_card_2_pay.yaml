@@ -3,7 +3,7 @@
 # `saved_cards: {show: "all"}` is what makes the backend put the customer's
 # cards into the session snapshot at all -- omit it and `saved_cards` comes
 # back empty however many cards the customer has
-# (SessionDataService.php:227-243). Expired cards are filtered there and
+# (the server's saved-card lookup). Expired cards are filtered there and
 # re-checked at submit, which is why the stored card's 12/28 expiry matters.
 #
 # Neither SDK auto-selects a stored card, deliberately, so the selection is

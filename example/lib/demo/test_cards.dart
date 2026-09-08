@@ -51,20 +51,22 @@ const List<TestCard> doNotUseTestCards = <TestCard>[
     behaviour: 'Was: 3-D Secure challenge then decline',
     note:
         'Unrouted in the TEST sandbox, so it approves without 3-D Secure at '
-        'all. Reproduced on both platforms — io.paycross#870.',
+        'all. Reproduced on both platforms — a known sandbox routing gap.',
   ),
   TestCard(
     pan: '4111111111150069',
     behaviour: 'Was: Decline card_expired',
     note:
-        'Unrouted in the TEST sandbox, so it approves — io.paycross#870. '
-        'Reach card_expired through the challenge card ACS page instead.',
+        'Unrouted in the TEST sandbox, so it approves — a known sandbox '
+        'routing gap. Reach card_expired through the challenge card ACS '
+        'page instead.',
   ),
   TestCard(
     pan: '4111111111150127',
     behaviour: 'Was: Decline invalid_cvv',
     note:
-        'Unrouted in the TEST sandbox, so it approves — io.paycross#870. '
-        'Reach invalid_cvv through the challenge card ACS page instead.',
+        'Unrouted in the TEST sandbox, so it approves — a known sandbox '
+        'routing gap. Reach invalid_cvv through the challenge card ACS '
+        'page instead.',
   ),
 ];

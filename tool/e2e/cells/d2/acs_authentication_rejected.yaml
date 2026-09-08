@@ -12,10 +12,10 @@
 #
 # failure_code and network_decline_code are left out too, for two different
 # reasons. network_decline_code because an authentication outcome never
-# reaches an issuer, so canonical.go attaches no network codes to it at all --
+# reaches an issuer, so the server attaches no network codes to it at all --
 # `null` is therefore the honest assertion and it is left for Phase 3 to pin
 # beside the label, on a measurement rather than on a reading of the source.
-# failure_code because the same first run settles it: FailureCodeMap.php maps
+# failure_code because the same first run settles it: the server's failure-code map
 # authentication_rejected to ['authentication', 'do_not_retry'], but what core
 # records for an ACS-driven rejection has not been seen. failure_recovery IS
 # asserted, because do_not_retry is the half a merchant has to act on.

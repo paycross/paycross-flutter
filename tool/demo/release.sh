@@ -11,9 +11,9 @@ TAG=""
 BUILD_NUMBER=""
 E2E=0
 DRY_RUN=0
-# The rig's Linux SDK by default: the Windows SDK under /mnt/c ships only
-# apksigner.bat, which WSL cannot execute.
-APKSIGNER="${APKSIGNER:-/home/silvo/android-sdk/build-tools/36.0.0/apksigner}"
+# Set this to a Linux apksigner if the discovery below finds none. A Windows
+# SDK mounted under /mnt/c ships only apksigner.bat, which WSL cannot execute.
+APKSIGNER="${APKSIGNER:-}"
 # Anywhere that path does not exist -- CI, anyone else's machine -- take the
 # newest apksigner the installed SDK actually has, rather than failing on a
 # path that only ever meant something on one box.

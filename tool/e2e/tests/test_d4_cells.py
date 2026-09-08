@@ -72,7 +72,7 @@ def test_the_wallet_cells_leave_by_cancelling_rather_than_paying():
 
 
 def test_the_absence_cell_mints_the_session_that_makes_the_absence_mean_something():
-    # The suppression is `data.account_funding`, computed by core's
+    # The suppression is `data.account_funding`, computed by the server's
     # SessionDataService and read by GooglePayRequests.isSessionEligible with
     # strict `!= true` semantics. Mint without the block and the session is
     # ordinary, the button renders, and the cell reports a failure that is not

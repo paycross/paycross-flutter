@@ -6,7 +6,7 @@
 # The transaction sits at threeds_challenge_requested and must never become an
 # authorization -- the same assertion cancel_mid_challenge makes, reached a
 # different way. txn_status is left unasserted because the row may or may not
-# have been swept by core's stuck-transaction recovery by the time the runner
+# have been swept by the server's stuck-transaction recovery by the time the runner
 # reads the session; no_succeeded_txn is the half that carries the finding.
 #
 # MEASURED three times on android (2026-08-29, and twice 2026-08-30) and

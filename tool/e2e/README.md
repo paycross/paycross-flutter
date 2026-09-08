@@ -540,7 +540,7 @@ device shell that re-splits and expands whatever it is given, and a mangled
 literal would leave the cell measuring a string it never sent.
 
 **The challenge page is recognised by `ACS_MARKERS`, not by one title, and
-that is a scar rather than a design.** `payment-sandbox` 687bf4e redesigned the
+that is a scar rather than a design.** The sandbox's 687bf4e redesigned the
 page, replacing `<strong>Sandbox 3DS Challenge</strong>` with a
 `<div class="sandbox-badge">Sandbox</div>`; the old phrase survives only in
 `<title>`, which never reaches an accessibility tree because a WebView exposes
@@ -567,7 +567,7 @@ against the buttons the sandbox actually renders (`cells.ACS_OUTCOMES`), so a
 typo is refused at load rather than after the 120-second page wait it used to
 cost. That list is all three of the sandbox's button groups —
 `authOutcomes`, `issuerOutcomes` **and** `technicalOutcomes`, which
-`challenge.html.tmpl` renders alike, each button's visible text being the token
+the challenge template renders alike, each button's visible text being the token
 — and it is a literal here because the runner has no access to the Go repo. A
 sandbox that adds a button is a one-line change; one that removes a button
 shows up as a live cell failing rather than as a false pass. Use `expect acs`
@@ -1027,7 +1027,7 @@ reports: **read the newest.**
 
 `report.json` also carries `warnings` — things the run noticed and carried on
 through, such as a bearer refresh that fell back to the `expires_in` the
-API-Gateway cache is known to restate (`cognito-m2m#1`). They print as `WARN`
+API-Gateway cache is known to restate (tracked internally). They print as `WARN`
 lines and never change the exit code: a warning that turns a green matrix red is
 a warning the next person learns to silence.
 
@@ -1134,7 +1134,7 @@ exactly like the caret bug.
 
 **HTTP 401 mid-run.** The M2M token endpoint sits behind an API Gateway cache
 that replays a stale `expires_in`, so a token can arrive already most of the way
-through its life (`cognito-m2m#1`, `api-docs#57`, `payx-tkg#13`). The runner
+through its life (tracked internally). The runner
 schedules its refresh from the JWT `exp` claim and retries once on a 401.
 
 **Cells you wanted to rerun were skipped.** That is the resume. Pass `--all`, or

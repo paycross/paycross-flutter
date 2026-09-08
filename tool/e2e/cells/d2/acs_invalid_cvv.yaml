@@ -1,6 +1,6 @@
 # A CVV failure, reached through the ACS page rather than through a PAN.
 #
-# `declined_invalid_cvv.json` (PAN ...0127) no longer declines: payment-sandbox
+# `declined_invalid_cvv.json` (PAN ...0127) no longer declines: the sandbox
 # 66db130 removed its magic entry, so it falls through DefaultOutcome and
 # APPROVES. That is filed as a template/sandbox issue; the coverage stays
 # here, on the challenge card, where invalid_cvv is one of the ISSUER DECLINES
@@ -41,6 +41,6 @@ expected:
     failure_recovery: change_method
     # Explicitly absent, not merely unasserted. CVV failures are scheme-
     # specific alphanumerics (Visa's N7), not ISO 8583 decline codes, so
-    # canonical.go deliberately maps this one to no network_decline_code at
+    # the server deliberately maps this one to no network_decline_code at
     # all -- and `null` is how a cell says "this field must not be there".
     network_decline_code: null

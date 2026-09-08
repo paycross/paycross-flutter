@@ -91,7 +91,7 @@ def test_every_pan_is_quoted_and_is_one_the_sandbox_still_recognises():
     # go green on exactly the file it was meant to catch -- and an unquoted PAN
     # with a leading zero is YAML octal, which is the hazard M10 was about. So:
     # find every `pan:` line first, then insist it is quoted, then check it.
-    live = {"0000", "0002", "9995", "0119", "3220", "3063", "0051"}  # scenarios.go
+    live = {"0000", "0002", "9995", "0119", "3220", "3063", "0051"}  # sandbox PANs
     for path in sorted(D2.glob("*.yaml")):
         for line in path.read_text(encoding="utf-8").splitlines():
             found = re.match(r"\s*pan:\s*(\S+)\s*$", line)

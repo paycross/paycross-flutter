@@ -1,12 +1,12 @@
 # An expired card, reached through the ACS page rather than through a PAN.
 #
-# `declined_expired.json` (PAN ...0069) no longer declines: payment-sandbox
+# `declined_expired.json` (PAN ...0069) no longer declines: the sandbox
 # 66db130 removed its magic entry, so it falls through DefaultOutcome and
 # APPROVES. That is filed as a template/sandbox issue; the coverage stays
 # here, on the challenge card, where card_expired is one of the ISSUER
 # DECLINES buttons. The button's text is the outcome token verbatim
-# (`internal/challenge/render.go`'s issuerOutcomes -- there is no
-# internal/acs/), which is what `acs:<outcome>` taps.
+# (the challenge page's issuer-declines group -- the sandbox has no separate
+# ACS component), which is what `acs:<outcome>` taps.
 #
 # Retryable -- change_method -- so the sheet re-arms rather than resolving,
 # the same shape as the two PAN-driven change_method cells beside it.

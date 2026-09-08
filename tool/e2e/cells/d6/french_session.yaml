@@ -14,7 +14,7 @@
 # is the thing that would fail if that ever stopped being true.
 #
 # `locale` is a top-level field of the create-session request, defaulted to
-# `en` server-side (paycross-core, `ParsePaymentInput`), and it reaches the
+# `en` server-side, and it reaches the
 # SDKs in the session payload. It is second in the resolution ladder: a
 # merchant's `Configuration(locale:)` override wins over it, the device's
 # languages lose to it. The override half cannot be a cell -- the example app

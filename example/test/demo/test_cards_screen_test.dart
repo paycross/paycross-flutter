@@ -21,7 +21,7 @@ void main() {
     // a colleague tries a "decline" card, watches it approve, and files an
     // SDK bug that is really a backend gap.
     expect(find.text('Do not use'), findsOneWidget);
-    expect(find.textContaining('io.paycross#870'), findsNWidgets(3));
+    expect(find.textContaining('sandbox routing gap'), findsNWidgets(3));
   });
 
   testWidgets('the sheet lays out and scrolls at ordinary phone width', (
