@@ -238,6 +238,9 @@ void main() {
       expect(colorFromHex('#8000875A'), const Color(0x8000875A));
     });
 
+    /// The signed strings are the ones a length check and `int.tryParse` let
+    /// through together: six characters that parse to a number, and a colour
+    /// nobody typed.
     test('anything that is not a colour reads as none', () {
       for (final text in <Object?>[
         null,
@@ -248,6 +251,10 @@ void main() {
         '00875AA',
         'ZZZZZZ',
         '#GG0000',
+        '-00875',
+        '+00875',
+        '#-00875',
+        '-0087500',
       ]) {
         expect(colorFromHex(text), isNull, reason: '$text');
       }

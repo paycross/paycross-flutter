@@ -208,6 +208,13 @@ class DemoAppearance {
   );
 }
 
+/// Six or eight hex digits, and nothing else at all.
+///
+/// Matched rather than left to `int.tryParse`, which accepts a leading sign:
+/// `-00875` is six characters that parse to a number, and it would have become
+/// a colour nobody typed rather than the refusal the field shows for `ZZZZZZ`.
+final RegExp _hexDigits = RegExp(r'^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$');
+
 /// The colour a hex string names, or null for anything that is not one.
 ///
 /// Takes `RRGGBB` and `AARRGGBB`, with or without a leading `#`, in either
@@ -219,9 +226,10 @@ class DemoAppearance {
 Color? colorFromHex(Object? text) {
   if (text is! String) return null;
   final digits = text.startsWith('#') ? text.substring(1) : text;
-  if (digits.length != 6 && digits.length != 8) return null;
-  final value = int.tryParse(digits, radix: 16);
-  if (value == null) return null;
+  if (!_hexDigits.hasMatch(digits)) return null;
+  // Unguarded, unlike the parse this replaced: the match above is what makes
+  // it safe, and a `tryParse` here would suggest there is still a way through.
+  final value = int.parse(digits, radix: 16);
   return Color(digits.length == 6 ? 0xFF000000 | value : value);
 }
 
