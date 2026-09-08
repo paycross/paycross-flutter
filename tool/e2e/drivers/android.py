@@ -27,14 +27,12 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .. import tree
-from ..cells import Card
+from ..cells import DEVICE_LANGUAGE_DEFAULT, Card
 from .base import Driver, DriverError, device_text, read_token, rig_path
 
-#: This rig's Windows adb, overridable with PAYCROSS_E2E_ADB.
-ADB = rig_path(
-    "PAYCROSS_E2E_ADB",
-    "/mnt/c/Users/Syllo/AppData/Local/Android/Sdk/platform-tools/adb.exe",
-)
+#: The Windows adb, off PATH. PAYCROSS_E2E_ADB names a specific binary, which
+#: is what a rig whose Windows SDK is not on PATH sets.
+ADB = rig_path("PAYCROSS_E2E_ADB", "adb.exe")
 PACKAGE = "com.paycross.flutterdemo"
 
 #: Every adb call is bounded. A wedged emulator would otherwise hold the whole
@@ -201,15 +199,50 @@ ACS_MARKERS = ("AUTHENTICATION OUTCOMES", "Sandbox 3DS Challenge")
 #: workaround -- the wallet has Google's description and the challenge has
 #: `ACS_MARKERS`, both of which were the matchers here anyway.
 #:
-#: So this string stays, with its old caveat intact: it is rendered by Google
-#: Play services, so it moves with the GMS version and with the device locale,
-#: and a French device would take it with it. Confirmed against this campaign's
-#: own dumps, most recently 2026-09-07.
+#: So this string stays, and its old caveat is now a measurement rather than a
+#: warning: it is rendered by Google Play services, so it moves with the GMS
+#: version AND with the device's language. On 2026-09-08, with the app's own
+#: locale set to `fr`, the wallet row read `Payer avec GPay`
+#: (`evidence/train6/android-60/01-sheet.xml`). A cell that sets a device
+#: language may therefore not touch the wallet, and `cell_rules` refuses one
+#: that tries.
 GOOGLE_PAY_DESC = "Pay with GPay"
 
 #: What `logcat -t` will accept. Validated rather than trusted, because an
 #: unusable cutoff yields an empty log, which reads as "nothing crashed".
 _LOGCAT_CUTOFF = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$")
+
+#: How `cmd locale get-app-locales` answers. One line, and the list is the tail
+#: of it:
+#:
+#:     Locales for com.paycross.flutterdemo for user 0 are [fr-FR]
+#:
+#: An unset list reads `[]`. A package the device does not hold answers
+#: `Unknown package <id> for userId 0` -- with a ZERO exit and no brackets at
+#: all, which is why this is parsed rather than trusted. Measured on the rig's
+#: emulator, API 35, 2026-09-07.
+_APP_LOCALES = re.compile(r"\bare \[(?P<tags>[^\]]*)\]")
+
+
+def parse_app_locales(said: str) -> list[str]:
+    """The tags `cmd locale get-app-locales` reported, in the order it gave.
+
+    Module level and taking the raw text, so the parsing is testable against
+    what a device really says without a device -- which matters more here than
+    usual, because the WRITE side of this setting reports nothing at all and
+    this read is the only evidence there is that it landed.
+
+    Raises rather than answering `[]` for anything it does not recognise. An
+    empty list is a real answer (`[]`, the app has no locale of its own) and it
+    must not be the same answer as "adb said something else entirely".
+    """
+    match = _APP_LOCALES.search(said)
+    if match is None:
+        raise DriverError(
+            "could not read the app's locales: `cmd locale get-app-locales "
+            f"{PACKAGE}` said {said.strip()[:QUOTED_DEVICE_TEXT_CHARS]!r}"
+        )
+    return [tag.strip() for tag in match.group("tags").split(",") if tag.strip()]
 
 
 def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
@@ -379,6 +412,16 @@ class AndroidDriver(Driver):
             if n.identifier.startswith(SAVED_CARD_PREFIX)
             and not n.identifier.endswith(SAVED_CARD_DELETE_SUFFIX)
         ]
+
+    def _pay_buttons(self, nodes: list[tree.Node]) -> list[tree.Node]:
+        """The identifier, with no fallback -- Android publishes it correctly.
+
+        The iOS override carries one because the button there answered to a
+        container's name until PayCross 0.7.1. Nothing equivalent happened
+        here: `paycross.payButton` has reached a uiautomator dump since 0.8.0
+        turned the per-window flag on.
+        """
+        return tree.find_identifier(nodes, PAY_BUTTON)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -727,6 +770,68 @@ class AndroidDriver(Driver):
         if got != want:
             raise DriverError(
                 f"always_finish_activities reads {got!r} after asking for {want!r}"
+            )
+
+    def device_language(self, tag: str) -> None:
+        """Sets the languages the APP sees, and proves the write landed.
+
+        `cmd locale` is the only route to one on this rig, and that is a
+        property of the emulator rather than a preference: the image is
+        `google_apis_playstore`, a production build, so `setprop
+        persist.sys.locale` is refused and there is no `adb root`. The SYSTEM
+        language cannot be changed at all. The app's own list can, and it is
+        the list the SDK actually reads -- `PayCrossResources.kt` takes its
+        device candidates from `LocalConfiguration.current.locales`, which is
+        the app's Configuration, and a per-app locale is exactly what
+        `LocaleManager` writes there.
+
+        `DEVICE_LANGUAGE_DEFAULT` clears the list, which is this verb's
+        teardown. It has to be one: the setting is the system's own record of
+        the package, so it outlives the cell, the app's process and a cold
+        restart of the emulator -- measured 2026-09-08, where `fr` was still
+        set after a `-no-snapshot-load` boot. A cell that set one and died
+        would leave every later sheet drawn in its language.
+
+        Fails CLOSED, unlike `launch`'s guards. `set-app-locales` prints
+        nothing when it worked and nothing when it silently did not, so
+        without the read-back a cell would measure the device rung against a
+        device whose language never changed -- and report the English sheet as
+        an SDK finding. This is the gap flutter#60 was filed over: on
+        2026-09-07 the setting was written and read back by hand, the sheet
+        still drew English, and nothing could say whether the app had been
+        given the language at all. (It had. The sheet was English because the
+        SESSION named `en`, which core defaults, and the session rung sits
+        above the device rung.)
+
+        Does NOT relocalize the running app on its own. `LocaleManager`
+        recreates the activities it can, but the sheet is a separate activity
+        and the cell's own screen is a Flutter host, so a cell that means to
+        be read in the new language says `relaunch` next. `cell_rules` refuses
+        one that does not.
+        """
+        wanted = [] if tag == DEVICE_LANGUAGE_DEFAULT else [tag]
+        # One string rather than an argv list: the empty list is written by
+        # passing an empty `--locales`, and an empty element through the
+        # Windows adb is not reliably still empty by the time the device's
+        # shell has re-split the line. Quoting it here puts the emptiness
+        # where the shell that reads it can see it.
+        listed = ",".join(wanted)
+        self._shell(
+            ["shell", f"cmd locale set-app-locales {PACKAGE} --locales '{listed}'"]
+        )
+        self._sleep(SETTLE_SECONDS)
+        got = parse_app_locales(
+            self._shell(["shell", f"cmd locale get-app-locales {PACKAGE}"])
+        )
+        # Compared case-insensitively and by whole tag. The system stores back
+        # what it was given rather than a canonical form -- `fr-FR` reads back
+        # `fr-FR`, `fr` reads back `fr` -- so this is an equality check and not
+        # a match against the ladder's rules, which are the SDK's business.
+        if [t.lower() for t in got] != [t.lower() for t in wanted]:
+            raise DriverError(
+                f"the app's languages read {got} after asking for {wanted}: "
+                f"`cmd locale set-app-locales {PACKAGE} --locales "
+                f"{','.join(wanted)!r}` did not take"
             )
 
     def type_card(self, card: Card, *, verify_pan: bool = True) -> None:

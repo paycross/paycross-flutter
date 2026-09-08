@@ -20,9 +20,10 @@ APPROVING_PANS = ("4111111111153055", "4111111111150069", "4111111111150127")
 #: A cell ends by looking for an outcome, one way or the other.
 TERMINAL_VERBS = ("wait_result", "expect")
 
-#: A cell that turns one of these on must turn it off again. Neither is undone
-#: by a failure, and both poison every cell that follows -- which the drivers'
-#: launch guards then report as a rig fault, correctly but expensively.
+#: A cell that changes one of these must put it back. None of them is undone
+#: by a failure, and each poisons every cell that follows -- two of them as a
+#: rig fault the drivers' launch guards report, correctly but expensively, and
+#: the third as a sheet quietly drawn in the wrong language.
 #:
 #: Defined in `cells` rather than here: `run_cell` replays these when a cell
 #: dies before reaching its own teardown, and the runner cannot import from
@@ -48,12 +49,26 @@ def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
         while tail and tail[-1] in TEARDOWN:
             tail.pop()
         assert tail and tail[-1][0] in TERMINAL_VERBS, cell.id
-        for verb, off in sorted(TEARDOWN):
-            if any(v == verb and a == "on" for v, a in actions):
-                assert (
-                    verb,
-                    off,
-                ) in actions, f"{cell.id}: turns {verb} on and never off"
+        for verb, restore in sorted(TEARDOWN):
+            if any(v == verb and a != restore for v, a in actions):
+                assert (verb, restore) in actions, (
+                    f"{cell.id}: changes {verb} and never puts it back with "
+                    f"`{verb} {restore}`"
+                )
+        # A language set after the app started is a language the app has not
+        # been told about. Android recreates what it can and iOS reads its
+        # argument domain once, at start-up, so on neither platform does the
+        # sheet redraw on its own -- and a cell that skipped the relaunch would
+        # measure the language it was trying to change away from, and pass or
+        # fail on it. Not required of the teardown: the cell is over.
+        for index, (verb, arg) in enumerate(actions):
+            if verb != "device_language" or arg == cells.DEVICE_LANGUAGE_DEFAULT:
+                continue
+            following = actions[index + 1] if index + 1 < len(actions) else None
+            assert following == ("relaunch", None), (
+                f"{cell.id}: sets the device language to {arg!r} and does not "
+                "relaunch next, so the app never sees it"
+            )
         # Orientation outlives the cell on both platforms -- `user_rotation` is
         # a global setting on Android and the simulator keeps its pose -- and
         # unlike airplane mode it is not an on/off pair, so the runner's
@@ -94,4 +109,27 @@ def check_cell_dir(directory: Path, platform: str) -> list[cells.Cell]:
         assert "airplane" not in verbs or platform == "android", (
             f"{cell.id}: airplane mode does not exist on the iOS simulator"
         )
+        # The wallet is the one thing on the sheet the SDK does not draw, so
+        # it is the one thing a language change takes with it. Google Play
+        # services renders that button and translates it: with the app's
+        # locale set to `fr` the row reads `Payer avec GPay`, measured
+        # 2026-09-08. `GOOGLE_PAY_DESC` is the only matcher there is for it --
+        # `paycross.walletButton` does not reach a dump -- so such a cell
+        # would fail looking for a button that was on screen the whole time,
+        # and read as an SDK finding.
+        if any(
+            verb == "device_language" and arg != cells.DEVICE_LANGUAGE_DEFAULT
+            for verb, arg in actions
+        ):
+            assert not verbs & {"tap_google_pay"}, (
+                f"{cell.id}: sets a device language and taps the wallet, whose "
+                "button is drawn and translated by Play services"
+            )
+            assert not {a for v, a in actions if v == "expect"} & {
+                "google_pay",
+                "no_google_pay",
+            }, (
+                f"{cell.id}: sets a device language and expects the wallet, "
+                "whose button is drawn and translated by Play services"
+            )
     return loaded

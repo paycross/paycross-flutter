@@ -46,6 +46,12 @@ LEGACY_LABEL_PREFIXES = (
 ERROR_BANNER = "paycross.errorBanner"
 AMOUNT = "paycross.amount"
 
+#: The word the SDKs' French Pay button is built from. `paycross_pay_amount`
+#: is `Payer %1$s` in the Android SDK's `values-fr/strings.xml` at v0.8.1 and
+#: the same sentence on iOS, so the verb is the language and the rest of the
+#: caption is the amount.
+FRENCH_PAY_VERB = "Payer"
+
 _BOUNDS = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 _CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
 
@@ -165,6 +171,69 @@ def find_content_desc(nodes: list[Node], content_desc: str) -> list[Node]:
 
 def find_identifier(nodes: list[Node], identifier: str) -> list[Node]:
     return [n for n in nodes if n.identifier == identifier]
+
+
+def caption(nodes: list[Node], control: Node) -> str:
+    """The text drawn on `control`, wherever in the tree it is written.
+
+    Its own label first, which is the whole answer on iOS: WebDriverAgent puts
+    a button's caption on the button. Android's Pay button has no text at all
+    -- it is an `android.view.View` whose child `TextView` holds `Pay €10.00`
+    (measured 2026-09-07, `evidence/train4/t7-probe/`) -- so the caption has to
+    be looked for below it.
+
+    Both parsers flatten: `parse_uiautomator` iterates `node` elements and
+    `parse_wda` iterates the whole document, so nothing above this layer can
+    ask a node for its children. But the flattening is DOCUMENT ORDER, so a
+    node's children are the run that follows it, and the run ends at the first
+    node that is not inside its box. That is what is walked here.
+
+    Position rather than "anything inside the box", and that is measured too.
+    Both sheets pin the Pay button under a scrolling form, and a form label
+    scrolled beneath it overlaps its rect while belonging to nothing of the
+    sort: on the simulator, 2026-09-08, the contact field caption
+    `Email address` sat inside the Pay button's bounds. Reading the first
+    contained node would have answered with that.
+
+    A degenerate box is skipped rather than ending the walk. `[0,0][0,0]` has
+    no place on screen, so it is neither a caption nor evidence that the run
+    is over -- and it would otherwise stop the walk at the first invisible
+    child.
+    """
+    own = control.text or control.content_desc
+    if own:
+        return own
+    at = _position_of(nodes, control)
+    x1, y1, x2, y2 = control.bounds
+    for node in nodes[at + 1 :]:
+        nx1, ny1, nx2, ny2 = node.bounds
+        if nx2 <= nx1 or ny2 <= ny1:
+            continue
+        if not (nx1 >= x1 and ny1 >= y1 and nx2 <= x2 and ny2 <= y2):
+            break
+        text = node.text or node.content_desc
+        if text:
+            return text
+    return ""
+
+
+def _position_of(nodes: list[Node], control: Node) -> int:
+    """Where `control` sits in `nodes`, by identity and then by value.
+
+    Identity first because `Node` is a frozen dataclass and compares by value,
+    so two identical rows -- a form with the same caption twice -- would make
+    `index` answer for the wrong one. By value second so a node rebuilt rather
+    than taken from this list still finds its place, which is how the tests
+    hand one in. `len(nodes)` for a node that is not here at all, which walks
+    nothing and answers with no caption.
+    """
+    for index, node in enumerate(nodes):
+        if node is control:
+            return index
+    for index, node in enumerate(nodes):
+        if node == control:
+            return index
+    return len(nodes)
 
 
 def label_from_tree(

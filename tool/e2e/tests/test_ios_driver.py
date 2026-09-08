@@ -2010,7 +2010,7 @@ def test_paste_token_hands_off_to_the_sheet_once_the_field_has_taken_it(tmp_path
 
     # Paste out of the long-press menu, then the example's own Pay button --
     # which is untagged, so it matches on the name WDA falls back to.
-    assert tapped == ["Paste", "Pay"]
+    assert tapped == [ios.PASTE_ITEM, "Pay"]
 
 
 def test_paste_token_waits_for_the_sheet_that_the_example_pay_opens(
@@ -2503,6 +2503,130 @@ def test_launch_no_longer_reads_or_refuses_a_locale():
     assert not any("AppleLocale" in call for call in ssh.calls)
 
 
+def menu_item(name: str) -> tree.Node:
+    """One edit-menu item as WebDriverAgent describes it."""
+    return tree.parse_wda(
+        f'<XCUIElementTypeMenuItem type="XCUIElementTypeMenuItem" name="{name}" '
+        f'label="{name}" x="0" y="0" width="80" height="40" visible="true"/>'
+    )[0]
+
+
+def test_the_paste_item_is_matched_in_every_language_the_app_can_run_in():
+    # UIKit's edit menu is localized by the APP's language. Matched in English
+    # alone it took the driver with it: a demo launched with
+    # `-AppleLanguages "(fr)"` offers `Coller`, and `paste_token` failed there
+    # with "no element named 'Paste'" before any cell reached the sheet.
+    # Measured on the simulator 2026-09-08.
+    assert ios._is_paste_item(menu_item("Paste"))
+    assert ios._is_paste_item(menu_item("Coller"))
+    # The item beside it in the French menu, which is not a paste.
+    assert not ios._is_paste_item(menu_item("Scanner du texte"))
+    # And a failure names both, because "no element named 'Paste'" on a French
+    # simulator is a true sentence that sends the reader the wrong way.
+    assert ios.PASTE_ITEM == "Paste/Coller"
+
+
+def test_the_demos_own_strings_do_not_move_with_the_device_language():
+    # The rule is which side of the app boundary drew the string. The demo
+    # ships no localizations, so its token field and its Pay button stay
+    # English on a French device -- confirmed by the same probe that found
+    # `Coller`. Pinned here because the obvious over-correction after that
+    # finding is to start matching these in French too, and then nothing
+    # matches at all.
+    assert ios.TOKEN_FIELD == "Session token"
+    assert ios.EXAMPLE_PAY == "Pay"
+
+
+# -- the device language, which on iOS is a launch argument -------------------
+
+
+def test_device_language_touches_the_simulator_at_all_before_the_next_launch():
+    # Nothing is written. `AppleLanguages` is a GLOBAL-domain key: through any
+    # UserDefaults, a private suite included, it lands in the simulator's own
+    # .GlobalPreferences.plist and relocalizes every later process on that
+    # device -- and `removePersistentDomain` does not undo it. Measured
+    # 2026-09-07; the repair was a `defaults write -g` by hand.
+    ssh = FakeSsh()
+    d = driver(ssh)
+
+    d.device_language("fr")
+
+    assert ssh.calls == []
+
+
+def test_the_next_launch_hands_the_app_its_language_as_argv():
+    # `simctl launch` passes everything after the bundle id to the app, and
+    # `-AppleLanguages "(fr)"` there lands in UserDefaults' ARGUMENT domain --
+    # which is what the SDK reads since PayCross 0.7.1.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.device_language("fr")
+
+    d.launch()
+
+    started = next(c for c in ssh.calls if "--console-pty" in c)
+    assert f"{ios.BUNDLE} -AppleLanguages '(fr)'" in started
+
+
+def test_the_language_reaches_the_app_as_one_argument():
+    # The parentheses are old-style plist syntax, which is how UserDefaults
+    # parses an array out of argv -- they are not a shell construct. Unquoted,
+    # the remote shell would read them as a subshell and the app would be
+    # handed nothing. Split the way that shell would split it, so the
+    # assertion is what the app receives rather than what was typed.
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.device_language("fr-FR")
+
+    d.launch()
+
+    started = next(c for c in ssh.calls if "--console-pty" in c)
+    argv = shlex.split(started[started.index("xcrun") : started.index(" >>")])
+    assert argv[-2:] == ["-AppleLanguages", "(fr-FR)"]
+
+
+def test_device_language_default_drops_the_argument_again():
+    ssh = FakeSsh(*launch_outputs())
+    d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
+    d.device_language("fr")
+    d.device_language(ios.DEVICE_LANGUAGE_DEFAULT)
+
+    d.launch()
+
+    started = next(c for c in ssh.calls if "--console-pty" in c)
+    assert "AppleLanguages" not in started
+    # And nothing is left where the bundle id used to end the line.
+    assert f"{ios.BUNDLE} >>" in started
+
+
+def test_a_driver_that_was_never_told_a_language_launches_as_it_always_did():
+    ssh = FakeSsh(*launch_outputs())
+
+    ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
+
+    started = next(c for c in ssh.calls if "--console-pty" in c)
+    assert "AppleLanguages" not in started
+
+
+# -- the French sheet ---------------------------------------------------------
+
+
+def test_the_sheet_is_french_when_the_pay_button_says_payer():
+    # iOS writes the whole caption on the button's own label, so the geometry
+    # rule in `tree.caption` finds it on the node it started from.
+    french = SOURCE_XML.replace("Pay \u20ac10.00", "Payer 10,00 \u20ac")
+    assert french != SOURCE_XML
+    ssh = FakeSsh(xml=french)
+
+    assert driver(ssh).wait_french_sheet(timeout=0) is True
+
+
+def test_the_sheet_is_not_french_on_the_english_fixture():
+    ssh = FakeSsh(xml=SOURCE_XML)
+
+    assert driver(ssh).wait_french_sheet(timeout=0) is False
+
+
 def test_wait_rearmed_blames_the_rig_for_an_amount_it_cannot_spell():
     # The replacement for the guard. A French sheet reads `10,00 €` where the
     # runner computes `€10.00`, and answering False there would report "the
@@ -2559,7 +2683,7 @@ def test_present_token_does_not_wait_for_a_sheet_that_will_never_open(
 
     d.present_token(token_file(tmp_path))
 
-    assert tapped == ["Paste", "Pay"]
+    assert tapped == [ios.PASTE_ITEM, "Pay"]
     # And the same screen still fails `paste_token`, which is the difference.
     other = driver(FakeSsh(xml=no_sheet))
     other.tap_identifier = lambda name, **kw: None

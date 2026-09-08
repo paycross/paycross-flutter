@@ -73,6 +73,12 @@ EXPECTATIONS = frozenset(
         "google_pay",
         "no_google_pay",
         "saved_card",
+        # The sheet is drawing the SDK's own copy in French. The one text
+        # assertion in the vocabulary, and it is one word: `Driver
+        # .wait_french_sheet` reads the Pay button's caption and looks for the
+        # French verb, because the amount beside it is punctuated under a
+        # different rule and need not be French at all.
+        "french_sheet",
     }
 )
 
@@ -164,6 +170,24 @@ def _is_on_off(arg: str) -> bool:
     return arg in ("on", "off")
 
 
+#: What `device_language` is given to put the device's own language back. Not
+#: a tag, and it cannot collide with one: `_DEVICE_LANGUAGE` allows two or
+#: three letters before the first hyphen and this word has seven.
+DEVICE_LANGUAGE_DEFAULT = "default"
+
+#: The shape a language tag has to have: `LocaleResolution.WELL_SHAPED` on
+#: paycross-android v0.8.1, which is the rule the Android SDK applies before it
+#: will format an amount with a tag. A shape check rather than a list of
+#: languages -- a cell naming one the SDKs ship no words for is a legal cell
+#: and sometimes the point of one, since a tag that matches nothing is how the
+#: session rung is made to stand aside.
+_DEVICE_LANGUAGE = re.compile(r"[A-Za-z]{2,3}(-[A-Za-z0-9]+)*")
+
+
+def _is_device_language(arg: str) -> bool:
+    return arg == DEVICE_LANGUAGE_DEFAULT or bool(_DEVICE_LANGUAGE.fullmatch(arg))
+
+
 def _is_expectation(arg: str) -> bool:
     return arg in EXPECTATIONS
 
@@ -184,6 +208,15 @@ ARG_ACTIONS = MappingProxyType(
         "acs": (_is_acs_outcome, f"one of {sorted(ACS_OUTCOMES)}"),
         "airplane": (_is_on_off, "'on' or 'off'"),
         "background": (_is_positive_seconds, "a positive number of seconds"),
+        # Sets the languages the app itself sees, which is the third rung of
+        # the locale ladder and the only one no session and no merchant call
+        # can reach. Android writes the app's own locale list; iOS passes the
+        # list as a launch argument. Neither takes effect on a running app, so
+        # `cell_rules` makes the cell relaunch before it looks at the sheet.
+        "device_language": (
+            _is_device_language,
+            f"a language tag, or {DEVICE_LANGUAGE_DEFAULT!r}",
+        ),
         "dont_keep_activities": (_is_on_off, "'on' or 'off'"),
         "enter_token": (
             _is_literal_token,
@@ -210,13 +243,31 @@ ARG_ACTIONS = MappingProxyType(
 #: fail every cell that follows -- including the interleaved control, so the
 #: run aborts as a rig fault two cells later.
 #:
+#: Each pair is the verb and the argument that RESTORES it. A cell that used
+#: the verb with any other argument has changed the device and owes the pair.
+#: Written that way rather than as an `on`/`off` pair because `device_language`
+#: has no `on`: every tag but `default` is a change.
+#:
 #: Read by two places that have to agree. `tests/cell_rules` refuses a cell
-#: that turns one on without declaring the off, and lets only these follow the
-#: action that reads the outcome; `runner` replays the off when a cell dies
-#: before reaching it. Here rather than beside the authoring rules because the
-#: runner cannot import from the test tree, and because which settings outlive
-#: a cell is a fact about the grammar rather than about how cells are written.
-TEARDOWN = frozenset({("airplane", "off"), ("dont_keep_activities", "off")})
+#: that changes one without declaring the restore, and lets only these follow
+#: the action that reads the outcome; `runner` replays the restore when a cell
+#: dies before reaching it. Here rather than beside the authoring rules because
+#: the runner cannot import from the test tree, and because which settings
+#: outlive a cell is a fact about the grammar rather than about how cells are
+#: written.
+TEARDOWN = frozenset(
+    {
+        ("airplane", "off"),
+        ("dont_keep_activities", "off"),
+        # A per-app locale outlives the cell and the app's process: on
+        # Android `cmd locale` writes it into the system's own record of the
+        # package, and on iOS the argument lives on the driver. Left set, every
+        # later cell's sheet is drawn in the language this one asked for --
+        # which the identifier matchers survive and `sheet_rearmed` does not,
+        # since nothing translates the amount it computes.
+        ("device_language", DEVICE_LANGUAGE_DEFAULT),
+    }
+)
 
 #: Log markers a cell may declare it expects. Deliberately a closed set of
 #: one: `Force finishing activity` is a fault everywhere except in the cell

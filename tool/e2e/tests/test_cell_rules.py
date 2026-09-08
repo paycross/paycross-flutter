@@ -86,7 +86,7 @@ def test_a_cell_that_turns_a_rig_setting_on_must_turn_it_off(tmp_path, verb):
         ["paste_token", "type_card", f"{verb} on", "tap_pay", "wait_result 60"],
     )
 
-    with pytest.raises(AssertionError, match="never off"):
+    with pytest.raises(AssertionError, match="never puts it back"):
         check_cell_dir(where, "android")
 
 
@@ -253,3 +253,106 @@ def test_a_cell_that_rotates_there_and_back_is_fine(tmp_path):
         "control",
         "rotate_after_submit",
     }
+
+
+def test_a_cell_that_sets_a_language_must_put_the_device_back(tmp_path):
+    # `device_language` has no `on`: every tag but `default` is a change, and
+    # left set it draws every later cell's sheet in that language.
+    where = directory(
+        tmp_path,
+        "french",
+        [
+            "device_language fr",
+            "relaunch",
+            "paste_token",
+            "type_card",
+            "tap_pay",
+            "wait_result 60",
+        ],
+    )
+
+    with pytest.raises(AssertionError, match="never puts it back"):
+        check_cell_dir(where, "android")
+
+
+def test_a_cell_that_sets_a_language_must_relaunch_before_it_looks(tmp_path):
+    # Neither platform redraws a running app in a language it was handed
+    # afterwards: Android recreates what it can and the sheet is a separate
+    # activity, iOS reads its argument domain once at start-up. A cell that
+    # skipped the relaunch would measure the language it was changing away
+    # from, and pass or fail on it.
+    where = directory(
+        tmp_path,
+        "french",
+        [
+            "device_language fr",
+            "paste_token",
+            "type_card",
+            "tap_pay",
+            "wait_result 60",
+            "device_language default",
+        ],
+    )
+
+    with pytest.raises(AssertionError, match="does not relaunch next"):
+        check_cell_dir(where, "android")
+
+
+def test_the_teardown_itself_needs_no_relaunch(tmp_path):
+    # The cell is over. Requiring one there would make every localized cell
+    # cold-start the app for nobody to look at.
+    where = directory(
+        tmp_path,
+        "french",
+        [
+            "device_language fr",
+            "relaunch",
+            "paste_token",
+            "type_card",
+            "tap_pay",
+            "wait_result 60",
+            "device_language default",
+        ],
+    )
+
+    check_cell_dir(where, "android")
+
+
+def test_a_localized_cell_may_not_reach_for_the_wallet(tmp_path):
+    # The wallet button is the one thing on the sheet the SDK does not draw,
+    # so it is the one thing a language change takes with it: with the app's
+    # locale set to `fr` the row reads `Payer avec GPay`, measured 2026-09-08.
+    # `GOOGLE_PAY_DESC` is the only matcher there is for it, so such a cell
+    # fails looking for a button that was on screen all along.
+    where = directory(
+        tmp_path,
+        "french_wallet",
+        [
+            "device_language fr",
+            "relaunch",
+            "paste_token",
+            "tap_google_pay",
+            "wait_result 60",
+            "device_language default",
+        ],
+    )
+
+    with pytest.raises(AssertionError, match="translated by Play services"):
+        check_cell_dir(where, "android")
+
+
+def test_a_localized_cell_may_not_expect_the_wallet_either(tmp_path):
+    where = directory(
+        tmp_path,
+        "french_wallet",
+        [
+            "device_language fr",
+            "relaunch",
+            "paste_token",
+            "expect no_google_pay",
+            "device_language default",
+        ],
+    )
+
+    with pytest.raises(AssertionError, match="translated by Play services"):
+        check_cell_dir(where, "android")

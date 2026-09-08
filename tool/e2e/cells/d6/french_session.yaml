@@ -25,15 +25,17 @@
 # The label is the example app's own and stays English: the demo is not
 # localized, and `result:success:<txn>` is a contract string rather than copy.
 #
-# **What this cell proves is that a French session PAYS, not that it reads in
-# French.** Nothing below asserts a word of copy, because there is no
-# expectation verb that could: `EXPECTATIONS` holds six non-results and none of
-# them is a text assertion, and the cell vocabulary is frozen. So this is a
-# regression guard for the DRIVERS -- it fails the day a matcher goes back to
-# matching English -- and the rendering itself is proved by hand, in the
-# campaign's `evidence/train4/french-session-android/` and
-# `french-session-ios/` dumps and screenshots. Whoever wants the copy asserted
-# in the matrix is adding a verb to the grammar, which is its own task.
+# This cell proves both halves now: that a French session PAYS, and that it
+# READS in French. The second half used to be missing -- `EXPECTATIONS` held
+# six non-results and not one of them was a text assertion -- so the rendering
+# was proved by hand instead, in the campaign's
+# `evidence/train4/french-session-android/` and `french-session-ios/` dumps.
+# `french_sheet` is that assertion, added with the device-rung cell beside
+# this one, and it reads the Pay button's caption for the French verb.
+#
+# It is still also a regression guard for the DRIVERS: every matcher on the
+# sheet is an identifier, and this cell fails the day one goes back to matching
+# rendered English.
 id: french_session
 platforms: [android, ios]
 card:
@@ -48,6 +50,7 @@ session:
 actions:
   - paste_token
   - type_card
+  - expect french_sheet
   - tap_pay
   - wait_result 180
 expected:

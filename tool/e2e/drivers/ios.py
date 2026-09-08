@@ -38,7 +38,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .. import tree
-from ..cells import Card
+from ..cells import DEVICE_LANGUAGE_DEFAULT, Card
 from .base import Driver, DriverError, device_text, read_token, rig_path
 
 #: The ssh alias for the Mac, overridable with PAYCROSS_E2E_SSH_HOST.
@@ -152,7 +152,30 @@ CANCEL_DISMISS = "paycross.cancelDismiss"
 REMOVE_DIALOG = "paycross.removeDialog"
 REMOVE_CONFIRM = "paycross.removeConfirm"
 
-PASTE_ITEM = "Paste"
+#: The system's Paste, in every language a cell can put the app in.
+#:
+#: This is UIKit's own edit menu rather than anything the demo draws, so it is
+#: localized by the APP's language -- and `device_language` is a verb whose
+#: whole job is to change that. Matched in English alone it took the driver
+#: with it: a demo launched with `-AppleLanguages "(fr)"` offers `Coller`, and
+#: `paste_token` failed there with "no element named 'Paste'" before any cell
+#: reached the sheet. Measured on the simulator 2026-09-08.
+#:
+#: The demo's OWN strings do not move with it -- it ships no localizations, so
+#: `TOKEN_FIELD` and `EXAMPLE_PAY` stay English on a French device, which the
+#: same probe confirmed. The rule is which side of the app boundary drew the
+#: string, not whether the device is in English.
+#:
+#: A language added to the SDK adds a spelling here. That is the same standing
+#: cost `GOOGLE_PAY_DESC` carries on Android for the same reason: a platform
+#: string is the platform's to translate.
+PASTE_ITEMS = ("Paste", "Coller")
+
+#: What a failure to find it is reported as, which is every spelling that was
+#: looked for. "no element named 'Paste'" on a French simulator is a true
+#: sentence that sends the reader looking for the wrong bug.
+PASTE_ITEM = "/".join(PASTE_ITEMS)
+
 TOKEN_FIELD = "Session token"
 EXAMPLE_PAY = "Pay"
 
@@ -285,6 +308,11 @@ def _is_token_field(node: tree.Node) -> bool:
     return name == TOKEN_FIELD or name.startswith(TOKEN_FIELD + "\n")
 
 
+def _is_paste_item(node: tree.Node) -> bool:
+    """The edit menu's Paste, whichever language the app is running in."""
+    return (node.identifier or node.content_desc) in PASTE_ITEMS
+
+
 def _ssh(command: str, *, stdin: bytes | None = None) -> str:
     """One remote command, bounded, never discarding a failure.
 
@@ -350,6 +378,10 @@ class IosDriver(Driver):
         #: crash_lines and fail every later cell in the matrix.
         self._console_from: int | None = None
         self._console_pid: int | None = None
+        #: The language list the next cold start hands the app, as
+        #: `simctl launch` argv. Empty is the simulator's own, which is what
+        #: every cell but a D6 one wants. See `device_language`.
+        self._launch_languages: tuple[str, ...] = ()
 
     # -- transport -----------------------------------------------------------
 
@@ -538,7 +570,7 @@ class IosDriver(Driver):
             + (f": > {CONSOLE_LOG} && " if truncate else "")
             + f"wc -c < {CONSOLE_LOG} && "
             f"( nohup xcrun simctl launch --console-pty {self._quoted_udid} "
-            f"{self._bundle} "
+            f"{self._bundle}{self._language_argv()} "
             f">> {CONSOLE_LOG} 2>&1 < /dev/null & echo $! )"
         )
         fields = said.split()
@@ -827,13 +859,21 @@ class IosDriver(Driver):
         timeout: float = 30,
         interval: float = POLL_INTERVAL_SECONDS,
         identifier_only: bool = False,
+        match: Callable[[tree.Node], bool] | None = None,
     ) -> None:
+        """`match` replaces the name comparison; `name` stays what is reported.
+
+        The same split `_find` already makes, carried one level up so the
+        paste item can be matched in more than one language while a failure
+        still names what was looked for rather than a lambda.
+        """
         self._tap_node(
             self._find(
                 name,
                 timeout=timeout,
                 interval=interval,
                 identifier_only=identifier_only,
+                match=match,
             )
         )
 
@@ -1082,7 +1122,7 @@ class IosDriver(Driver):
                 {"x": float(x), "y": float(y), "duration": 1.2},
             )
             self._sleep(PASTE_SETTLE_SECONDS)
-            self.tap_identifier(PASTE_ITEM, timeout=15)
+            self.tap_identifier(PASTE_ITEM, timeout=15, match=_is_paste_item)
         finally:
             # The token outlives nothing: not the paste, not a failure.
             self._remote(f"xcrun simctl pbcopy {self._quoted_udid}", stdin=b" ")
@@ -1101,7 +1141,7 @@ class IosDriver(Driver):
         if self._poll(took, TOKEN_READBACK_SECONDS, SETTLE_SECONDS) is None:
             raise DriverError(
                 f"the {TOKEN_FIELD!r} field is still empty after the paste; the "
-                "pasteboard or the Paste item did not take"
+                "pasteboard or the paste item did not take"
             )
 
     def paste_token(self, token_path: Path) -> None:
@@ -1266,6 +1306,62 @@ class IosDriver(Driver):
             "no equivalent: there is no activity to not keep. A cell using it "
             "must be platforms: [android]."
         )
+
+    def device_language(self, tag: str) -> None:
+        """Sets the languages the app sees, from its NEXT cold start.
+
+        `simctl launch` hands everything after the bundle id to the app as
+        argv, and `-AppleLanguages "(fr)"` there lands in `UserDefaults`'
+        ARGUMENT domain -- which is the domain the SDK reads since PayCross
+        0.7.1. `DeviceLanguages.swift` takes the raw `AppleLanguages` key out
+        of `UserDefaults` rather than asking `Locale.preferredLanguages`,
+        because Foundation intersects that one with the HOST APP's own
+        localizations and a merchant app shipping only `Base.lproj` therefore
+        reported `["en"]` on a phone set to French.
+
+        Nothing on the simulator is written, so there is no state a later cell
+        could inherit and `DEVICE_LANGUAGE_DEFAULT` is just the argument going
+        away. The teardown is still declared, because the runner's replay is
+        what makes the two platforms behave the same way and because the
+        argument would otherwise outlive the cell inside this object.
+
+        Writing `AppleLanguages` into a preferences domain instead is
+        deliberately NOT done. It is a global-domain key: written through any
+        `UserDefaults`, a private suite included, it lands in the simulator's
+        own `.GlobalPreferences.plist` and relocalizes every later process on
+        that device -- a whole simulator left French for whatever runs next,
+        and `removePersistentDomain` does not undo it. Measured 2026-09-07;
+        the repair was a `defaults write -g` by hand.
+
+        Does not relocalize the running app, and cannot: the argument domain
+        is read at start-up. A cell that means to be read in the new language
+        says `relaunch` next, and `cell_rules` refuses one that does not.
+        """
+        self._launch_languages = () if tag == DEVICE_LANGUAGE_DEFAULT else (tag,)
+
+    def _language_argv(self) -> str:
+        """`-AppleLanguages "(fr)"` for the launch line, or nothing at all.
+
+        The parenthesised form is how `UserDefaults` parses an array out of
+        argv -- it is old-style plist syntax, not a shell construct -- so it is
+        quoted as one word for the remote shell and left alone otherwise.
+
+        Empty string rather than an empty list, because the caller is building
+        one command line and an absent argument has to leave no space behind.
+        """
+        if not self._launch_languages:
+            return ""
+        listed = ",".join(self._launch_languages)
+        return f" -AppleLanguages {shlex.quote(f'({listed})')}"
+
+    def _pay_buttons(self, nodes: list[tree.Node]) -> list[tree.Node]:
+        """Every node `_is_pay_button` accepts, fallback included.
+
+        The fallback is why this is not `find_identifier`: until PayCross
+        0.7.1 the button published its container's name, and a tree recorded
+        against an older build still has to be readable.
+        """
+        return [node for node in nodes if _is_pay_button(node)]
 
     # D4's whole vocabulary, refused here rather than left to `Driver`'s
     # declaration for the same reason `airplane` is: the refusal names this

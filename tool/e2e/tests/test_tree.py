@@ -307,3 +307,99 @@ def test_rearm_amount_mismatch_stays_quiet_when_it_has_nothing_to_say(nodes_of, 
     # It must not turn every failed re-arm into a rig fault: a cell that
     # measures "the sheet did not re-arm" has a verdict to report.
     assert tree.rearm_amount_mismatch(nodes_of(), "€10.00") is None, why
+
+
+# --- the caption a control draws, on a tree with no children -----------------
+
+
+def box(**kw):
+    """A node with only the fields `caption` reads."""
+    base = dict(
+        type="",
+        text="",
+        content_desc="",
+        identifier="",
+        value="",
+        bounds=(0, 0, 0, 0),
+        visible=True,
+    )
+    return tree.Node(**{**base, **kw})
+
+
+def test_a_caption_written_on_the_control_itself_is_read():
+    # iOS. The whole string is the button's own label, and a node is inside
+    # its own box.
+    button = box(text="Payer 10,00 €", bounds=(20, 790, 382, 840))
+
+    assert tree.caption([button], button) == "Payer 10,00 €"
+
+
+def test_a_caption_written_on_a_child_is_read():
+    # Android. `paycross.payButton` is an `android.view.View` whose own text
+    # is empty; the caption is on a `TextView` inside it, and both parsers
+    # flatten, so geometry is the only relationship left.
+    button = box(identifier="paycross.payButton", bounds=(0, 600, 400, 700))
+    label = box(text="Payer 10,00 €", bounds=(20, 620, 380, 680))
+
+    assert tree.caption([button, label], button) == "Payer 10,00 €"
+
+
+def test_text_outside_the_control_is_not_its_caption():
+    button = box(identifier="paycross.payButton", bounds=(0, 600, 400, 700))
+    elsewhere = box(text="Annuler", bounds=(0, 100, 400, 160))
+
+    assert tree.caption([elsewhere, button], button) == ""
+
+
+def test_a_control_that_is_not_in_this_tree_has_no_caption():
+    # A stale node, read from a dump the tree has moved past. Answering with
+    # whatever happens to sit at index 0 would be worse than answering nothing.
+    button = box(identifier="paycross.payButton", bounds=(0, 600, 400, 700))
+    label = box(text="Payer 10,00 €", bounds=(20, 620, 380, 680))
+
+    assert tree.caption([label], button) == ""
+
+
+def test_a_child_with_no_box_does_not_end_the_walk():
+    # A boxless node is inside nothing, so treating it as the end of the
+    # control's run would stop at the first invisible child and answer with no
+    # caption at all.
+    button = box(identifier="paycross.payButton", bounds=(0, 600, 400, 700))
+    boxless = box(text="", bounds=(0, 0, 0, 0))
+    label = box(text="Payer 10,00 €", bounds=(20, 620, 380, 680))
+
+    assert tree.caption([button, boxless, label], button) == "Payer 10,00 €"
+
+
+def test_a_label_scrolled_under_the_button_is_not_its_caption():
+    # Measured on the simulator 2026-09-08. Both sheets pin the Pay button
+    # under a scrolling form, and the contact field caption `Email address`
+    # sat INSIDE the button's bounds while belonging to the form. It comes
+    # earlier in the document, so walking forward from the button skips it --
+    # where "anything inside the box" would have answered with it.
+    label = box(text="Email address", bounds=(20, 477, 107, 494))
+    button = box(
+        identifier="paycross.payButton",
+        text="Payer 10,00 €",
+        bounds=(20, 448, 382, 498),
+    )
+
+    assert tree.caption([label, button], button) == "Payer 10,00 €"
+
+
+def test_the_walk_stops_where_the_control_ends():
+    # The node after a control's own run is the next sibling, not a child, and
+    # it is told apart by falling outside the box.
+    button = box(identifier="paycross.payButton", bounds=(0, 600, 400, 700))
+    after = box(text="Annuler", bounds=(0, 720, 400, 780))
+
+    assert tree.caption([button, after], button) == ""
+
+
+def test_a_flutter_widget_answers_through_its_description():
+    # Android surfaces a Flutter `Text` as `content-desc` with an empty
+    # `text`, which is the same rule `label_from_tree` follows.
+    button = box(bounds=(0, 600, 400, 700))
+    label = box(content_desc="Payer", bounds=(20, 620, 380, 680))
+
+    assert tree.caption([button, label], button) == "Payer"

@@ -30,11 +30,13 @@ from ..cells import Card
 def rig_path(name: str, default: str) -> str:
     """A rig constant, overridable from the environment.
 
-    Every path and host below this line is one workstation's: an adb that
-    lives in a Windows SDK directory, an ssh alias out of one ~/.ssh/config,
-    a Homebrew prefix. The defaults are this rig's and stay the documented
+    Every path and host below this line is one workstation's: a staging
+    directory on a Windows mount, an ssh alias out of one ~/.ssh/config, a
+    Homebrew prefix. The defaults are this rig's and stay the documented
     ones, but a second machine -- the nightly in #5, someone else's laptop --
-    must be able to move them without forking the driver.
+    must be able to move them without forking the driver. A default that
+    would have to spell out a home directory is not one: `adb.exe` is taken
+    off PATH instead, and the variable is how a rig points at its own.
 
     Empty is treated as unset: an exported-but-blank variable is a shell
     accident, and honouring it would swap a working path for nothing.
@@ -341,6 +343,9 @@ class Driver(ABC):
     def dont_keep_activities(self, on: bool) -> None:
         raise NotImplementedError("dont_keep_activities is a D3 action, Android only")
 
+    def device_language(self, tag: str) -> None:
+        raise NotImplementedError("device_language is a D6 action")
+
     def type_cvv(self, cvv: str) -> None:
         raise NotImplementedError(
             "type_cvv is a D5 action, for retyping a saved card's CVV"
@@ -381,3 +386,49 @@ class Driver(ABC):
 
     def wait_saved_card(self, timeout: float) -> bool:
         raise NotImplementedError("wait_saved_card is a D5 expectation")
+
+    def _pay_buttons(self, nodes: list[tree.Node]) -> list[tree.Node]:
+        """Whichever nodes in `nodes` are the sheet's Pay button.
+
+        A hook rather than one rule, because the platforms disagree about
+        which node that is: Android publishes `paycross.payButton` and nothing
+        else, while on iOS the button answered to `paycross.sheet` until
+        PayCross 0.7.1 and `drivers/ios` still carries the fallback. A list,
+        because a fallback can match more than one node and the caller reads
+        all of them.
+        """
+        raise NotImplementedError("this driver cannot name its Pay button")
+
+    def wait_french_sheet(self, timeout: float, *, interval: float = 2) -> bool:
+        """Whether the sheet is drawing the SDK's own copy in French.
+
+        Read off the Pay button, which is the one control on the sheet whose
+        caption is a whole SDK-drawn sentence rather than a field's contents or
+        a server-configured label. The contact fields are not usable for this:
+        their captions come from the merchant's field config, so they stay
+        English on a French sheet and always have.
+
+        The VERB and not the whole caption, and that is measured rather than
+        loose. The language the words are drawn in and the locale the amount is
+        punctuated with are resolved SEPARATELY -- `LocaleResolution` narrows
+        the language to what the SDK ships strings for and keeps the formatting
+        locale whole -- so a session naming a tag the SDK has no words for
+        draws `Payer` beside an amount that is not French at all. Matching the
+        whole caption would read that as English, which is the reading this
+        expectation exists to disprove.
+
+        One rule here rather than one per driver: what differs between the
+        platforms is which node the button is, and `_pay_buttons` is that.
+        """
+
+        def french(nodes: list[tree.Node]) -> bool | None:
+            for button in self._pay_buttons(nodes):
+                if tree.caption(nodes, button).startswith(tree.FRENCH_PAY_VERB):
+                    return True
+            # None rather than False: no Pay button yet is "not yet", and a
+            # sheet that is still composing has neither the button nor its
+            # caption. `_poll` answers None of its own when the deadline
+            # passes, which is what the False below the call is.
+            return None
+
+        return self._poll(french, timeout, interval) is True

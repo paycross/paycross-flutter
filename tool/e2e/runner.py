@@ -100,6 +100,10 @@ WALLET_ABSENT_TIMEOUT_SECONDS = 20
 #: only covers the sheet coming up at all.
 SAVED_CARD_TIMEOUT_SECONDS = 30
 
+#: The copy is drawn with the sheet, so this covers a frame arriving and not a
+#: round trip. The same 30 as the saved-card wait, for the same reason.
+FRENCH_SHEET_TIMEOUT_SECONDS = 30
+
 #: How long each `expect` predicate is given, in one place so the failure
 #: message can name the number the wait actually used.
 #:
@@ -123,6 +127,7 @@ EXPECT_TIMEOUT_SECONDS = {
     "google_pay": WALLET_TIMEOUT_SECONDS,
     "no_google_pay": WALLET_ABSENT_TIMEOUT_SECONDS,
     "saved_card": SAVED_CARD_TIMEOUT_SECONDS,
+    "french_sheet": FRENCH_SHEET_TIMEOUT_SECONDS,
 }
 
 #: The only verbs that run with the native sheet or the ACS page foreground,
@@ -235,6 +240,9 @@ VERB_BUDGET_SECONDS = {
     "rotate": 60,
     "airplane": 60,
     "dont_keep_activities": 60,
+    # A write, a settle and a read-back on Android; on iOS an assignment that
+    # touches no device at all. Sized for the slower of the two.
+    "device_language": 60,
     "kill_activity": 60,
 }
 DEFAULT_VERB_SECONDS = 120
@@ -538,6 +546,8 @@ def _observe(step: Step, what: str) -> tuple[bool, str | None]:
         return driver.wait_no_google_pay(timeout=timeout), None
     if what == "saved_card":
         return driver.wait_saved_card(timeout=timeout), None
+    if what == "french_sheet":
+        return driver.wait_french_sheet(timeout=timeout), None
     # Not dead, and not the same drift as the guard above: this one catches an
     # expectation that HAS a deadline and no branch. Falling off the end
     # instead would return None, which `run_cell` unpacks as a tuple.
@@ -561,13 +571,17 @@ def _teardown_left_undone(actions: Sequence[Action], reached: int) -> list[Actio
     Ordered by `TEARDOWN` rather than by the cell, because a cell holding two
     of these has no meaningful order between them -- they are independent
     device settings, not a stack.
+
+    "Changed it" is any argument but the restoring one, rather than the literal
+    `on` this used to look for. `device_language` has no `on`: every tag it
+    takes is a change, and `default` is the only argument that is not.
     """
-    ran = {(a.verb, a.arg) for a in actions[:reached]}
+    ran = [(a.verb, a.arg) for a in actions[:reached]]
     un_run = {(a.verb, a.arg) for a in actions[reached:]}
     return [
-        Action(verb, off)
-        for verb, off in sorted(TEARDOWN)
-        if (verb, "on") in ran and (verb, off) in un_run
+        Action(verb, restore)
+        for verb, restore in sorted(TEARDOWN)
+        if any(v == verb and a != restore for v, a in ran) and (verb, restore) in un_run
     ]
 
 
@@ -677,6 +691,8 @@ def _perform(step: Step, action: Action):
         driver.airplane(_on_or_off(verb, arg))
     elif verb == "dont_keep_activities":
         driver.dont_keep_activities(_on_or_off(verb, arg))
+    elif verb == "device_language":
+        driver.device_language(arg)
     elif verb == "kill_activity":
         driver.kill_activity()
     elif _grammar_accepts(verb, arg):

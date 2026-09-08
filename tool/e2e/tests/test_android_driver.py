@@ -173,7 +173,8 @@ def test_run_turns_a_timeout_into_a_driver_error(monkeypatch):
 
 
 def test_run_turns_a_missing_adb_into_a_driver_error(monkeypatch):
-    # adb.exe lives on the Windows side of a mount that is not always there.
+    # adb.exe is a Windows binary reached over a mount, and is not on every
+    # PATH that runs these tests.
     def explode(argv, **kwargs):
         raise FileNotFoundError(2, "No such file or directory", android.ADB)
 
@@ -1088,7 +1089,9 @@ def test_the_rig_paths_are_overridable_from_the_environment(monkeypatch):
 
 
 def test_the_rig_paths_fall_back_to_this_workstation():
-    assert android.ADB.endswith("adb.exe")
+    # adb is the exception: its fallback names no home directory, because a
+    # default that did would put one machine's account in a public repo.
+    assert android.ADB == "adb.exe"
     assert android.STAGING_DIR == "/mnt/c/dev/tmp"
     assert android.WINDOWS_STAGING == r"C:\dev\tmp"
 
@@ -1813,6 +1816,145 @@ def test_dont_keep_activities_refuses_a_setting_that_did_not_take():
         driver(shell).dont_keep_activities(True)
 
     assert "always_finish_activities reads '0'" in str(excinfo.value)
+
+
+# -- the per-app locale: the write, the read-back, and what it refuses --------
+#
+# Every string below is what the rig's emulator (API 35) really answered on
+# 2026-09-07. The write side reports nothing whether it worked or not, so the
+# read-back is the only evidence there is that a language reached the app --
+# which is the gap flutter#60 was filed for.
+
+SET_FR = "shell cmd locale set-app-locales com.paycross.flutterdemo --locales 'fr'"
+GET = "shell cmd locale get-app-locales com.paycross.flutterdemo"
+
+
+def said(*tags: str) -> str:
+    return f"Locales for com.paycross.flutterdemo for user 0 are [{','.join(tags)}]\n"
+
+
+def test_the_read_back_parses_the_list_the_device_names():
+    assert android.parse_app_locales(said("fr-FR")) == ["fr-FR"]
+    assert android.parse_app_locales(said("fr", "en-US")) == ["fr", "en-US"]
+
+
+def test_an_empty_list_is_an_answer_and_not_a_failure():
+    # `[]` is the app having no locale of its own, which is a real state and
+    # the one the teardown restores. It must not read the same as "adb said
+    # something this parser does not know", or a cleared locale would raise.
+    assert android.parse_app_locales(said()) == []
+
+
+def test_the_read_back_refuses_anything_that_is_not_a_list():
+    # What the device answers for a package it does not hold -- with a ZERO
+    # exit, so nothing but the shape of the answer can tell.
+    with pytest.raises(DriverError) as excinfo:
+        android.parse_app_locales(
+            "Unknown package com.paycross.flutterdemo for userId 0\n"
+        )
+
+    assert "cmd locale get-app-locales" in str(excinfo.value)
+    assert "Unknown package" in str(excinfo.value)
+
+
+def test_device_language_writes_the_tag_and_reads_it_back():
+    shell = FakeShell("", said("fr"))
+    naps = []
+
+    driver(shell, naps).device_language("fr")
+
+    assert shell.argv_text() == [SET_FR, GET]
+    assert naps == [android.SETTLE_SECONDS]
+
+
+def test_device_language_default_clears_the_list():
+    # The teardown. An empty `--locales` is how `cmd locale` is told to forget
+    # the app's own language, and `[]` is what it then reports.
+    shell = FakeShell("", said())
+
+    driver(shell).device_language("default")
+
+    assert shell.argv_text() == [
+        "shell cmd locale set-app-locales com.paycross.flutterdemo --locales ''",
+        GET,
+    ]
+
+
+def test_device_language_refuses_a_write_that_did_not_take():
+    # The whole reason the read-back exists. `set-app-locales` prints nothing
+    # when it worked and nothing when it silently did not, so without this the
+    # cell measures the device rung against a device whose language never
+    # changed -- and reports the English sheet as an SDK finding.
+    shell = FakeShell("", said())
+
+    with pytest.raises(DriverError) as excinfo:
+        driver(shell).device_language("fr")
+
+    message = str(excinfo.value)
+    assert "read [] after asking for ['fr']" in message
+    # And it names the command, so whoever reads this can run it by hand.
+    assert "cmd locale set-app-locales com.paycross.flutterdemo" in message
+
+
+def test_device_language_accepts_the_regions_case_as_the_device_spells_it():
+    # The system stores back what it was given rather than a canonical form,
+    # and a device that answered `FR-fr` for `fr-FR` has done what was asked.
+    shell = FakeShell("", said("FR-fr"))
+
+    driver(shell).device_language("fr-FR")
+
+
+def test_device_language_refuses_a_device_that_will_not_say():
+    shell = FakeShell("", "error: device offline\n")
+
+    with pytest.raises(DriverError):
+        driver(shell).device_language("fr")
+
+
+# -- the French sheet, read off the Pay button --------------------------------
+
+
+def pay_button(caption: str) -> str:
+    """The Pay button as a real dump holds it: a `View` with no text of its
+    own, and a child `TextView` inside its box carrying the caption."""
+    return (
+        "<hierarchy>"
+        '<node class="android.view.View" resource-id="paycross.payButton"'
+        ' text="" content-desc="" bounds="[0,600][400,700]"/>'
+        f'<node class="android.widget.TextView" text="{caption}"'
+        ' content-desc="" bounds="[20,620][380,680]"/>'
+        "</hierarchy>"
+    )
+
+
+def test_the_sheet_is_french_when_the_pay_button_says_payer():
+    shell = FakeShell(tree=pay_button("Payer 10,00 €"))
+
+    assert driver(shell).wait_french_sheet(timeout=0) is True
+
+
+def test_the_sheet_is_french_even_when_the_amount_is_not():
+    # The case this expectation exists for. A session naming a tag the SDK
+    # ships no words for falls to the device for its LANGUAGE and keeps that
+    # tag for its FORMATTING, so the words are French and the amount is not.
+    # Matching the whole caption would call this English.
+    shell = FakeShell(tree=pay_button("Payer € 10.00"))
+
+    assert driver(shell).wait_french_sheet(timeout=0) is True
+
+
+def test_the_sheet_is_not_french_when_the_pay_button_says_pay():
+    shell = FakeShell(tree=pay_button("Pay €10.00"))
+
+    assert driver(shell).wait_french_sheet(timeout=0) is False
+
+
+def test_the_sheet_is_not_french_when_there_is_no_pay_button_at_all():
+    # A spinner, a challenge page, the example's own screen: no button, no
+    # answer, and the expectation is a cell failure rather than a crash.
+    shell = FakeShell(tree="<hierarchy></hierarchy>")
+
+    assert driver(shell).wait_french_sheet(timeout=0) is False
 
 
 def test_launch_refuses_a_device_left_not_keeping_activities():
