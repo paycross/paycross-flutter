@@ -2010,7 +2010,7 @@ def test_paste_token_hands_off_to_the_sheet_once_the_field_has_taken_it(tmp_path
 
     # Paste out of the long-press menu, then the example's own Pay button --
     # which is untagged, so it matches on the name WDA falls back to.
-    assert tapped == ["Paste", "Pay"]
+    assert tapped == [ios.PASTE_ITEM, "Pay"]
 
 
 def test_paste_token_waits_for_the_sheet_that_the_example_pay_opens(
@@ -2503,6 +2503,40 @@ def test_launch_no_longer_reads_or_refuses_a_locale():
     assert not any("AppleLocale" in call for call in ssh.calls)
 
 
+def menu_item(name: str) -> tree.Node:
+    """One edit-menu item as WebDriverAgent describes it."""
+    return tree.parse_wda(
+        f'<XCUIElementTypeMenuItem type="XCUIElementTypeMenuItem" name="{name}" '
+        f'label="{name}" x="0" y="0" width="80" height="40" visible="true"/>'
+    )[0]
+
+
+def test_the_paste_item_is_matched_in_every_language_the_app_can_run_in():
+    # UIKit's edit menu is localized by the APP's language. Matched in English
+    # alone it took the driver with it: a demo launched with
+    # `-AppleLanguages "(fr)"` offers `Coller`, and `paste_token` failed there
+    # with "no element named 'Paste'" before any cell reached the sheet.
+    # Measured on the simulator 2026-09-08.
+    assert ios._is_paste_item(menu_item("Paste"))
+    assert ios._is_paste_item(menu_item("Coller"))
+    # The item beside it in the French menu, which is not a paste.
+    assert not ios._is_paste_item(menu_item("Scanner du texte"))
+    # And a failure names both, because "no element named 'Paste'" on a French
+    # simulator is a true sentence that sends the reader the wrong way.
+    assert ios.PASTE_ITEM == "Paste/Coller"
+
+
+def test_the_demos_own_strings_do_not_move_with_the_device_language():
+    # The rule is which side of the app boundary drew the string. The demo
+    # ships no localizations, so its token field and its Pay button stay
+    # English on a French device -- confirmed by the same probe that found
+    # `Coller`. Pinned here because the obvious over-correction after that
+    # finding is to start matching these in French too, and then nothing
+    # matches at all.
+    assert ios.TOKEN_FIELD == "Session token"
+    assert ios.EXAMPLE_PAY == "Pay"
+
+
 def test_wait_rearmed_blames_the_rig_for_an_amount_it_cannot_spell():
     # The replacement for the guard. A French sheet reads `10,00 €` where the
     # runner computes `€10.00`, and answering False there would report "the
@@ -2559,7 +2593,7 @@ def test_present_token_does_not_wait_for_a_sheet_that_will_never_open(
 
     d.present_token(token_file(tmp_path))
 
-    assert tapped == ["Paste", "Pay"]
+    assert tapped == [ios.PASTE_ITEM, "Pay"]
     # And the same screen still fails `paste_token`, which is the difference.
     other = driver(FakeSsh(xml=no_sheet))
     other.tap_identifier = lambda name, **kw: None

@@ -152,7 +152,29 @@ CANCEL_DISMISS = "paycross.cancelDismiss"
 REMOVE_DIALOG = "paycross.removeDialog"
 REMOVE_CONFIRM = "paycross.removeConfirm"
 
-PASTE_ITEM = "Paste"
+#: The system's Paste, in every language a cell can put the app in.
+#:
+#: This is UIKit's own edit menu rather than anything the demo draws, so it is
+#: localized by the APP's language. Matched in English alone it took the driver
+#: with it: a demo launched with `-AppleLanguages "(fr)"` offers `Coller`, and
+#: `paste_token` failed there with "no element named 'Paste'" before any cell
+#: reached the sheet. Measured on the simulator 2026-09-08.
+#:
+#: The demo's OWN strings do not move with it -- it ships no localizations, so
+#: `TOKEN_FIELD` and `EXAMPLE_PAY` stay English on a French device, which the
+#: same probe confirmed. The rule is which side of the app boundary drew the
+#: string, not whether the device is in English.
+#:
+#: A language added to the SDK adds a spelling here. That is the same standing
+#: cost `GOOGLE_PAY_DESC` carries on Android for the same reason: a platform
+#: string is the platform's to translate.
+PASTE_ITEMS = ("Paste", "Coller")
+
+#: What a failure to find it is reported as, which is every spelling that was
+#: looked for. "no element named 'Paste'" on a French simulator is a true
+#: sentence that sends the reader looking for the wrong bug.
+PASTE_ITEM = "/".join(PASTE_ITEMS)
+
 TOKEN_FIELD = "Session token"
 EXAMPLE_PAY = "Pay"
 
@@ -283,6 +305,11 @@ def _is_token_field(node: tree.Node) -> bool:
     """
     name = node.identifier or node.content_desc
     return name == TOKEN_FIELD or name.startswith(TOKEN_FIELD + "\n")
+
+
+def _is_paste_item(node: tree.Node) -> bool:
+    """The edit menu's Paste, whichever language the app is running in."""
+    return (node.identifier or node.content_desc) in PASTE_ITEMS
 
 
 def _ssh(command: str, *, stdin: bytes | None = None) -> str:
@@ -827,13 +854,21 @@ class IosDriver(Driver):
         timeout: float = 30,
         interval: float = POLL_INTERVAL_SECONDS,
         identifier_only: bool = False,
+        match: Callable[[tree.Node], bool] | None = None,
     ) -> None:
+        """`match` replaces the name comparison; `name` stays what is reported.
+
+        The same split `_find` already makes, carried one level up so the
+        paste item can be matched in more than one language while a failure
+        still names what was looked for rather than a lambda.
+        """
         self._tap_node(
             self._find(
                 name,
                 timeout=timeout,
                 interval=interval,
                 identifier_only=identifier_only,
+                match=match,
             )
         )
 
@@ -1082,7 +1117,7 @@ class IosDriver(Driver):
                 {"x": float(x), "y": float(y), "duration": 1.2},
             )
             self._sleep(PASTE_SETTLE_SECONDS)
-            self.tap_identifier(PASTE_ITEM, timeout=15)
+            self.tap_identifier(PASTE_ITEM, timeout=15, match=_is_paste_item)
         finally:
             # The token outlives nothing: not the paste, not a failure.
             self._remote(f"xcrun simctl pbcopy {self._quoted_udid}", stdin=b" ")
@@ -1101,7 +1136,7 @@ class IosDriver(Driver):
         if self._poll(took, TOKEN_READBACK_SECONDS, SETTLE_SECONDS) is None:
             raise DriverError(
                 f"the {TOKEN_FIELD!r} field is still empty after the paste; the "
-                "pasteboard or the Paste item did not take"
+                "pasteboard or the paste item did not take"
             )
 
     def paste_token(self, token_path: Path) -> None:
