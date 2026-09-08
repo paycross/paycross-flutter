@@ -462,6 +462,7 @@ Things worth knowing before you write an expectation:
 | `rotate` | a quarter turn, and it stays turned — a cell must turn back (D3) |
 | `kill_activity` | ends the app's process, sheet and all — the stand-in for a low-memory kill (D3) |
 | `dont_keep_activities on\|off` | the developer option, read back after writing. **Android only** (D3) |
+| `device_language <tag>\|default` | sets the languages the **app** sees, and the cell must `relaunch` next. `default` puts the device back (D6) |
 
 Each `expect` argument has its own deadline, and a falsy answer fails the cell
 naming the expectation and the number the wait really used:
@@ -474,6 +475,18 @@ naming the expectation and the number the wait really used:
 | `google_pay` | the wallet button (D4) | 30 s |
 | `no_google_pay` | no wallet button. Waited **out**, not for | 20 s |
 | `saved_card` | a stored card on the sheet (D5) | 30 s |
+| `french_sheet` | the sheet's Pay button drawing the French verb `Payer` (D6) | 30 s |
+
+**`expect french_sheet` reads one word, on purpose.** It looks at the Pay
+button's caption, which is the only control on the sheet whose text is a whole
+SDK-drawn sentence — the contact fields' captions come from the merchant's
+field config and stay English on a French sheet. It matches the VERB rather
+than the whole caption because the language the words are drawn in and the
+locale the amount is punctuated with are resolved **separately**: the language
+is narrowed to what the SDK ships strings for and the formatting locale is kept
+whole, so a session naming a tag the SDK has no words for draws `Payer` beside
+an amount that is not French at all. Matching the whole caption would read that
+as English.
 
 **The Google Pay button's handle belongs to Google.** `tap_google_pay`,
 `expect google_pay` and `expect no_google_pay` all match
@@ -635,11 +648,18 @@ Two platform differences the drivers hide, both measured rather than assumed:
 
 ### Rig guards, and putting a cell's toys away
 
-`airplane on` and `dont_keep_activities on` change the **device**, not the app,
-and the device undoes neither: not at the end of the cell, not on a failure,
-not when the process exits. Left on, they fail every cell that follows —
-including the interleaved control, so the run aborts as a rig fault after two
-of them.
+`airplane on`, `dont_keep_activities on` and `device_language <tag>` change the
+**device**, not the app, and the device undoes none of them: not at the end of
+the cell, not on a failure, not when the process exits. Left set, the first two
+fail every cell that follows — including the interleaved control, so the run
+aborts as a rig fault after two of them — and the third quietly draws every
+later sheet in the language this cell asked for.
+
+`cells.TEARDOWN` pairs each of these verbs with the argument that **restores**
+it, which is why the rule is written that way rather than as an `on`/`off`
+pair: `device_language` has no `on`, and every tag but `default` is a change.
+`cell_rules` refuses a cell that changes one without declaring the restore, and
+`run_cell` replays the restore when a cell dies before reaching its own.
 
 **`rotate` is the third of these and does not fit the same shape.** Orientation
 outlives the cell on both platforms — `user_rotation` is a global setting on
@@ -757,6 +777,17 @@ Two other defines are read, both passed to `PayCross.configure` when non-empty:
   A session can ask for the language instead of the build: `locale` is a
   top-level field of the create-session request, and it is what `d6`'s
   `french_session` cell uses. The build-time define wins over it.
+
+  **The third rung — the device's own language — needs a session tag the SDKs
+  ship no words for.** Core DEFAULTS a session's `locale` to `en`, so a mint
+  body naming none still comes back carrying one, and the session rung sits
+  above the device rung. `zz` is well-formed and matches nothing, so the ladder
+  falls through it to the device; an empty `locale` is not the way, because the
+  API answers 400. That is what `d6`'s `french_device` cell mints, and
+  `device_language fr` is what puts the language on the device: the app's own
+  locale list on Android, a launch argument on iOS. Neither reaches a running
+  app, so the cell relaunches straight after and `cell_rules` refuses one that
+  does not.
 
   The automation screen itself is untouched by this. It is frozen, it renders
   no copy from the SDK, and its outcome label is the same string in both
@@ -959,6 +990,7 @@ in the code's ambitions.
 | Screenshots | captured, but black (`FLAG_SECURE`) | **none at all** — the guard refuses every frame |
 | Foreground check | `dumpsys window`, one adb call | `GET /wda/activeAppInfo`, unsessioned — **not** `/source`'s root, whose `name` is the app's display name |
 | `dont_keep_activities` | the developer option, written and read back | raises: there is no activity to not keep |
+| `device_language` | `cmd locale set-app-locales`, read back with `get-app-locales`. The system language cannot be touched at all: the emulator is a production image, so `setprop persist.sys.locale` is refused and there is no `adb root` | a `-AppleLanguages "(fr)"` launch argument, which writes nothing. `AppleLanguages` through any `UserDefaults` is a **global**-domain key and would relocalize the whole simulator |
 | Settle after HOME / rotate | 3 s | 2 s — a simulator settles faster than an emulator |
 | Device log window | `logcat -t <cutoff>`, computed **on the device** | `log show --last <n>s`, anchored to `launch()` and capped at an hour |
 

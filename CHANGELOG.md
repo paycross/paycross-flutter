@@ -1,3 +1,27 @@
+## Unreleased
+
+Demo and E2E runner only. No Dart API change, and `lib/` is untouched.
+
+* The example app declares `CFBundleLocalizations` — `en` and `fr` — in its iOS
+  `Info.plist`. It ships no `.lproj` folder for either and needs none: the key
+  is a declaration, and the SDK carries its own French strings inside its own
+  bundle. What it buys is the demo's own `Locale.current`, and it is what a
+  merchant app integrating the SDK will want for the same reason.
+* The E2E runner can put a device in another language and prove that it took.
+  `device_language <tag>` writes the app's own locale list on Android and reads
+  it back — `cmd locale set-app-locales` reports nothing at all whether it
+  worked or not — and passes the list as a launch argument on iOS. `default`
+  puts the device back, and the runner replays that for a cell that died
+  holding it.
+* A cell can assert that the sheet reads in French: `expect french_sheet` looks
+  at the Pay button's caption for the French verb. The D6 dimension gains
+  `french_device`, which mints a session naming a language neither SDK ships so
+  the ladder falls past it to the device, and `french_session` now asserts the
+  copy it only used to pay through.
+* The iOS driver matches the system's paste item in French as well as English.
+  It is UIKit's edit menu rather than anything the demo draws, so it moves with
+  the app's language and took `paste_token` with it.
+
 ## 0.7.1
 
 Pins the native patch releases paycross-android 0.8.1 and PayCross 0.7.1: every
