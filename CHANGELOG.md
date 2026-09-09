@@ -1,3 +1,15 @@
+## Unreleased
+
+Demo only. No Dart API change, and `lib/` is untouched.
+
+* The demo app is 0.1.14. Nothing in the app itself changed. The release exists
+  so a tester on the internal track drives the sheet from plugin 0.7.2, and so
+  the first built demo carrying paycross-android 0.8.3 and PayCross 0.7.2 is a
+  signed one: a merchant's own field labels, placeholders, select options and
+  validation messages drawn in the language the sheet resolved, and an Android
+  wallet tap that no longer marks the card fields invalid. Every demo before it
+  ran the sheet from 0.8.1 and 0.7.1.
+
 ## 0.7.2
 
 Pins the native releases paycross-android 0.8.3 and PayCross 0.7.2. No Dart API
