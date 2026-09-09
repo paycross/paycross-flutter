@@ -1,4 +1,4 @@
-## Unreleased
+## 0.7.2
 
 Pins the native releases paycross-android 0.8.3 and PayCross 0.7.2. No Dart API
 change, and `lib/` is untouched; everything below the native bullets is the demo
