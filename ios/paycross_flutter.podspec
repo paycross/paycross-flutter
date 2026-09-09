@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'paycross_flutter'
-  s.version          = '0.7.1'
+  s.version          = '0.7.2'
   s.summary          = 'PayCross payment SDK for Flutter.'
   s.description      = <<-DESC
     Presents the native PayCross payment sheet from Flutter: card entry, 3-D
