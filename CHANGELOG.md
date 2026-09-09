@@ -1,7 +1,37 @@
 ## Unreleased
 
-Demo only. No Dart API change, and `lib/` is untouched.
+Pins the native releases paycross-android 0.8.4 and PayCross 0.7.3. No Dart API
+change, and `lib/` is untouched.
 
+* A required merchant field says so. Android draws ` *` after its label, the
+  marker the hosted checkout page and the iOS sheet already drew, so a required
+  `Email address` no longer looks exactly like an optional `Phone number` until
+  the shopper taps Pay. A field another field's value makes required gains the
+  marker when that condition is met. The asterisk is for the eye only: a screen
+  reader is told the field is required instead, in words, because an assistive
+  technology either skips a `*` or spells it out.
+* Every field on the sheet says its own name to a screen reader. A field's
+  heading is drawn on its own line above the control, and nothing tied the two
+  together, so the control fell back to announcing the example text inside it —
+  the billing line said `123 Main St`, the card number read out a specimen
+  number, the security code said three bullets, and a field the session sends no
+  placeholder for said nothing identifying at all. Each control now carries its
+  heading as its accessible name, in the sheet's language, and its validation
+  message as the control's own error. On iOS the drawn heading is hidden from
+  assistive technologies in the same move, or every field on the form would be
+  read out twice.
+* A select draws the placeholder the payment session sent for it. The prompt
+  configured for a select is usually real copy rather than a format example, and
+  often the only genuinely translated string on the form, but it never reached
+  the field: Android showed an empty box, iOS a hardcoded em dash. It is drawn
+  in the sheet's language while nothing is chosen and gives way to the chosen
+  option's label. A select the session sends no placeholder for, or an empty
+  one, keeps the dash. Nothing about selection, validation or what is submitted
+  changes.
+* Android checks a field's configured maximum length before the sheet submits,
+  and reports the merchant's own message for that rule in the sheet's language,
+  falling back to a translated SDK sentence when the merchant wrote none. A long
+  paste is refused with a message rather than silently cut short as it is typed.
 * The demo app is 0.1.14. Nothing in the app itself changed. The release exists
   so a tester on the internal track drives the sheet from plugin 0.7.2, and so
   the first built demo carrying paycross-android 0.8.3 and PayCross 0.7.2 is a
