@@ -1,7 +1,31 @@
 ## Unreleased
 
-Demo and E2E runner only. No Dart API change, and `lib/` is untouched.
+Pins the native releases paycross-android 0.8.3 and PayCross 0.7.2. No Dart API
+change, and `lib/` is untouched; everything below the native bullets is the demo
+and the E2E runner.
 
+* A merchant's own server-driven fields are drawn in the sheet's language. The
+  group heading, each field's label and placeholder, each select option and each
+  of a field's validation messages come from the payment session, and both
+  sheets drew them in the language the session was minted for — so a French
+  shopper met an English `Billing address` under French chrome. The session now
+  carries each of those strings in every language the checkout API renders,
+  keyed by language tag, beside the single value it always sent, and the sheet
+  reads the entry for the language it already resolved for its own copy. Nothing
+  is translated on the device. A session carrying only that single value, which
+  is every session minted before the API change and there are live ones, draws
+  exactly what it drew before. The plugin hands the sheet a `locale` and renders
+  none of these strings itself, so a merchant gets this by taking the release:
+  no code change, no new option.
+* Tapping Google Pay on Android no longer marks the card fields invalid. One
+  flag revealed validation for both of the sheet's validated surfaces, so the
+  wallet tap drew the card number, expiry, CVV and cardholder name in error — a
+  form the shopper had not typed in, and one the wallet branch never submits.
+  Each surface has its own flag now.
+* The Android SDK is MIT-licensed from 0.8.2, matching this plugin and the iOS
+  SDK. It was proprietary and all-rights-reserved while its sources shipped to
+  Maven Central. Artifacts published before 0.8.2 keep the old licence block,
+  because a coordinate on Central is permanent.
 * The example app declares `CFBundleLocalizations` — `en` and `fr` — in its iOS
   `Info.plist`. It ships no `.lproj` folder for either and needs none: the key
   is a declaration, and the SDK carries its own French strings inside its own
