@@ -26,6 +26,3 @@ key.properties
 *.jks
 *.p12
 *.keystore
-
-# Composed in CI by the changelog sync.
-.sync/
