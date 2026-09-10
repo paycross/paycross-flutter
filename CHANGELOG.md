@@ -1,5 +1,63 @@
 ## Unreleased
 
+## 0.7.4
+
+Pins the native releases paycross-android 0.8.5 and PayCross 0.8.0. No Dart API
+change, and `lib/` is untouched.
+
+* A payment session can now offer a field group instead of demanding it, and
+  both sheets honour it. A group the session marks as opt-in is drawn as a
+  toggle captioned by the group's own heading, off to begin with. While it is
+  off the group's fields are not drawn, not validated, and left out of the
+  submission entirely rather than sent as an empty object — a value the session
+  prefilled the group with is dropped too, because the shopper never asked for
+  the group. Turning it on makes the group behave exactly like any other. This
+  is what a merchant means by "ship to a different address": until now a
+  shipping group whose fields were required left every shopper either filling in
+  a complete address or unable to pay at all, with no control anywhere on the
+  sheet to decline it. A session that marks no group is unchanged in every
+  respect, on both platforms, so nothing moves for a merchant who does not use
+  opt-in groups and nothing moves against a backend that does not send the flag.
+  The toggle carries the test identifier `paycross.group.<group key>.optIn` on
+  both platforms, for a merchant's own UI tests.
+* A read-only field stops looking like one the shopper can type in. A field the
+  session locks was drawn with the same fill, border and text colour as the
+  editable field beside it, so the only way to find out it was locked was to tap
+  it and watch nothing happen. Both sheets now draw a locked field on a muted
+  ground, derived from the appearance system so a themed sheet mutes into the
+  merchant's own palette rather than dropping a grey box into a branded form,
+  and the value itself stays at full strength because it is the reason the field
+  is on the form. A locked field with no value no longer draws its placeholder
+  either: a grey `New York` in a box nothing can be typed into reads as a city
+  the merchant filled in rather than as an example. Android also announces the
+  field as one that cannot be written to, which it previously announced as
+  ordinary and editable; one consequence there is that a locked value can no
+  longer be selected and copied.
+* Android draws a select's prompt before the shopper touches it. The prompt the
+  session sends reached the field only through a slot the platform paints over a
+  field that is both empty and focused, and a select can never be both, because
+  tapping one opens the picker — so the prompt appeared only after the shopper
+  had already seen the options they no longer needed prompting to open. It is
+  now the field's own text from the moment the form is drawn, in the sheet's
+  language, giving way to the chosen option's label, and drawn in the
+  placeholder's colour so a select nobody has answered does not read as
+  answered. Nothing is submitted for a select showing its prompt.
+* Android card fields say what is wrong with them. An invalid card number,
+  expiry, security code or cardholder name marked itself with a red outline and
+  nothing else, which says nothing to a screen reader and does not separate an
+  empty expiry from an impossible month. Each now draws a sentence under the
+  field and carries the same sentence as the field's own error, in the sheet's
+  language. The merchant's own fields on the same sheet have done this since
+  paycross-android 0.8.4; the card fields now match them.
+* iOS reports a value longer than the field's configured maximum instead of
+  silently cutting it off. The sheet trimmed what the shopper typed on every
+  keystroke, so a long address lost its end with nothing said, and a merchant's
+  own "too long" sentence could never appear because no value ever got long
+  enough to fail. The limit is checked when Pay is pressed and the message is
+  the one the session sent for that field in the sheet's language, falling back
+  to a translated SDK sentence naming the field and the limit. Android and the
+  hosted checkout page already behaved this way, so the three now agree.
+
 ## 0.7.3
 
 Pins the native releases paycross-android 0.8.4 and PayCross 0.7.3. No Dart API
