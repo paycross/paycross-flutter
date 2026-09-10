@@ -43,7 +43,7 @@ The [example app](example/lib/main.dart) is this quickstart as a runnable screen
 - **[API reference](https://pub.dev/documentation/paycross_flutter/latest/)** on
   pub.dev.
 - **[Changelog](https://developers.pay-cross.com/resources/changelogs/flutter/)** —
-  mirrored from [`CHANGELOG.md`](CHANGELOG.md).
+  built from this repo's [`CHANGELOG.md`](CHANGELOG.md) at the latest released version.
 - **[Support](https://developers.pay-cross.com/resources/support/)** — questions go to support@pay-cross.com.
 
 ## Contributing and security
