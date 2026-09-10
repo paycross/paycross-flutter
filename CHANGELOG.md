@@ -1,5 +1,13 @@
 ## Unreleased
 
+* The demo app is 0.1.15, running the sheet from plugin 0.7.4. Nothing in the
+  app itself changed. The release exists so a tester on the internal track meets
+  the sheet the way a shopper will: a shipping address the shopper can decline
+  instead of being made to invent one, card fields that say what is wrong with
+  them rather than only turning red, and a country select that shows what it is
+  asking for before it is opened. Every demo before it ran the sheet from
+  paycross-android 0.8.4 and PayCross 0.7.3.
+
 ## 0.7.4
 
 Pins the native releases paycross-android 0.8.5 and PayCross 0.8.0. No Dart API
