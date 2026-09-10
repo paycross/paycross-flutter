@@ -64,7 +64,7 @@ Widget _app({
     present: present ?? (_) async => _approved(),
     history: history ?? HistoryStore(backend: InMemoryHistoryBackend()),
     readVersions: () async =>
-        (demo: '0.1.14+1', plugin: '0.7.4', nativeSdk: 'unknown'),
+        (demo: '0.1.15+1', plugin: '0.7.4', nativeSdk: 'unknown'),
     now: () => DateTime.fromMillisecondsSinceEpoch(1757200000000),
   ),
 );
@@ -284,7 +284,7 @@ void main() {
               present: (_) async => _approved(),
               history: HistoryStore(backend: InMemoryHistoryBackend()),
               readVersions: () async =>
-                  (demo: '0.1.14+1', plugin: '0.7.4', nativeSdk: 'unknown'),
+                  (demo: '0.1.15+1', plugin: '0.7.4', nativeSdk: 'unknown'),
               now: () => DateTime.fromMillisecondsSinceEpoch(1757200000000),
             ),
           ),
@@ -320,7 +320,7 @@ void main() {
               present: (_) async => _approved(),
               history: HistoryStore(backend: InMemoryHistoryBackend()),
               readVersions: () async =>
-                  (demo: '0.1.14+1', plugin: '0.7.4', nativeSdk: 'unknown'),
+                  (demo: '0.1.15+1', plugin: '0.7.4', nativeSdk: 'unknown'),
               now: () => DateTime.fromMillisecondsSinceEpoch(1757200000000),
             ),
           ),
