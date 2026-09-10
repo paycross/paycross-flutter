@@ -11,16 +11,48 @@ name: Publish to pub.dev
 # otherwise. demo-v* tags belong to demo-release.yml and do not match this
 # pattern, so the two never fire together.
 #
-# The reusable workflow installs both the Dart and Flutter SDKs, runs
-# `dart pub get`, a `--dry-run`, then `dart pub publish -f`.
+# Written out rather than calling dart-lang/setup-dart's reusable publish.yml,
+# which this copies step for step at the same pinned SHAs. The one change is
+# where the token is registered: pub sends it on the plain version-listing
+# request as well as on the upload, so a token pub.dev will not accept fails
+# resolution with `depends on <package> <version> which doesn't match any
+# versions` — an error naming an innocent dependency and never mentioning auth.
+# So the token is removed for the resolution and the dry run, which need no
+# credentials, and added back immediately before the upload, which does.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 jobs:
   publish:
+    name: Publish to pub.dev
+    environment: pub.dev
     permissions:
       id-token: write # pub.dev authenticates the run through GitHub's OIDC token
-    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
-    with:
-      environment: pub.dev
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # Exchanges the OIDC token for PUB_TOKEN and registers it with pub. Its
+      # `dart` is shadowed by the Flutter SDK's below; both read the same token
+      # store, so removing and re-adding works whichever one is on PATH.
+      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1
+
+      # The dart binary from a Flutter SDK publishes Flutter and pure-Dart
+      # packages alike, and is the one that can resolve this package at all.
+      - uses: flutter-actions/setup-flutter@6e2468fd827c4a7337cd4b835a6049b78bc0bd1f
+
+      - name: Unregister the token while resolving
+        run: dart pub token remove https://pub.dev
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Publish - dry run
+        run: dart pub publish --dry-run
+
+      - name: Register the token for the upload
+        run: dart pub token add https://pub.dev --env-var PUB_TOKEN
+
+      - name: Publish to pub.dev
+        run: dart pub publish -f
