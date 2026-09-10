@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'paycross_flutter'
-  s.version          = '0.7.3'
+  s.version          = '0.7.4'
   s.summary          = 'PayCross payment SDK for Flutter.'
   s.description      = <<-DESC
     Presents the native PayCross payment sheet from Flutter: card entry, 3-D
@@ -27,7 +27,7 @@ Pod::Spec.new do |s|
   }
 
   s.dependency 'Flutter'
-  s.dependency 'PayCross', '0.7.3'
+  s.dependency 'PayCross', '0.8.0'
 
   # 16.0, not the template's 13.0: PayCross declares platforms: [.iOS(.v16)],
   # and CocoaPods surfaces that mismatch as an opaque resolution failure rather
