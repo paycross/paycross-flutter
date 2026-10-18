@@ -129,8 +129,8 @@ jobs:
       - name: No mavenLocal reaches a merchant
         run: |
           set -euo pipefail
-          if grep -rn "mavenLocal" android/build.gradle.kts; then
-            echo "::error::the plugin's own Gradle config must not depend on mavenLocal"
+          if grep -rn "mavenLocal" android/build.gradle.kts example/android/build.gradle.kts example/android/settings.gradle.kts; then
+            echo "::error::neither the plugin nor the example may depend on mavenLocal"
             exit 1
           fi
           echo "ok"
