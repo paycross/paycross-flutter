@@ -36,7 +36,7 @@ jobs:
       # Exchanges the OIDC token for PUB_TOKEN and registers it with pub. Its
       # `dart` is shadowed by the Flutter SDK's below; both read the same token
       # store, so removing and re-adding works whichever one is on PATH.
-      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d
 
       # The dart binary from a Flutter SDK publishes Flutter and pure-Dart
       # packages alike, and is the one that can resolve this package at all.
