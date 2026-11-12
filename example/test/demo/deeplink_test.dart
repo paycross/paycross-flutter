@@ -30,9 +30,6 @@ void main() {
     });
 
     test("the native demo's scheme is not ours and is ignored", () {
-      // com.paycross.demo owns paycross-demo://run and ://result and lives
-      // on the same phones. Answering one of its links would be worse than
-      // ignoring it.
       expect(
         parseDeepLink(Uri.parse('paycross-demo://run?scenario=x')),
         isA<DeepLinkIgnored>(),
@@ -65,10 +62,6 @@ void main() {
     });
 
     test('Custom is refused rather than silently ignored', () {
-      // The one preset Home offers that is not in `demoPresets`: it opens the
-      // editor because nobody but the person typing knows what body it should
-      // carry, and a link cannot answer that. Refusing by name is what makes
-      // the refusal say so on screen instead of the link doing nothing at all.
       final parsed = parseDeepLink(
         Uri.parse('paycross-flutter-demo://run?preset=${customPreset.name}'),
       );
@@ -101,9 +94,6 @@ void main() {
     });
 
     test('an arrow preset survives being percent-encoded by hand', () {
-      // U+2192 is E2 86 92 in UTF-8. This is what comes out of a shell when
-      // somebody pastes the name off the screen, and it has to reach the
-      // same preset the slug does.
       final parsed = parseDeepLink(
         Uri.parse(
           'paycross-flutter-demo://run'
@@ -133,12 +123,8 @@ void main() {
     });
 
     test('no two presets share a slug', () {
-      // Two that did would make one of them unreachable by slug, and which
-      // one won would depend on the order of the list.
       final slugs = [for (final p in demoPresets) presetSlug(p.name)];
 
-      // An empty slug would also match every degenerate link, so a preset
-      // whose name slugifies away is a collision with all of them at once.
       expect(slugs, everyElement(isNotEmpty));
       expect(slugs.toSet(), hasLength(slugs.length));
     });
@@ -161,8 +147,6 @@ void main() {
         environment: DemoEnvironment.live,
       );
 
-      // Rejected, never ignored: a link that quietly did nothing reads as a
-      // broken build, and the person who fired it is holding the phone.
       expect(refused, isA<DeepLinkRejected>());
       expect(
         (refused as DeepLinkRejected).reason,
@@ -171,8 +155,6 @@ void main() {
     });
 
     test('a link that is not ours is still ignored in Live', () {
-      // Addressed to another app. Rejecting it would put this app's snackbar
-      // on somebody else's link.
       expect(
         parseDeepLink(
           Uri.parse('paycross-demo://run?preset=x'),
@@ -183,8 +165,6 @@ void main() {
     });
 
     test('Test is exactly what it was', () {
-      // The default argument is what keeps every case above this one meaning
-      // what it meant.
       expect(
         parseDeepLink(
           Uri.parse('paycross-flutter-demo://run?preset=frictionless-3ds'),
@@ -242,9 +222,6 @@ void main() {
     testWidgets('a link this app cannot honour says so on screen', (
       tester,
     ) async {
-      // The whole point of telling a rejection from something ignored: a
-      // colleague who mistypes a preset name over adb gets the reason on the
-      // phone rather than an app that appears to have missed the link.
       final links = StreamController<Uri>();
       addTearDown(links.close);
       final started = <String>[];
@@ -254,10 +231,6 @@ void main() {
           home: DeepLinkListener(
             links: links.stream,
             onRun: (preset) => started.add(preset.name),
-            // A Scaffold, unlike the other three tests here, because that is
-            // how the app mounts this: over Home. `showSnackBar` asserts it
-            // has a Scaffold to present over, so a bare box would be testing
-            // an arrangement the app never builds.
             child: const Scaffold(body: SizedBox.shrink()),
           ),
         ),
@@ -270,7 +243,6 @@ void main() {
       expect(started, isEmpty);
       expect(tester.takeException(), isNull);
 
-      // Let the snack bar time itself out; a pending timer fails the test.
       await tester.pump(const Duration(seconds: 5));
       await tester.pumpAndSettle();
     });
@@ -291,15 +263,11 @@ void main() {
         ),
       );
 
-      // app_links forwards whatever the native EventChannel raises. With no
-      // onError this is an async error with nobody to own it.
       links.addError(StateError('the platform said no'));
       await tester.pumpAndSettle();
 
       expect(find.text('Could not read the link: StateError'), findsOneWidget);
       expect(tester.takeException(), isNull);
-      // The message itself stays off the screen: it is native text and the
-      // one thing on this path that came from outside the app.
       expect(find.textContaining('the platform said no'), findsNothing);
 
       await tester.pump(const Duration(seconds: 5));
@@ -329,10 +297,6 @@ void main() {
     testWidgets('a run link in Live starts nothing and says why', (
       tester,
     ) async {
-      // The composed half of the three parse cases above: the listener reads
-      // the environment out of the scope the app mounts above the Navigator,
-      // so a link that arrives in Live is refused with the reason on screen
-      // rather than honoured or dropped.
       final links = StreamController<Uri>();
       addTearDown(links.close);
       final started = <String>[];
@@ -342,9 +306,6 @@ void main() {
           home: DeepLinkListener(
             links: links.stream,
             onRun: (preset) => started.add(preset.name),
-            // A Scaffold for the same reason the rejection case above uses
-            // one: `showSnackBar` needs something to present over, and this
-            // is how the app mounts the listener -- over Home.
             child: const Scaffold(body: SizedBox.shrink()),
           ),
         ),

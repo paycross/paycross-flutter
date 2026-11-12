@@ -24,92 +24,34 @@ import 'test_card_prefill.dart';
 /// }
 /// ```
 ///
-/// The card form, 3-D Secure and status polling all run in the native SDK. No
-/// card data passes through Dart, which is deliberate: it keeps the PAN out of
-/// the Flutter engine's heap and out of any platform-channel trace.
+/// No card data passes through Dart: it keeps the PAN out of the Flutter engine heap and platform-channel traces.
 abstract final class PayCross {
   static g.PayCrossHostApi _api = g.PayCrossHostApi();
 
-  /// Replaces the platform binding with a fake.
-  ///
-  /// `flutter test` runs with no engine, so an unfaked call throws a channel
-  /// error. Pigeon's generated client is a plain class, so a test subclasses it
-  /// and overrides the three methods - which is what Pigeon now recommends over
-  /// its own (deprecated) generated test handler.
+  /// Replaces the platform binding, for tests.
   @visibleForTesting
   static set debugHostApi(g.PayCrossHostApi api) => _api = api;
 
-  /// Guards against two overlapping payments from Dart.
-  ///
-  /// The native side enforces this too, process-wide. This one exists so the
-  /// common case fails fast with a Dart stack trace pointing at the caller.
   static bool _inFlight = false;
 
   /// Points the SDK at an environment. Call once, before [presentPayment].
   ///
-  /// [appearance] themes the native payment sheets on both platforms: colours
-  /// per mode, a pinned or system theme mode, corner radii, the Pay button and
-  /// a font scale. Every role left null keeps the next source — the brand
-  /// colour set in the PayCross back office, then the platform default — so
-  /// omitting it entirely is not "no theming" and a merchant who sets their
-  /// brand colour in the back office needs no code here at all.
+  /// [appearance] themes the native payment sheets. A role left null falls back
+  /// to the brand colour set on the merchant's PayCross account, then to the
+  /// platform default.
   ///
   /// [brandColorArgb] is deprecated in favour of
-  /// `appearance: PayCrossAppearance.brand(color)`, which sets the same colour
-  /// in both light and dark and opens the rest of the palette. It is still
-  /// honoured on its own, on both platforms.
+  /// `appearance: PayCrossAppearance.brand(color)`. It is still honoured on its
+  /// own, on both platforms.
   ///
-  /// When both are given, the appearance decides only what it actually names.
-  /// If either palette sets `brand`, that wins outright. If neither does — an
-  /// appearance that is only shapes, or only a font scale, which is exactly
-  /// what a half-finished migration looks like — the legacy colour is merged
-  /// into `brand` in both palettes rather than dropped. Either way the legacy
-  /// value itself is not sent, so neither native SDK has to hold a second
-  /// opinion about which colour is the brand.
+  /// [locale] is a BCP 47 tag such as `fr` or `fr-CA` that pins the language of
+  /// the native payment sheet. Null lets the session's locale decide. Both SDKs
+  /// ship English and French.
   ///
-  /// The `@Deprecated` on it is documentation rather than a warning: Dart does
-  /// not report a deprecated named parameter at a call site, so this note, the
-  /// README and the release notes are the deprecation. The Android SDK says
-  /// the same about `brandColor`, which Kotlin cannot annotate at all.
-  ///
-  /// [locale] pins the language the native payment sheet draws in, as a
-  /// BCP 47 tag such as `fr` or `fr-CA`. Both SDKs ship English and French.
-  /// It is the first rung of a ladder they own: this override, then the
-  /// payment session's own `locale`, then the shopper's device languages,
-  /// then English. Each candidate is matched on its own — the whole tag, then
-  /// its primary subtag — and one that names a language neither SDK ships
-  /// falls through to the next rather than ending the ladder.
-  ///
-  /// The amount is not clamped to those two languages: it is formatted with
-  /// the first *well-formed* locale anyone named, region intact, so a German
-  /// shopper reads an English sheet over an amount written the way they
-  /// expect. A malformed tag is passed over for the amount too, so a typo
-  /// cannot both pick the wrong language and misprint the price.
-  ///
-  /// The string crosses exactly as it is written. This package does not
-  /// resolve it, validate it, lower-case it or turn `_` into `-`, because
-  /// both SDKs already do all four and a second opinion here could only
-  /// disagree with them. A malformed tag is skipped by the native resolver
-  /// rather than thrown on, so nothing passed here can fail a payment.
-  ///
-  /// Null means "not overridden", which lets the session's locale decide. It
-  /// is not a request for English.
-  ///
-  /// The sheet's language never touches the host app's. See LOCALIZATION.md
-  /// in either native SDK for the full rule and the string keys.
-  ///
-  /// [googlePayMerchantId] is Android-only. It is the merchant id from the
-  /// Google Business Console, and Google **requires** it for
-  /// [PayCrossEnvironment.production] Google Pay requests; sandbox works
-  /// without one. iOS ignores it, because Google Pay's in-app API is Android
-  /// and web only.
-  ///
-  /// [applePayMerchantId] is iOS-only, and Android ignores it. It is the Apple
-  /// Merchant ID the iOS SDK renders its Apple Pay button for. Null, empty and
-  /// whitespace-only all mean not configured, and no button appears. It must
-  /// otherwise be the same string that is saved on the merchant's PayCross
-  /// record — the edge compares the two and refuses the payment when they
-  /// differ.
+  /// [googlePayMerchantId] is Android-only, and production Google Pay requests
+  /// require it. [applePayMerchantId] is iOS-only: the Apple Merchant ID for the
+  /// Apple Pay button. Null, empty or blank hides the button. It must match the
+  /// ID saved on the merchant's PayCross account, or the payment is refused.
   ///
   /// Throws [PayCrossIntegrationError] with
   /// [PayCrossErrorCode.testPrefillInProduction] if [testCardPrefill] is
@@ -139,9 +81,6 @@ abstract final class PayCross {
       );
     }
 
-    // Before the channel call, and before the busy guard reports anything: an
-    // appearance a sheet cannot draw is a mistake in merchant code, and it is
-    // cheaper to name here than as a layout failure inside a native sheet.
     final crossing = _withLegacyBrand(appearance, brandColorArgb)?.toPigeon();
 
     return _guard(
@@ -150,9 +89,6 @@ abstract final class PayCross {
           environment: environment == PayCrossEnvironment.sandbox
               ? g.PcEnvironment.sandbox
               : g.PcEnvironment.production,
-          // Dropped when an appearance is given: two brand colours on the wire
-          // would make the precedence a decision each native re-derived, and
-          // the two would eventually disagree.
           brandColorArgb: appearance == null ? brandColorArgb : null,
           testCardPrefill: testCardPrefill == null
               ? null
@@ -176,14 +112,12 @@ abstract final class PayCross {
   /// Presents the native payment sheet and resolves when the payment reaches a
   /// terminal state or the shopper cancels.
   ///
-  /// **This can take minutes.** The server is polled for up to eight, and a 3-D
-  /// Secure challenge waits on the shopper's bank. Do not wrap the returned
-  /// Future in `Future.timeout`: a shorter timeout abandons a live payment
-  /// while the native SDK keeps polling, and the card may still be charged.
+  /// **This can take minutes.** Do not wrap the returned Future in
+  /// `Future.timeout`: the native SDK keeps polling, so the card may still be
+  /// charged after the timeout abandons the call.
   ///
-  /// A decline is a [PayCrossFailure], not a thrown error, and an outcome the
-  /// SDK never observed is a [PayCrossPending]. Anything thrown from here is a
-  /// [PayCrossIntegrationError].
+  /// A decline is a [PayCrossFailure] and an unobserved outcome a
+  /// [PayCrossPending]. A platform rejection is thrown as a [PayCrossIntegrationError].
   static Future<PayCrossResult> presentPayment(String sessionToken) async {
     if (_inFlight) {
       throw const PayCrossIntegrationError(
@@ -195,13 +129,9 @@ abstract final class PayCross {
     try {
       return _toPublic(await _api.presentPayment(sessionToken));
     } on PlatformException catch (e) {
-      // A lost result is an outcome, not an integration mistake: the payment
-      // may have been authorized. Returning it as a value puts it in the
-      // merchant's exhaustive switch, where the compiler asks for a decision,
-      // rather than in a catch block written once and forgotten.
+      // Returned, not thrown: the payment may have been authorized.
       if (e.code == payCrossResultLostCode) {
-        // The canonical name, because nothing sent one: a native side that
-        // has lost its result has only an error code left to send.
+        // Nothing was sent, so the plugin supplies the canonical name.
         return const PayCrossPending(
           transactionId: null,
           reason: PayCrossPendingReason.resultLost,
@@ -217,9 +147,7 @@ abstract final class PayCross {
     }
   }
 
-  /// Plugin and native SDK versions, for support tickets.
-  ///
-  /// `nativeSdkVersion` is null on Android, which declares no version constant.
+  /// Plugin and native SDK versions. `nativeSdkVersion` is null on Android.
   static Future<({String pluginVersion, String? nativeSdkVersion})>
   versionInfo() async {
     final info = await _guard(() => _api.versionInfo());
@@ -229,14 +157,6 @@ abstract final class PayCross {
     );
   }
 
-  /// Folds a deprecated [brandColorArgb] into an appearance that names no
-  /// brand of its own.
-  ///
-  /// Without this, adding two corner radii to a `configure` call that still
-  /// used `brandColorArgb` would silently drop the merchant's brand colour:
-  /// the appearance would win, and it would win with nothing to say about the
-  /// brand. A half-migrated call is the normal state of a migration, and it
-  /// must not be the state that loses a colour.
   static PayCrossAppearance? _withLegacyBrand(
     PayCrossAppearance? appearance,
     int? brandColorArgb,
@@ -279,24 +199,18 @@ abstract final class PayCross {
       reason: PayCrossPendingReason.fromWireName(raw.reason),
       reasonRaw: raw.reason,
     ),
-    // Defensive, and deliberately before the general failure case. Both native
-    // SDKs send this outcome as PcPending now, but a merchant can pin an older
-    // native SDK under a newer plugin, and reading this one recovery as a
-    // decline is what put a double charge one retry away.
+    // Must precede the general failure case, or it is read as a decline.
     g.PcFailure()
         when PayCrossRecovery.fromApiValue(raw.recovery)
             is RecoveryVerifyBeforeRetry =>
       PayCrossPending(
         transactionId: raw.transactionId,
         reason: PayCrossPendingReason.serverVerify,
-        // The recovery token exactly as it arrived, spacing and casing and
-        // all. Not 'server_verify': that is the pending vocabulary, and
-        // nothing sent it.
+        // The wire token as it arrived, not the pending name 'server_verify'.
         reasonRaw: raw.recovery,
       ),
-    // The raw token is parsed here rather than crossing as an enum, so a
-    // recovery value the server adds later degrades to "unrecognised, not
-    // retryable" instead of being silently rewritten.
+    // Parsed here: a recovery value added later is unrecognised, not
+    // retryable.
     g.PcFailure() => PayCrossFailure(
       transactionId: raw.transactionId,
       recovery: PayCrossRecovery.fromApiValue(raw.recovery),

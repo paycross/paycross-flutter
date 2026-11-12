@@ -195,10 +195,8 @@ class FlutterError (
 /**
  * The backend the native SDK talks to.
  *
- * Two cases only. iOS additionally has a `.custom(baseURL:)`; Android has no
- * equivalent, and its Retrofit client derives the base URL from the enum. A
- * `custom` case here would mean the same Dart call did different things on
- * each platform.
+ * There is no custom case: Android has no equivalent of iOS's custom base
+ * URL, so one here would send the same call to different backends.
  */
 enum class PcEnvironment(val raw: Int) {
   SANDBOX(0),
@@ -212,9 +210,9 @@ enum class PcEnvironment(val raw: Int) {
 }
 
 /**
- * Which palette the sheet draws with.
+ * Which palette the payment sheet draws with.
  *
- * A pinned mode applies to the payment sheet only, and never to the host app.
+ * It applies to the sheet only, never to the host app.
  */
 enum class PcThemeMode(val raw: Int) {
   SYSTEM(0),
@@ -231,14 +229,10 @@ enum class PcThemeMode(val raw: Int) {
 /**
  * Prefills the native card form for manual test runs.
  *
- * CARRIES A PAN AND A CVV, and is the only card data that ever crosses this
- * channel. It does so because the native form is one the plugin cannot reach
- * any other way. Both native SDKs already drop it outside sandbox; the Dart
- * facade throws if it is supplied with a production environment, and the
- * plugin drops it again before calling in.
+ * Carries a PAN and a CVV, the only card data that crosses this channel.
+ * The native SDKs drop it outside the sandbox environment.
  *
- * Nothing about a real shopper's card crosses: CardData, CardFormState and
- * BrowserInfo are absent from this file by design.
+ * Shopper card data (CardData, CardFormState, BrowserInfo) never crosses.
  *
  * Generated class from Pigeon that represents data sent in messages.
  */
@@ -247,7 +241,7 @@ data class PcTestCardPrefill (
   val pan: String,
   /** "MM". */
   val expireMonth: String,
-  /** Four digits, e.g. "2028". Both native forms take the last two. */
+  /** Four digits, e.g. "2028". Both natives use the last two. */
   val expireYear: String,
   val cvv: String,
   val saveCard: Boolean
@@ -303,21 +297,16 @@ data class PcTestCardPrefill (
 /**
  * One palette, used twice: once for light, once for dark.
  *
- * Every role is a nullable packed ARGB int, for the reason
- * [PcConfiguration.brandColorArgb] gives: null has to stay a real null,
- * because 0x00000000 is transparent black — a legal colour rather than a
- * sentinel — and null is what both natives read as "keep the platform
- * default".
+ * Every role is a nullable packed ARGB int. Null means the platform default,
+ * and 0x00000000 (transparent black) is a legal colour, not a sentinel.
  *
  * Generated class from Pigeon that represents data sent in messages.
  */
 data class PcColors (
   val brand: Long? = null,
   /**
-   * Null derives it from [brand]'s own luminance on each native, so a light
-   * brand gets a dark label. Deliberately not computed in Dart: the rule is
-   * the same 0.179 WCAG crossover on both sides, and one copy of it that both
-   * natives already ship beats a third.
+   * Null derives the label colour from the brand's luminance on each native
+   * (the same 0.179 WCAG crossover on both). Dart does not compute it.
    */
   val onBrand: Long? = null,
   val surface: Long? = null,
@@ -390,9 +379,8 @@ data class PcColors (
 }
 
 /**
- * Corner radii and border thickness, in the platform's own units: dp on
- * Android, points on iOS. Not converted, because neither is a pixel count and
- * a merchant setting 16 wants the same visual weight on both.
+ * Corner radii and border thickness, in the platform's units: dp on Android,
+ * points on iOS. Not converted between the two.
  *
  * Generated class from Pigeon that represents data sent in messages.
  */
@@ -502,17 +490,13 @@ data class PcPrimaryButton (
 }
 
 /**
- * Type sizing. A font family is deliberately not on the wire in this release:
- * resolving one differs enough between the two platforms that a name crossing
- * here would mean two different fallbacks for the same string.
+ * Type sizing. Font families are not sent: each platform resolves a name
+ * differently, so one name would mean two fallbacks for the same string.
  *
  * Generated class from Pigeon that represents data sent in messages.
  */
 data class PcTypography (
-  /**
-   * Clamped to 0.8–1.3 by both natives. The Dart facade refuses anything
-   * outside that range outright, so nothing out of range reaches this field.
-   */
+  /** Between 0.8 and 1.3. The Dart facade rejects values outside that range. */
   val sizeScaleFactor: Double? = null
 )
  {
@@ -551,10 +535,9 @@ data class PcTypography (
 /**
  * How the native payment sheet looks.
  *
- * Colours resolve per role: what is set here, then the brand colour the
- * merchant set in the back office, then the platform default. The back-office
- * colour arrives with the session and never crosses this channel, so an
- * absent appearance is not "no theming".
+ * Colours resolve per role: the value set here, then the brand colour the
+ * session carries, then the platform default. An absent appearance is not
+ * "no theming".
  *
  * Generated class from Pigeon that represents data sent in messages.
  */
@@ -562,9 +545,8 @@ data class PcAppearance (
   val light: PcColors? = null,
   val dark: PcColors? = null,
   /**
-   * Required, unlike every other field here, because Pigeon has no field
-   * defaults: a nullable mode would make "follow the device" a decision each
-   * native had to invent for itself. The Dart facade always writes this.
+   * Required because Pigeon has no field defaults. A nullable mode would leave
+   * "follow the device" for each native to decide.
    */
   val themeMode: PcThemeMode,
   val shapes: PcShapes? = null,
@@ -623,61 +605,44 @@ data class PcAppearance (
 data class PcConfiguration (
   val environment: PcEnvironment,
   /**
-   * Packed ARGB, sent unsigned. Kotlin receives Long? and calls toInt(), whose
-   * low-32-bit truncation is exactly the signed @ColorInt Android wants.
+   * Packed ARGB, sent unsigned. Null means "platform default" and must stay a
+   * real null: 0x00000000 is transparent black, a legal colour.
    *
-   * Null means "platform default" and must stay a real null: 0x00000000 is
-   * transparent black, a legal colour rather than a sentinel.
+   * Kotlin reads it as Long? and calls toInt(), which gives the signed
+   * @ColorInt Android needs.
    *
-   * **Deprecated**, superseded by [appearance], which sets the same colour in
-   * both modes and opens the rest of the palette. Both platforms honour it
-   * while it lasts. The Dart facade sends this as null whenever an appearance
-   * is given, so neither native has to decide which of two brand colours wins.
+   * **Deprecated**, use [appearance]. The Dart facade sends this as null
+   * whenever an appearance is given.
    */
   val brandColorArgb: Long? = null,
   val testCardPrefill: PcTestCardPrefill? = null,
   /**
-   * Google Business Console merchant id, for the Google Pay button the Android
-   * SDK renders itself when the session allows wallets.
+   * Google Business Console merchant id for the Google Pay button the Android
+   * SDK renders when the session allows wallets. Android only: iOS accepts and
+   * ignores it.
    *
-   * Google requires it in `merchantInfo` for PRODUCTION requests; the TEST
-   * environment works without one. Null is what "not configured" means: the
-   * native SDK adds `merchantId` to `merchantInfo` only when a non-blank id is
-   * present.
-   *
-   * Android only. Google Pay's in-app API is Android and web only, so there is
-   * no iOS wallet for this to configure and iOS accepts and ignores it.
+   * Google requires it for PRODUCTION requests; the TEST environment works
+   * without one. Null means "not configured".
    */
   val googlePayMerchantId: String? = null,
   /**
-   * Apple Merchant ID, for the Apple Pay button the iOS SDK renders itself
-   * when the session allows wallets.
+   * Apple Merchant ID for the Apple Pay button the iOS SDK renders when the
+   * session allows wallets. iOS only: Android accepts and ignores it.
    *
-   * Apple's key derivation hashes this string into every payment token's
-   * symmetric key, so it is not a display name and not optional decoration:
-   * the same value has to be registered with Apple, listed in the app's
-   * Apple Pay entitlement, and saved on the merchant's PayCross record. Null,
-   * empty and whitespace-only all mean "not configured" — the iOS SDK trims
-   * before deciding — and it renders no button for any of them.
-   *
-   * iOS only. Android has no Apple Pay, so it accepts and ignores this.
+   * Apple hashes it into every payment token's key, so it must match the
+   * merchant id registered with Apple and in the app's Apple Pay entitlement.
+   * Null, empty and whitespace-only all mean "not configured".
    */
   val applePayMerchantId: String? = null,
-  /** How the sheet looks. Honoured on both platforms. */
+  /** How the payment sheet looks, on both platforms. */
   val appearance: PcAppearance? = null,
   /**
    * The language the payment sheet draws in, as a BCP 47 tag.
    *
-   * Crosses exactly as the merchant wrote it, or as null. Nothing on this
-   * side resolves it, validates it or lower-cases it: both native SDKs
-   * already own one resolution ladder each — the override, then the payment
-   * session's own locale, then the device, then English — and a second
-   * opinion in Dart could only ever disagree with them. A tag neither SDK
-   * ships strings for falls through that ladder, and a malformed one is
-   * skipped, so no value here can make either sheet throw.
-   *
-   * Null means "not overridden", which is the ladder's first rung being
-   * empty rather than a request for English.
+   * Sent as written: Dart neither validates nor changes it. Each native
+   * resolves it through its own ladder (this override, the session's locale,
+   * the device, then English), and a tag neither SDK ships strings for is
+   * skipped. Null means not overridden.
    */
   val locale: String? = null
 )
@@ -735,10 +700,7 @@ data class PcConfiguration (
 /** Generated class from Pigeon that represents data sent in messages. */
 data class PcVersionInfo (
   val pluginVersion: String,
-  /**
-   * Nullable because the Android SDK exposes no version constant. The null
-   * makes that gap visible rather than inventing a string.
-   */
+  /** Null on Android, which exposes no version constant. */
   val nativeSdkVersion: String? = null
 )
  {
@@ -780,17 +742,13 @@ data class PcVersionInfo (
 /**
  * A monetary amount in minor units.
  *
- * Pigeon `int` is Kotlin `Long` and Swift `Int64`. Never a double: a double
- * amount is the most expensive bug class in payments.
+ * Pigeon `int` maps to Kotlin Long and Swift Int64. Never use a double.
  *
  * Generated class from Pigeon that represents data sent in messages.
  */
 data class PcAmount (
   val minorUnits: Long,
-  /**
-   * ISO 4217. May be the empty string when the session was already complete
-   * and the server returned no transaction reference.
-   */
+  /** ISO 4217 currency code. */
   val currencyCode: String
 )
  {
@@ -832,10 +790,8 @@ data class PcAmount (
 /**
  * How a payment ended.
  *
- * An empty sealed parent with concrete subclasses is the one inheritance shape
- * Pigeon supports, and only in the Kotlin, Swift and Dart generators — which
- * are exactly the three targets here. That is what lets the exhaustiveness the
- * native SDKs were built around survive the crossing.
+ * An empty sealed parent with concrete subclasses: the only inheritance shape
+ * Pigeon supports, in the Kotlin, Swift and Dart generators.
  *
  * Generated class from Pigeon that represents data sent in messages.
  * This class should not be extended by any user class outside of the generated file.
@@ -843,18 +799,14 @@ data class PcAmount (
 sealed class PcPaymentResult 
 /** Generated class from Pigeon that represents data sent in messages. */
 data class PcSuccess (
-  /**
-   * Empty in the edge case where the session was already complete and the
-   * server returned no transaction reference. Not null — both native SDKs
-   * model this as a present-but-empty string.
-   */
+  /** Empty, not null, when the server returned no transaction reference. */
   val transactionId: String,
   /** "success", "authorized", … */
   val status: String,
   val amount: PcAmount,
   /**
-   * The vault token of the card this payment saved, when the session asked
-   * for one to be saved. Null otherwise.
+   * Token of the card this payment saved, when the session asked to save it.
+   * Null otherwise.
    */
   val savedCardToken: String? = null
 ) : PcPaymentResult()
@@ -905,15 +857,12 @@ data class PcFailure (
   /** Null for failures that happen before a transaction exists. */
   val transactionId: String? = null,
   /**
-   * The RAW server token, not a parsed enum.
+   * The raw server token, not a parsed enum.
    *
-   * Pigeon cannot express an enum with an associated value, so a closed enum
-   * here would destroy any value the server adds later — exactly the case
-   * iOS's `.unrecognized(String)` exists to preserve. Dart re-parses this with
-   * the same rules both native SDKs use, so a new token degrades to
-   * "unrecognised, not retryable" instead of being silently rewritten.
-   *
-   * Empty string means the server sent nothing, which both SDKs read as retry.
+   * Pigeon cannot express an enum with an associated value, and a closed enum
+   * would drop tokens the server adds later. An unknown token parses as
+   * "unrecognised, not retryable". Empty means the server sent nothing, which
+   * both SDKs read as retry.
    */
   val recovery: String
 ) : PcPaymentResult()
@@ -959,10 +908,9 @@ data class PcCancelled (
    * The last transaction this session created, or null when the sheet was
    * dismissed before one existed.
    *
-   * A cancel does not cancel the authorization: the shopper can walk away
-   * after a decline or part-way through a 3-D Secure challenge, leaving a
-   * transaction on the server that the host app would otherwise have no way
-   * to name.
+   * A cancel does not cancel the authorization: the shopper can leave after a
+   * decline or during a 3-D Secure challenge, and that transaction stays on
+   * the server.
    */
   val transactionId: String? = null
 ) : PcPaymentResult()
@@ -1000,14 +948,10 @@ data class PcCancelled (
 }
 
 /**
- * The outcome was never observed. The payment MAY have succeeded.
+ * The outcome was never observed. The payment may have succeeded.
  *
- * Neither a success nor a decline: no verdict was ever seen, and a payment
- * that completed and shifted liability is indistinguishable from one that
- * never happened. It is a case of its own so the exhaustiveness both native
- * SDKs were built around survives the crossing — collapsing it into
- * PcFailure is what used to make the one double-charge risk look like an
- * ordinary decline.
+ * Neither a success nor a decline: a payment that completed looks the same as
+ * one that never happened, so it is kept apart from [PcFailure].
  *
  * Generated class from Pigeon that represents data sent in messages.
  */
@@ -1018,8 +962,8 @@ data class PcPending (
    */
   val transactionId: String? = null,
   /**
-   * The RAW wire name (`poll_timeout`, `result_lost`, `server_verify`), not a
-   * parsed enum, for the same reason `PcFailure.recovery` is raw.
+   * The raw wire name (`poll_timeout`, `result_lost`, `server_verify`), not a
+   * parsed enum.
    */
   val reason: String
 ) : PcPaymentResult()
@@ -1212,24 +1156,20 @@ interface PayCrossHostApi {
   /**
    * Applies configuration to the native SDK.
    *
-   * The plugin caches this and re-applies it lazily inside presentPayment.
-   * Without that, a hot restart or a second engine in an add-to-app host
-   * loses the Dart-side flag while the native process keeps running, and iOS
-   * hits assertionFailure — a hard trap in a debug build.
+   * Re-applied lazily inside presentPayment, because a hot restart or a second
+   * add-to-app engine can lose the Dart-side flag while the native process
+   * keeps running, and iOS then hits assertionFailure.
    */
   fun configure(configuration: PcConfiguration)
   fun versionInfo(): PcVersionInfo
   /**
    * Presents the native payment UI, resolving when the payment reaches a
-   * terminal state or the shopper cancels.
+   * terminal state or the shopper cancels. Declines arrive as PcFailure, not
+   * as errors: an error from this method means an integration mistake.
    *
-   * @async because this can take minutes: the poll deadline is 480s on both
-   * platforms. Callers must not wrap the returned Future in Future.timeout —
-   * a shorter timeout orphans a live payment while the native SDK keeps
-   * polling and may still charge the card.
-   *
-   * Declines are NOT errors; they arrive as PcFailure. An error from this
-   * method always means an integration mistake.
+   * Can take minutes (the poll deadline is 480s on both platforms). Do not
+   * wrap the returned Future in Future.timeout: a shorter timeout orphans a
+   * live payment that may still charge the card.
    */
   fun presentPayment(sessionToken: String, callback: (Result<PcPaymentResult>) -> Unit)
 

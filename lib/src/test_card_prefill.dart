@@ -1,8 +1,6 @@
 /// Fills the native card form so manual test runs do not mean retyping a PAN.
 ///
-/// Ignored outside sandbox — dropped by the Dart facade, by the plugin, and
-/// again by each native SDK. `toString` is redacted so a stray log line cannot
-/// leak the card.
+/// Sandbox only. configure throws if set with production. toString is redacted.
 class PayCrossTestCardPrefill {
   const PayCrossTestCardPrefill({
     this.cardholderName = '',

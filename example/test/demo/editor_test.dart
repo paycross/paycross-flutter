@@ -13,8 +13,6 @@ import '_surface.dart';
 
 final _preset = demoPresets.first;
 
-/// A store the phone refuses to write to, which is what a device out of
-/// space, or one whose platform store is wedged, looks like from Dart.
 class _FailingPresetBackend implements PresetBackend {
   @override
   Future<List<String>> read() async => <String>[];
@@ -23,21 +21,14 @@ class _FailingPresetBackend implements PresetBackend {
   Future<void> write(List<String> rows) async => throw StateError('no space');
 }
 
-/// The text a keyed field is showing.
 String _fieldText(WidgetTester tester, String key) =>
     tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
 
-/// Opens the collapsible section the raw body lives in.
-///
-/// The section is shut when the screen opens, which is the whole of what
-/// makes the editor a form rather than a wall of JSON. Every case that wants
-/// the raw field has to say so, exactly as a person does.
 Future<void> _openRawBody(WidgetTester tester) async {
   await tester.tap(find.text(rawBodySectionLabel));
   await tester.pumpAndSettle();
 }
 
-/// The editor on its own, the way most of these cases want it.
 Future<void> _pumpEditor(
   WidgetTester tester, {
   Preset? preset,
@@ -63,11 +54,6 @@ Future<void> _pumpEditor(
   await tester.pumpAndSettle();
 }
 
-/// The editor with something under it, for the cases about leaving it.
-///
-/// A pushed route rather than `home:`: the unsaved-changes guard is about
-/// what happens on the way back, and a screen with nothing behind it has no
-/// back to test.
 Future<void> _pushEditor(
   WidgetTester tester, {
   PresetKind kind = PresetKind.builtIn,
@@ -120,8 +106,6 @@ void main() {
       savedBody: '{"amount":4242,"currency":"GBP"}',
     );
 
-    // The whole point of saving one: a scenario somebody edited opens the way
-    // they left it, rather than making them type the currency again.
     expect(_fieldText(tester, 'amount'), '4242');
     await tester.tap(find.text('Run'));
     await tester.pumpAndSettle();
@@ -159,8 +143,6 @@ void main() {
   ) async {
     await _pumpEditor(tester);
 
-    // The complaint the owner made about this screen was that it is clunky,
-    // and a 24-line JSON field above the buttons is most of why.
     expect(find.byKey(const ValueKey('rawBody')), findsNothing);
 
     await _openRawBody(tester);
@@ -181,9 +163,6 @@ void main() {
     await tester.tap(find.text(rawBodySectionLabel));
     await tester.pumpAndSettle();
 
-    // Shut again, and the reason Run is dead is still on screen. A person who
-    // collapsed the section would otherwise be left with a dead button and
-    // nothing saying why.
     expect(find.byKey(const ValueKey('rawBody')), findsNothing);
     expect(find.textContaining('not valid JSON'), findsOneWidget);
   });
@@ -311,7 +290,6 @@ void main() {
     String? ran;
     await _pumpEditor(tester, onRun: (body) async => ran = body);
 
-    // Every sandbox preset ships with it, so the switch opens on.
     await tester.tap(find.byKey(const ValueKey('sandboxBilling')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Run'));
@@ -344,8 +322,6 @@ void main() {
     await tester.tap(find.text('Reset to default'));
     await tester.pumpAndSettle();
 
-    // Without the value in the key this still reads USD while the body says
-    // EUR -- nothing mints wrongly, but the screen contradicts itself.
     expect(find.byKey(const ValueKey('currency-EUR')), findsOneWidget);
   });
 
@@ -377,9 +353,6 @@ void main() {
       },
     );
 
-    // What Run starts is a credential read and then a live mint. A second
-    // press before the first has finished bills a second sandbox session and
-    // stacks a second Run screen.
     await tester.tap(find.text('Run'));
     await tester.pump();
     await tester.tap(find.text('Run'), warnIfMissed: false);
@@ -390,7 +363,6 @@ void main() {
     gate.complete();
     await tester.pumpAndSettle();
 
-    // And it comes back afterwards: this is a guard, not a one-shot button.
     await tester.tap(find.text('Run'));
     await tester.pump();
 
@@ -402,8 +374,6 @@ void main() {
   ) async {
     await _pumpEditor(tester);
 
-    // Empty boxes over a filled body made the screen contradict itself: the
-    // amount said nothing while the body said 1000.
     final body = jsonDecode(_preset.body) as Map<String, Object?>;
     final customer = body['customer']! as Map;
     expect(_fieldText(tester, 'amount'), '${body['amount']}');
@@ -427,7 +397,6 @@ void main() {
     await tester.enterText(find.byKey(const ValueKey('amount')), '');
     await tester.pumpAndSettle();
 
-    // Before this, an empty box left 2500 in the body and ran it anyway.
     expect(find.textContaining('whole number'), findsOneWidget);
     await tester.tap(find.text('Run'));
     await tester.pumpAndSettle();
@@ -459,8 +428,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // The raw body is the source of truth; the boxes above it are a view of
-    // it, so a hand edit must not leave them showing the old values.
     expect(_fieldText(tester, 'amount'), '7777');
     expect(_fieldText(tester, 'customerReference'), 'CUST-9');
     expect(_fieldText(tester, 'customerEmail'), 'ada@example.com');
@@ -510,7 +477,6 @@ void main() {
 
       final saved = await store.read();
       expect((jsonDecode(saved.overrides[_preset.id]!) as Map)['amount'], 2500);
-      // And the shipped bytes are untouched, which is what the matrix runs.
       expect((jsonDecode(_preset.body) as Map)['amount'], 1000);
     });
 
@@ -535,8 +501,6 @@ void main() {
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
-      // A saved body that cannot be minted is a tile that fails every time it
-      // is pressed, and nothing on Home would say why.
       expect((await store.read()).overrides, isEmpty);
     });
 
@@ -559,7 +523,6 @@ void main() {
       final saved = await store.read();
       expect(saved.custom.single.name, 'Two fifty');
       expect((jsonDecode(saved.custom.single.body) as Map)['amount'], 2500);
-      // The built-in it was made from keeps the body it shipped with.
       expect(saved.overrides, isEmpty);
     });
 
@@ -572,7 +535,6 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('saveAsNewConfirm')));
       await tester.pumpAndSettle();
 
-      // A nameless tile is a blank row on Home nobody can tell from another.
       expect((await store.read()).custom, isEmpty);
       expect(find.byKey(const ValueKey('saveAsNewDialog')), findsOneWidget);
     });
@@ -589,8 +551,6 @@ void main() {
         find.byKey(const ValueKey('newPresetName')),
         'Mine',
       );
-      // Settled before the tap, because the confirm button is dead until
-      // there is a name and it takes a frame to hear that there is one.
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('saveAsNewConfirm')));
       await tester.pumpAndSettle();
@@ -601,7 +561,6 @@ void main() {
       await tester.pumpAndSettle();
 
       final saved = await store.read();
-      // One tile, edited -- not a second tile every time Save is pressed.
       expect(saved.custom, hasLength(1));
       expect((jsonDecode(saved.custom.single.body) as Map)['amount'], 4242);
     });
@@ -622,16 +581,12 @@ void main() {
     testWidgets('a built-in preset cannot be deleted', (tester) async {
       await _pumpEditor(tester);
 
-      // Deleting one would take a scenario out of the app that the matrix
-      // still runs and the guide still names.
       expect(find.text('Delete'), findsNothing);
     });
 
     testWidgets('the Custom body has nothing to save into', (tester) async {
       await _pumpEditor(tester, preset: customPreset, kind: PresetKind.scratch);
 
-      // Custom is the blank body somebody types afresh. "Save as new…" is how
-      // it becomes a tile, and there is no tile behind it to save over.
       expect(find.text('Save'), findsNothing);
       expect(find.text('Delete'), findsNothing);
       expect(find.text('Save as new…'), findsOneWidget);
@@ -693,8 +648,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect((await store.read()).custom, isEmpty);
-      // Staying would leave the screen editing a tile that is no longer on
-      // Home, and Save would quietly put it back.
       expect(find.text('open'), findsOneWidget);
     });
 
@@ -780,7 +733,6 @@ void main() {
   group('the same editor in Live', () {
     final smoke = liveDefaultPresets.first;
 
-    /// The Live editor on one of the three production tiles.
     Future<void> pumpLive(
       WidgetTester tester, {
       PresetStore? store,
@@ -790,8 +742,6 @@ void main() {
       tester,
       preset: smoke,
       onRun: onRun,
-      // A Live-mode store, as Home hands it: its rows carry the production
-      // kind words, so a case here exercises what the app writes.
       store:
           store ??
           PresetStore(
@@ -805,8 +755,6 @@ void main() {
     testWidgets('the amount and the currency are ordinary fields', (
       tester,
     ) async {
-      // The whole of the addendum: the owner called setting a currency once
-      // per session a lazy workaround, and this is what replaced it.
       String? ran;
       await pumpLive(tester, onRun: (body) async => ran = body);
 
@@ -824,16 +772,11 @@ void main() {
     });
 
     testWidgets('there is nowhere to type an identity', (tester) async {
-      // A preset is a row on the phone and the identity is held for one
-      // session. A field that wrote a real person's name into a saved body
-      // is the one thing this screen must not offer in Live.
       await pumpLive(tester);
 
       expect(find.byKey(const ValueKey('customerEmail')), findsNothing);
       expect(find.byKey(const ValueKey('customerFirst')), findsNothing);
       expect(find.byKey(const ValueKey('customerLast')), findsNothing);
-      // The reference stays: it is what a stored card is found by, and it is
-      // not anybody's name.
       expect(find.byKey(const ValueKey('customerReference')), findsOneWidget);
     });
 
@@ -857,13 +800,9 @@ void main() {
     });
 
     testWidgets('the sandbox billing switch is not offered', (tester) async {
-      // Production AVS and fraud rules exist to refuse a fabricated New York
-      // address, and a switch that adds one is a switch that costs a smoke
-      // run for a reason that says nothing about the SDK.
       await pumpLive(tester);
 
       expect(find.byKey(const ValueKey('sandboxBilling')), findsNothing);
-      // The two saved-card switches are the same in both modes.
       expect(find.byKey(const ValueKey('saveCard')), findsOneWidget);
       expect(find.byKey(const ValueKey('showSavedCards')), findsOneWidget);
     });
@@ -871,9 +810,6 @@ void main() {
     testWidgets('a hand-typed billing address refuses Run and Save', (
       tester,
     ) async {
-      // A refusal rather than a quiet strip. The raw body is the source of
-      // truth on this screen, and silently deleting a line somebody typed is
-      // how a tool stops being trustworthy.
       final store = PresetStore(
         backend: InMemoryPresetBackend(),
         environment: DemoEnvironment.live,
@@ -900,7 +836,6 @@ void main() {
     });
 
     testWidgets('the sandbox editor still offers both', (tester) async {
-      // The mirror of the two cases above: nothing was taken away from Test.
       await _pumpEditor(tester);
 
       expect(find.byKey(const ValueKey('sandboxBilling')), findsOneWidget);
@@ -958,10 +893,6 @@ void main() {
 
   group('a save the phone refuses', () {
     testWidgets('Save says so, rather than failing silently', (tester) async {
-      // `PresetStore` rethrows to its caller on purpose, and this screen is
-      // that caller. Before this it told nobody: no message, no "Saved.",
-      // and an unhandled async error in the zone. The person had to infer a
-      // failure from the absence of a confirmation.
       await _pumpEditor(
         tester,
         store: PresetStore(backend: _FailingPresetBackend()),
@@ -977,9 +908,6 @@ void main() {
     });
 
     testWidgets('the edit is still there to try again with', (tester) async {
-      // The body must not be treated as saved: the unsaved-changes guard is
-      // what stops the edit being lost on the way back, and a failed write
-      // that advanced the baseline would disarm it.
       await _pushEditor(
         tester,
         store: PresetStore(backend: _FailingPresetBackend()),
@@ -1012,9 +940,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('Could not save'), findsOneWidget);
-      // And the screen is still editing what it was editing. Becoming a tile
-      // that was never written would leave a later Save writing to an id
-      // nothing holds.
       expect(find.text('Edit — ${_preset.name}'), findsOneWidget);
     });
 
@@ -1039,14 +964,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('Could not delete'), findsOneWidget);
-      // Still here. Leaving would say the tile had gone when it had not.
       expect(find.text('Edit — Mine'), findsOneWidget);
     });
 
     testWidgets('a refused reset leaves the body alone', (tester) async {
-      // The screen and the store have to agree. Putting the body back while
-      // the override survived would show the shipped bytes here and "edited"
-      // on the tile behind it.
       await _pumpEditor(
         tester,
         store: PresetStore(backend: _FailingPresetBackend()),
@@ -1065,9 +986,6 @@ void main() {
 
   group('saving what nobody changed', () {
     testWidgets('Save on an untouched preset writes nothing', (tester) async {
-      // It used to file an override identical to the shipped bytes, after
-      // which the tile read "edited" for good -- and a later release that
-      // changed that preset would be silently masked by the stale copy.
       final store = PresetStore(
         backend: InMemoryPresetBackend(),
         environment: DemoEnvironment.live,
@@ -1084,14 +1002,6 @@ void main() {
     testWidgets('putting the shipped body back drops the override', (
       tester,
     ) async {
-      // Back to what it ships with is the absence of an edit, not an edit
-      // that happens to match. Rewriting the override would leave the tile
-      // marked "edited" over bytes nobody had changed -- and would go on
-      // masking that preset if a later release changed it.
-      //
-      // Through the raw field, because that is the way a person actually
-      // gets here: they open a tile they edited last week and paste the
-      // original back.
       final store = PresetStore(
         backend: InMemoryPresetBackend(),
         environment: DemoEnvironment.live,
@@ -1116,9 +1026,6 @@ void main() {
     });
 
     testWidgets('an edit that is a real change still writes', (tester) async {
-      // The calibration for the two cases above: the guard refuses a
-      // no-change Save, and this is what says it has not started refusing
-      // every Save.
       final store = PresetStore(
         backend: InMemoryPresetBackend(),
         environment: DemoEnvironment.live,
@@ -1138,10 +1045,6 @@ void main() {
     testWidgets('a currency the app does not offer is shown, not hidden', (
       tester,
     ) async {
-      // The dropdown fell back to EUR over a body that said PLN: the screen
-      // contradicting itself, which is the one thing every field on it is
-      // built not to do. Nothing minted wrongly, because the dropdown only
-      // writes on change -- but the person could not see that.
       await _pumpEditor(tester);
 
       await _openRawBody(tester);
@@ -1182,10 +1085,6 @@ void main() {
     testWidgets('a customer block deleted by hand is rebuilt, not ignored', (
       tester,
     ) async {
-      // Typing into a field that wrote nowhere is the silent failure this
-      // screen's whole design rule is against -- and a body with no customer
-      // is one the create schema answers 400 to, so rebuilding it is the
-      // repair as well as the fix.
       String? ran;
       await _pumpEditor(tester, onRun: (body) async => ran = body);
 

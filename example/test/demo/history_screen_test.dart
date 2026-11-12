@@ -20,8 +20,6 @@ HistoryEntry _entry({
   at: DateTime.utc(2026, 8, 29, 15, 4, 5),
   presetName: preset,
   sessionId: session,
-  // A web row has neither of these, and a helper that handed it both would
-  // be testing a row the app cannot write.
   transactionId: surface == webSurfaceName ? null : 'txn-$session',
   outcome: surface == webSurfaceName
       ? webOpenedOutcome
@@ -33,7 +31,6 @@ HistoryEntry _entry({
   surface: surface,
 );
 
-/// A backend already holding [entries], as a phone that has run before does.
 InMemoryHistoryBackend _seeded(List<HistoryEntry> entries) =>
     InMemoryHistoryBackend()
       ..entries = [for (final e in entries) jsonEncode(e.toJson())];
@@ -89,8 +86,6 @@ void main() {
     expect(copied, hasLength(1));
     expect(copied.single, contains('sess-9'));
     expect(copied.single, contains('txn-sess-9'));
-    // The report is built from an entry, and an entry has no field that can
-    // hold one -- this is the screen-level end of that guarantee.
     expect(copied.single.toLowerCase(), isNot(contains('token')));
     expect(find.text('Copied.'), findsOneWidget);
   });
@@ -110,11 +105,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: HistoryScreen(store: store)));
     await tester.pumpAndSettle();
 
-    // Both rows are on screen, so the Test row being unmarked is a fact about
-    // the row rather than about a row that never rendered.
     expect(find.text(liveScenarioName(LiveScenario.smoke)), findsOneWidget);
     expect(find.text('3DS challenge → approve'), findsOneWidget);
-    // One marking for one live row, whatever the rest of the list holds.
     expect(find.byKey(const ValueKey('historyLive')), findsOneWidget);
   });
 
@@ -138,12 +130,10 @@ void main() {
 
       expect(find.byKey(const ValueKey('historyWeb')), findsOneWidget);
       expect(find.textContaining(webOpenedOutcome), findsWidgets);
-      // Never the word somebody scanning a list would read as a result.
       expect(find.textContaining('Approved'), findsNothing);
     });
 
     testWidgets('a sheet row carries no marker at all', (tester) async {
-      // A screen full of rows nobody has changed reads exactly as it did.
       useTallSurface(tester);
       final store = HistoryStore(
         backend: _seeded([
@@ -177,7 +167,6 @@ void main() {
 
       expect(find.byKey(const ValueKey('historyWeb')), findsOneWidget);
       expect(find.text('LIVE'), findsOneWidget);
-      // LIVE is the word a list of forty is scanned for, so it stays last.
       expect(
         tester.getTopLeft(find.byKey(const ValueKey('historyWeb'))).dx,
         lessThan(tester.getTopLeft(find.text('LIVE')).dx),

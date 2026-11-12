@@ -15,8 +15,6 @@ HistoryEntry _entry() => HistoryEntry(
   nativeSdkVersion: '0.1.1',
 );
 
-/// A store whose first write fails and whose later ones do not, which is
-/// what a device that was briefly out of space looks like.
 class _FailOnceBackend implements HistoryBackend {
   bool _failed = false;
   List<String> entries = <String>[];
@@ -106,14 +104,6 @@ void main() {
   });
 
   test('nothing an entry can hold is a token', () {
-    // Structural, not textual: the type has no field for one, so no future
-    // edit can add a token to a bug report without failing here first.
-    //
-    // The exhaustive set is the half that does the work, and it is meant to
-    // fail on a new field. `surface` was added deliberately in demo-v0.1.4
-    // and is a two-letter word naming a screen; the field this rule exists
-    // to keep out is `checkoutUrl`, which is `…/pay?session=<token>` and so
-    // is a token spelled a different way.
     final fields = _entry().toJson().keys.toSet();
 
     expect(fields.where((f) => f.contains('token')), isEmpty);
@@ -133,9 +123,6 @@ void main() {
   });
 
   test('one corrupt line does not take the rest of the history with it', () {
-    // A process killed mid-write leaves a truncated last line. Reading the
-    // whole store as empty threw away every run that had been written
-    // correctly, which is the history somebody wanted that morning.
     final backend = InMemoryHistoryBackend()
       ..entries = [
         jsonEncode(_entry().toJson()),
@@ -146,8 +133,6 @@ void main() {
   });
 
   test('two runs finishing at once both survive', () async {
-    // `append` is read-modify-write over one key. Unserialised, both reads
-    // see the old list and the second write drops the first one's row.
     final store = HistoryStore(backend: InMemoryHistoryBackend());
 
     await Future.wait([
@@ -173,9 +158,6 @@ void main() {
   });
 
   test('a write that fails does not stop the next one', () async {
-    // The queue is what serialises appends, so a link that threw must not be
-    // what every later append is still waiting on. The caller sees the
-    // failure; the queue does not keep it.
     final store = HistoryStore(backend: _FailOnceBackend());
 
     await expectLater(store.append(_entry()), throwsStateError);
@@ -195,9 +177,6 @@ void main() {
     expect((await store.read()).single.sessionId, 'sess-10');
   });
   test('a run is a Test run unless it says otherwise', () {
-    // The default is the whole upgrade story: `fromJson` is strict and
-    // `read` drops rows it cannot parse, so a required field here would
-    // silently wipe every tester's existing sandbox history.
     expect(_entry().live, isFalse);
   });
 
@@ -256,8 +235,6 @@ void main() {
     );
 
     expect(live, contains('LIVE'));
-    // A Test report keeps exactly the shape people are already pasting into
-    // issues: the extra line appears only where it means something.
     expect(bugReport(_entry()), isNot(contains('LIVE')));
   });
 }

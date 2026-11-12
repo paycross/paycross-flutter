@@ -4,12 +4,7 @@ const String _clientIdKey = 'paycross_demo_client_id';
 const String _clientSecretKey = 'paycross_demo_client_secret';
 const String _googlePayKey = 'paycross_demo_google_pay_merchant_id';
 
-/// The demo's merchant credentials.
-///
-/// Held in memory for as long as a screen needs them and nowhere else. The
-/// only durable copy is in `flutter_secure_storage`; there is deliberately
-/// no `toString`/`toJson` on this class, so a credential cannot reach a log
-/// or a bug report by being interpolated into a string.
+/// Credentials, held in memory; the only durable copy is in flutter_secure_storage. No toString or toJson, so none reaches a log.
 class Credentials {
   const Credentials({
     required this.clientId,
@@ -20,36 +15,19 @@ class Credentials {
   final String clientId;
   final String clientSecret;
 
-  /// Android-only, and optional: sandbox Google Pay works without one.
   final String? googlePayMerchantId;
 }
 
-/// The narrow slice of a secure store this app uses.
-///
-/// One interface so the widget tests never reach a platform channel, and so
-/// the "every read is guarded" rule lives in exactly one place above it
-/// rather than at every call site.
 abstract interface class SecretBackend {
   Future<String?> read(String key);
   Future<void> write(String key, String value);
   Future<void> delete(String key);
 }
 
-/// Keychain on iOS, EncryptedSharedPreferences on Android.
 class SecureStorageBackend implements SecretBackend {
   const SecureStorageBackend([this._storage = const FlutterSecureStorage()]);
 
-  /// Keeps the Keychain item on the device that wrote it.
-  ///
-  /// The iOS half of the same decision `data_extraction_rules.xml` makes on
-  /// Android. The plugin's default accessibility lets an item travel to a
-  /// new device on a restore, where it belongs to a different install of
-  /// this app; the `_this_device` variants do not. `first_unlock` rather
-  /// than `unlocked` because `main` reads the merchant id before the app is
-  /// on screen, which can be before the human has unlocked the phone.
-  ///
-  /// Passed on reads and deletes too, not writes alone, so every query
-  /// describes the same item the write created.
+  /// Keychain item stays on the writing device (no restore). Reads and deletes pass the same options.
   static const IOSOptions iosOptions = IOSOptions(
     accessibility: KeychainAccessibility.first_unlock_this_device,
   );
@@ -69,7 +47,6 @@ class SecureStorageBackend implements SecretBackend {
       _storage.delete(key: key, iOptions: iosOptions);
 }
 
-/// A [SecretBackend] in a Map. Tests only.
 class InMemorySecretBackend implements SecretBackend {
   final Map<String, String> entries = <String, String>{};
 
@@ -83,18 +60,8 @@ class InMemorySecretBackend implements SecretBackend {
   Future<void> delete(String key) async => entries.remove(key);
 }
 
-/// Where the demo's credentials live.
-///
-/// Every read is guarded and answers null on any failure. A wiped store, an
-/// undecryptable one and an empty one are indistinguishable from here, and
-/// all three mean the same thing to the app: not configured, go to Settings.
-/// That is the load-bearing rule -- it holds whatever the storage plugin's
-/// `resetOnError` default happens to be in the version resolved today.
 class SecretStore {
   const SecretStore({SecretBackend backend = const SecureStorageBackend()})
-    // The lint's own fix does not compile: Dart forbids a private NAMED
-    // parameter, so `this._backend` cannot appear in a `{...}` list, and a
-    // public backend is not what this class is for.
     // ignore: prefer_initializing_formals
     : _backend = backend;
 
@@ -129,18 +96,11 @@ class SecretStore {
         await _backend.write(_googlePayKey, merchantId);
       }
     } catch (_) {
-      // Three keys, written in turn, so a failure part-way can leave a new
-      // id beside the old secret. That pair is worse than an empty store:
-      // it reads back as configured, so nothing sends the human to Settings,
-      // and it can never authenticate. "Not configured" is the only state
-      // this class can still promise, and the guarded read already knows how
-      // to answer it.
+      // A failed write can leave a new id beside the old secret; forget clears both, so the state reads as not configured.
       try {
         await forget();
-      } catch (_) {
-        // The store is beyond reach entirely. The write's own failure is the
-        // one worth reporting, so let it be the one that escapes.
-      }
+        // Best effort: a failed forget must not hide the original error, which rethrow passes on.
+      } catch (_) {}
       rethrow;
     }
   }

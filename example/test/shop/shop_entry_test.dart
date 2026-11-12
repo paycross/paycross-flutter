@@ -65,11 +65,6 @@ void main() {
     );
   });
 
-  /// The storefront mints on the sandbox credentials in the secure store, and
-  /// its Pay button asks nothing before it charges. In Live that would be a
-  /// real card spent on one tap, past every refusal the Live tiles climb --
-  /// and the red LIVE banner sits over every route, so a reviewer's
-  /// screenshot of the shop would carry it. There is simply no way in.
   testWidgets('Live has no shop in it at all', (tester) async {
     useTallSurface(tester);
     await tester.pumpWidget(

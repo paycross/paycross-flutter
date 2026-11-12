@@ -2,11 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'test_cards.dart';
 
-/// The sandbox cheat sheet: what to type, and what never to.
-///
-/// The do-not-use section is the half worth having. Those three PANs approve
-/// instead of declining, so a colleague who tries one without reading the
-/// reason files an SDK bug that is really a backend gap.
 class TestCardsScreen extends StatelessWidget {
   const TestCardsScreen({super.key});
 

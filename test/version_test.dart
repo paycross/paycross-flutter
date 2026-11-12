@@ -2,18 +2,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// The plugin writes its own version in five places, in four languages, and
-/// nothing else checks that they agree.
-///
-/// `versionInfo()` reports the two native constants to the host app, so a
-/// merchant debugging a wallet reads them out of a running build and compares
-/// them to the version they think they installed. The Kotlin test is the only
-/// other assertion that pins one, and CI runs no Gradle step, so it never
-/// executes. Everything else -- format, analyze, the Pigeon freshness gate, the
-/// macOS build -- passes happily on a tree whose five versions disagree.
-///
-/// The pubspec is the source of truth because it is the one a merchant's
-/// `pub get` resolves against.
 String _the(String label, String path, RegExp pattern) {
   final text = File(path).readAsStringSync();
   final match = pattern.firstMatch(text);
@@ -59,8 +47,6 @@ void main() {
       ),
     };
 
-    // Every disagreement at once, rather than stopping at the first: a bump
-    // that missed three files should say so in one run.
     final drifted = <String>[
       for (final site in sites.entries)
         if (site.value != pubspec) '${site.key} says ${site.value}',

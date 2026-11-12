@@ -4,10 +4,6 @@ import '../demo/money.dart';
 import 'catalogue.dart';
 import 'checkout_screen.dart';
 
-/// One product, and the decision to buy it.
-///
-/// The second of the five review screens: the pre-purchase page, where the
-/// price is stated plainly and one button carries the shopper on.
 class ProductScreen extends StatelessWidget {
   const ProductScreen({super.key, required this.product});
 
@@ -23,8 +19,6 @@ class ProductScreen extends StatelessWidget {
         children: [
           Center(
             child: Semantics(
-              // A stand-in for a photograph, and named as one: read aloud,
-              // the character itself is either silence or the wrong noun.
               label: 'Illustration of the ${product.name.toLowerCase()}',
               child: Text(
                 product.illustration,

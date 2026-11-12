@@ -15,17 +15,12 @@ import 'package:paycross_demo/demo/settings.dart';
 import 'package:paycross_demo/demo/wallets.dart';
 import 'package:paycross_demo/main.dart' as app;
 import 'package:paycross_flutter/paycross_flutter.dart';
-// The generated Pigeon client is deliberately not exported (see
-// `lib/paycross_flutter.dart`), and `PayCross.debugHostApi` takes it. A test
-// is the one place allowed to reach for it, and this is the only way to read
-// back what `main` handed to `configure`.
 // ignore: implementation_imports
 import 'package:paycross_flutter/src/generated/paycross_api.g.dart' as g;
 
 import 'demo/_environment.dart';
 import 'demo/_surface.dart';
 
-/// Records the configuration `main` builds. Nothing here reaches a platform.
 class _RecordingHost extends g.PayCrossHostApi {
   g.PcConfiguration? lastConfiguration;
 
@@ -34,13 +29,6 @@ class _RecordingHost extends g.PayCrossHostApi {
       lastConfiguration = configuration;
 }
 
-/// A store that answers once and then starts failing, which is what a device
-/// locking mid-session looks like: the profile strip's read at launch gets
-/// through, and the read a run makes afterwards does not.
-///
-/// It breaks [SecretStore]'s own "every read is guarded" promise on purpose.
-/// Nothing in the app does this today -- the point is that a link is
-/// fire-and-forget, so an escape from `runPreset` would have no owner.
 class _ThrowsAfterFirstRead extends SecretStore {
   int reads = 0;
 
@@ -52,8 +40,6 @@ class _ThrowsAfterFirstRead extends SecretStore {
   }
 }
 
-/// A store whose reads wait on [gate], so a link can arrive while a tile tap
-/// is still reading -- the window the two entrances share.
 class _SlowBackend implements SecretBackend {
   final Completer<void> gate = Completer<void>();
 
@@ -70,12 +56,6 @@ class _SlowBackend implements SecretBackend {
   Future<void> delete(String key) async {}
 }
 
-/// A secret backend whose reads never answer.
-///
-/// Not the same failure as [_ThrowingBackend]: a platform channel with
-/// nothing behind it goes quiet rather than throwing, and `main` awaits this
-/// read before `runApp`, so silence is a black screen where an exception is
-/// only a missing merchant id.
 class _NeverAnsweringSecretBackend implements SecretBackend {
   final Completer<String?> gate = Completer<String?>();
 
@@ -89,7 +69,6 @@ class _NeverAnsweringSecretBackend implements SecretBackend {
   Future<void> delete(String key) async {}
 }
 
-/// The same silence, for the language store.
 class _NeverAnsweringLanguageBackend implements LanguageBackend {
   final Completer<String?> gate = Completer<String?>();
 
@@ -100,8 +79,6 @@ class _NeverAnsweringLanguageBackend implements LanguageBackend {
   Future<void> write(String value) async {}
 }
 
-/// A language backend whose reads throw, standing in for a device whose
-/// preference store is unavailable at launch.
 class _ThrowingLanguageBackend implements LanguageBackend {
   @override
   Future<String?> read() async => throw StateError('no preferences');
@@ -110,8 +87,6 @@ class _ThrowingLanguageBackend implements LanguageBackend {
   Future<void> write(String value) async => throw StateError('no preferences');
 }
 
-/// An appearance backend whose read never answers. The appearance twin of
-/// [_NeverAnsweringLanguageBackend].
 class _NeverAnsweringAppearanceBackend implements AppearanceBackend {
   final Completer<String?> gate = Completer<String?>();
 
@@ -122,8 +97,6 @@ class _NeverAnsweringAppearanceBackend implements AppearanceBackend {
   Future<void> write(String value) async {}
 }
 
-/// An appearance backend whose reads throw. The appearance twin of
-/// [_ThrowingLanguageBackend].
 class _ThrowingAppearanceBackend implements AppearanceBackend {
   @override
   Future<String?> read() async => throw StateError('no preferences');
@@ -132,8 +105,6 @@ class _ThrowingAppearanceBackend implements AppearanceBackend {
   Future<void> write(String value) async => throw StateError('no preferences');
 }
 
-/// A store whose reads throw, standing in for a device whose Keychain or
-/// KeyStore is unavailable at launch.
 class _ThrowingBackend implements SecretBackend {
   @override
   Future<String?> read(String key) async => throw StateError('no keychain');
@@ -152,22 +123,10 @@ void main() {
   setUp(() {
     host = _RecordingHost();
     PayCross.debugHostApi = host;
-    // Every test that calls `app.main()` needs a language store that answers.
-    // `SharedPreferences` under `flutter test` has no platform behind it, and
-    // a platform store with nothing behind it does not fail -- it never
-    // answers, which is what `preset_store.dart` and `history.dart` both put
-    // a bound on their writes for. `main` awaits this read before `runApp`,
-    // so an unanswering one hangs the whole test file rather than failing it.
     app.mainLanguageStore = LanguageStore(backend: InMemoryLanguageBackend());
-    // And the appearance store, for the same reason and with the same
-    // failure: `main` awaits this read too, and a real preference store under
-    // `flutter test` never answers it.
     app.mainAppearanceStore = AppearanceStore(
       backend: InMemoryAppearanceBackend(),
     );
-    // `runInFlight` is top-level, so a test that ends while a read is still in
-    // flight leaves it set and the next test silently cannot start a run at
-    // all. Reset rather than tearDown: it also covers a test that dies.
     runInFlight = false;
   });
 
@@ -228,11 +187,6 @@ void main() {
   testWidgets('the launch configure carries the Test Apple identifier', (
     tester,
   ) async {
-    // A build constant rather than a stored one, so there is nothing to set
-    // up: every launch of this app in Test is configured with the identifier
-    // that its entitlement lists. PassKit will not present a sheet for any
-    // other one, and it declines to by leaving the button inert rather than
-    // by raising anything anybody sees.
     app.mainSecretStore = SecretStore(backend: InMemorySecretBackend());
 
     await app.main();
@@ -256,9 +210,6 @@ void main() {
     expect(host.lastConfiguration?.locale, 'fr');
   });
 
-  /// Null rather than 'en'. The native ladder's first rung is left empty, so
-  /// the payment session's own locale decides and the device after it -- which
-  /// is what a merchant who writes no locale code gets.
   testWidgets('a store with no language configures with null', (tester) async {
     app.mainSecretStore = SecretStore(backend: InMemorySecretBackend());
     app.mainLanguageStore = LanguageStore(backend: InMemoryLanguageBackend());
@@ -270,11 +221,6 @@ void main() {
     expect(host.lastConfiguration?.locale, isNull);
   });
 
-  /// The failure all three launch reads actually have. None of the stores
-  /// throws when the platform is not there; all three go quiet, and `main`
-  /// awaits them before `runApp` — so without a bound this is a launch that
-  /// never draws a frame. Every bound is five seconds, the one
-  /// `preset_store.dart` and `history.dart` already use.
   testWidgets('three stores that go quiet do not stall the launch', (
     tester,
   ) async {
@@ -288,8 +234,6 @@ void main() {
 
     var launched = false;
     unawaited(app.main().then((_) => launched = true));
-    // Past all three bounds, in this test's own fake clock. They run one after
-    // another, so the launch needs more than one of them to get through.
     await tester.pump(const Duration(seconds: 16));
     await tester.pump();
 
@@ -319,9 +263,6 @@ void main() {
     expect(appearance?.shapes?.buttonCornerRadius, 28);
   });
 
-  /// No appearance at all rather than an empty one, so that a colleague who
-  /// has set nothing sees what a merchant who wrote no appearance code sees:
-  /// the colour set in the back office, and the platform's own after it.
   testWidgets('a store with no appearance configures with null', (
     tester,
   ) async {
@@ -337,9 +278,6 @@ void main() {
     expect(host.lastConfiguration?.appearance, isNull);
   });
 
-  /// The read happens before `runApp` and `configure` raises on an appearance
-  /// it cannot draw, so an unavailable preference store must cost the sheet
-  /// its theme and not the app its launch.
   testWidgets('an appearance store that throws configures with null', (
     tester,
   ) async {
@@ -356,8 +294,6 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  /// The read happens before `runApp`, so a preference store that is
-  /// unavailable must cost the sheet its language and not the app its launch.
   testWidgets('a language store that throws configures with null', (
     tester,
   ) async {
@@ -392,10 +328,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Nothing is stored, so the link lands exactly where a tile tap lands.
-    // That is `runPreset`'s "not configured routes to Settings" rule, and
-    // this is the whole point of the link going through `runPreset`: the
-    // rule is written once and cannot be true of one entrance only.
     expect(find.byType(SettingsScreen), findsOneWidget);
   });
 
@@ -424,10 +356,6 @@ void main() {
 
     expect(find.byType(SettingsScreen), findsOneWidget);
 
-    // The real assertion: had the second link been honoured there would be a
-    // second route underneath this one, and one pop would land on it rather
-    // than on Home. A link can arrive while a run is already open, which is
-    // the one thing a tile on Home cannot do.
     await tester.pageBack();
     await tester.pumpAndSettle();
 
@@ -469,9 +397,6 @@ void main() {
     expect(find.byType(RunScreen), findsOneWidget);
     expect(mints, 1);
 
-    // The run on screen was started by a tile, so DemoHome's own flag knows
-    // nothing about it and the read guard cleared long ago. Home is no longer
-    // the current route, and that is what has to refuse this link.
     links.add(
       Uri.parse('paycross-flutter-demo://run?preset=Frictionless%203DS'),
     );
@@ -479,8 +404,6 @@ void main() {
 
     expect(mints, 1);
     expect(find.byType(RunScreen), findsOneWidget);
-    // Silence here reads as a broken build: the phone is in somebody's hand
-    // and the link they just fired did nothing they can see.
     expect(
       find.text('Link ignored — close the open screen first.'),
       findsOneWidget,
@@ -491,12 +414,6 @@ void main() {
   });
 
   testWidgets('a link in Live starts nothing and says why', (tester) async {
-    // Two refusals stand between a link and a production charge: the parser
-    // rejects every run link in Live, and `_DemoHomeState._run` checks the
-    // environment again before it can mint. This case is the composed
-    // outcome of both -- with either one alone in place it still passes,
-    // which is what "belt and braces" means and is recorded as such in the
-    // progress file.
     useTallSurface(tester);
     final links = StreamController<Uri>();
     addTearDown(links.close);
@@ -528,7 +445,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // A stored sandbox credential is right there, and nothing reached it.
     expect(mints, 0);
     expect(find.byType(RunScreen), findsNothing);
     expect(find.text('Live mode — links are disabled'), findsOneWidget);
@@ -557,7 +473,6 @@ void main() {
 
     expect(find.text('Could not start the run: StateError'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    // And the app-wide guard did not survive the throw.
     expect(runInFlight, isFalse);
 
     await tester.pump(const Duration(seconds: 5));
@@ -580,9 +495,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // The tap goes in through Home, the link goes in through DemoHome, and
-    // the two carry different flags -- so the only thing that can refuse the
-    // link here is the guard inside `runPreset` itself.
     await tester.tap(find.text(demoPresets.first.name));
     await tester.pump();
 
@@ -610,8 +522,6 @@ void main() {
     await tester.pumpWidget(const app.ExampleApp());
     await tester.pumpAndSettle();
 
-    // The builder is the whole mechanism: it wraps the Navigator, so a route
-    // pushed later reads the same environment and sits under the same banner.
     expect(
       tester.widget<MaterialApp>(find.byType(MaterialApp)).builder,
       isNotNull,
@@ -632,9 +542,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Both ends of the carry. The widget field alone would pass against a
-    // scope that never handed it on, and the state alone would not say which
-    // of the two constructors dropped it.
     expect(
       tester
           .widget<LiveModeScope>(find.byType(LiveModeScope))
@@ -649,25 +556,6 @@ void main() {
   });
 
   test('launch hands both wallet identifiers on to the widget tree', () {
-    // A source pin rather than a widget test, because the widget route does
-    // not work here: a test that calls `app.main()` and then looks for
-    // `LiveModeScope` never settles, and hangs the runner instead of failing.
-    //
-    // Worth pinning anyway, because this is the one seam nothing else
-    // covers. The configure call above hands the SDK the identifier for this
-    // launch; this second copy is the one `leaveLive` reads back out of the
-    // state. The tests that call `app.main()` read only the recorded
-    // configuration, and the two widget tests above build `ExampleApp` by
-    // hand, so dropping either argument from this call left all 385 tests
-    // green -- and left Apple Pay working at launch, working in Live, and
-    // gone the moment the tester came back out.
-    //
-    // Sliced to `main`'s own body, then comments stripped and whitespace
-    // collapsed, for the three reasons the pin below gives: a later
-    // `ExampleApp(...)` elsewhere in the file must not stand in for this
-    // call, a line of prose naming an argument must not stand in for the
-    // argument, and `dart format` rewraps this call whenever an argument is
-    // added.
     final source = File('lib/main.dart').readAsStringSync();
     final start = source.indexOf('Future<void> main() async {');
     expect(start, isNot(-1));
@@ -683,83 +571,37 @@ void main() {
 
     expect(handedOn, contains('googlePayMerchantId: merchantId'));
     expect(handedOn, contains('applePayMerchantId: testApplePayMerchantId'));
-    // And the language, for the same reason: this copy is the one every
-    // re-point the state makes reads back, so dropping it here leaves the
-    // sheet French at launch and English from the first environment switch.
     expect(handedOn, contains('locale: locale'));
-    // And the theme. Without this copy the first themed preset run ends by
-    // clearing the colours a colleague set in Settings, and they stay cleared
-    // until the app is relaunched.
     expect(handedOn, contains('appearance: appearance'));
   });
 
   test('the frozen build still awaits one thing and reads no storage', () {
-    // `kE2e` is a compile-time constant, so a test process cannot be the
-    // automation build and the demo build at once. What is checkable is the
-    // shape of `main` itself, and it is worth checking: an unguarded await
-    // here once took down all six D0 cells on both platforms, and the failure
-    // read as an SDK hang rather than as anything to do with this function.
-    //
-    // Whitespace is collapsed first, for the reason the source pin below
-    // collapses it: `dart format` rewraps these lines whenever an argument is
-    // added, and a test that a reformat can redden is a test about
-    // formatting.
     final source = File('lib/main.dart').readAsStringSync();
     final start = source.indexOf('Future<void> main() async {');
     expect(start, isNot(-1));
     final body = source.substring(start, source.indexOf('\n}', start));
-    // Comments go first, the way CI's own storage grep strips them before it
-    // greps: this function explains its await budget in prose, and a counter
-    // that reads the prose counts the explanation as a violation. Found by
-    // writing this test, which counted three.
     final code = body
         .split('\n')
         .map((line) => line.replaceAll(RegExp('//.*\$'), ''))
         .join('\n');
     final collapsed = code.replaceAll(RegExp(r'\s+'), ' ');
 
-    // Three in the source, two of them behind the automation conditional, so
-    // exactly one runs in the frozen build. A fourth would fail here whichever
-    // arm it landed on, which is the point -- this counts rather than
-    // matching, because the await worth catching is the one nobody predicted.
     expect('await '.allMatches(collapsed).length, 4);
     expect(collapsed, contains('await PayCross.configure('));
-    // The leading colon is the proof of the guard: both reads sit in the
-    // false arm of a `kE2e ? … : …`, so neither is reached by the frozen
-    // build at all.
     expect(collapsed, contains(': await _storedGooglePayMerchantId();'));
     expect(collapsed, contains(': await _storedLocale();'));
     expect(collapsed, contains(': await _storedAppearance();'));
-    // The automation arm of the same conditional, which is a constant decoded
-    // rather than a store read: `DemoAppearance.fromJson` answers "no theme"
-    // for anything it cannot read, so a define with a typo in it costs the
-    // cell its colours rather than its launch.
     expect(
       collapsed,
       contains('? DemoAppearance.fromJson(_appearance).toAppearance()'),
     );
 
-    // And the storage reads are reached only through those guarded arms. A
-    // direct read here would be another await, but it would also be a read on
-    // a device whose keychain the automation runner never unlocks.
     expect(code, isNot(contains('mainSecretStore')));
     expect(code, isNot(contains('mainLanguageStore')));
     expect(code, isNot(contains('mainAppearanceStore')));
   });
 
   test('the automation build installs no environment scope', () {
-    // kE2e is a compile-time constant, so a test process cannot be both
-    // builds at once. What is checkable here is that the builder is behind
-    // the same conditional every other E2E branch in this file is behind --
-    // the frozen build has no toggle in it, rather than one switched off.
-    //
-    // Whitespace is collapsed first because `dart format` breaks the
-    // conditional across three lines, and a source match that a reformat can
-    // redden is a test about formatting. Collapsing it also allows the whole
-    // fragment to be matched at once, which is the point: `? null` on its own
-    // matches the merchant-id ternary higher up the same file, so it would
-    // stay green with this conditional deleted -- which is the one edit worth
-    // catching.
     final source = File('lib/main.dart').readAsStringSync();
 
     expect(

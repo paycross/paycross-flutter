@@ -10,10 +10,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Everything that can be verified without a Mac, and that is most of it. The
-  # Gradle step below actually type-checks the Android half of the Pigeon
-  # contract; nothing on Linux can do the same for Swift, which is the whole
-  # reason the macOS job exists at all.
   linux:
     name: Analyze, test, Android
     runs-on: ubuntu-latest
@@ -25,9 +21,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Pinned, not `channel: stable`: the freshness check below diffs
-      # `dart format` output, so a floating formatter would break a clean tree
-      # the day Dart changes its formatting. 3.44.2 is the pubspec floor.
+      # Pinned, not `channel: stable`: the format check depends on Dart's exact output.
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.2'
@@ -35,41 +29,24 @@ jobs:
 
       - run: flutter pub get
 
-      # flutter pub get rewrites both analysis_options.yaml files, adding an
-      # analyzer.exclude block. They are committed in exactly that shape, so
-      # this stays silent — and shouts if anyone hand-edits them back.
+      # pub get adds an analyzer.exclude block to these files; they are committed with it.
       - name: analysis_options survives pub get
         run: git diff --exit-code -- analysis_options.yaml example/analysis_options.yaml
 
-      # lib/src/generated is included. It used to be excluded so it could stay
-      # byte-identical to Pigeon's raw output, but Pigeon does not emit
-      # `dart format`-clean Dart and pana scores the whole package's
-      # formatting. The freshness check below closes the gap by formatting
-      # immediately after generating, so "generated" and "formatted" are one
-      # state rather than two competing ones.
+      # Pigeon's raw output is not dart format clean, so generated Dart is formatted too.
       - name: Format
         run: dart format --output=none --set-exit-if-changed lib test pigeons example/lib example/test
 
       - name: Analyze
         run: flutter analyze --fatal-infos
 
-      # The classic failure of a codegen bridge: someone edits the schema, does
-      # not regenerate, and the mismatch only surfaces on a device. Regenerating
-      # and diffing costs seconds and closes it.
       - name: Pigeon output is current
         run: |
           set -euo pipefail
           dart run pigeon --input pigeons/paycross_api.dart
-          # Part of generating, not a separate tidy-up: the committed Dart is
-          # formatted, so the comparison has to be against formatted output or
-          # this step fails on every clean tree. Kotlin and Swift are left as
-          # Pigeon emits them — `dart format` cannot read them, and pana only
-          # scores Dart.
+          # The committed Dart is formatted, so compare formatted output.
           dart format lib/src/generated
-          # Staged first, then compared --cached: a plain `git diff` only sees
-          # files git already tracks, so output landing in a NEW file — a
-          # renamed class, a generator that starts splitting its output — would
-          # sit there untracked and the check would pass.
+          # Staged so that a new generated file also shows in the diff.
           git add -A lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/paycross_flutter/Sources/paycross_flutter/generated
           if ! git diff --cached --exit-code -- lib/src/generated android/src/main/kotlin/com/paycross/flutter/generated ios/paycross_flutter/Sources/paycross_flutter/generated; then
             echo "::error::Pigeon output is stale. Run: dart run pigeon --input pigeons/paycross_api.dart && dart format lib/src/generated"
@@ -79,42 +56,34 @@ jobs:
       - name: Test
         run: flutter test
 
-      # A separate step because `flutter test` at the root does not descend
-      # into example/. Without this the E2E label contract is only analyzed,
-      # never executed, so a wrong-but-compiling label would ship green.
+      # flutter test at the root does not descend into example/.
       - name: Test example
         run: flutter test
         working-directory: example
 
-      # Compiles the generated Kotlin against the hand-written plugin and the
-      # real SDK. This is the Android half of the contract check, and the only
-      # step here that needs the SDK to exist as a resolvable artifact.
+      # Compiles the generated Kotlin against the real SDK artifact.
       - name: Build example APK
         run: flutter build apk --debug
         working-directory: example
 
-  # Guards properties that fail silently rather than at build time.
   invariants:
     name: Invariants
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      # Pigeon's own docs advise against putting generated code in a public API,
-      # and merchants have no resolver to shield them from a renamed field.
+      # Generated code stays private: a renamed field would break merchant builds.
       - name: Generated code is not exported
         run: |
           set -euo pipefail
-          # Anchored to a real export/import: the file's own doc comment
-          # explains this rule and must not trip it.
+          # Anchored so the library's own doc comment does not match.
           if grep -nE "^\s*(export|import) .*src/generated" lib/paycross_flutter.dart; then
             echo "::error::lib/src/generated must not be exported from the public library"
             exit 1
           fi
           echo "ok"
 
-      # Both native sides must be generated by the same Pigeon, so the version
-      # cannot float.
+      # Both native sides must come from the same Pigeon version.
       - name: Pigeon is pinned exactly
         run: |
           set -euo pipefail
@@ -124,8 +93,7 @@ jobs:
           fi
           echo "ok"
 
-      # mavenLocal only exists on the machine that published to it. Shipping it
-      # would resolve here and fail in every merchant's build.
+      # mavenLocal exists only on the machine that published to it.
       - name: No mavenLocal reaches a merchant
         run: |
           set -euo pipefail
@@ -135,24 +103,14 @@ jobs:
           fi
           echo "ok"
 
-  # The E2E matrix runner's own tests. Deliberately device-free: every driver
-  # call is faked, so what this proves is the parsing, the redaction, the label
-  # matching and the merchant verification -- the parts where a silent mistake
-  # would be read as an SDK finding rather than as a bug in the tool. The
-  # shipped cell files are validated here too, so a YAML typo fails in seconds
-  # instead of twenty minutes into an emulator run.
-  #
-  # The example app's own tests are not repeated here; the linux job above
-  # already runs them, and the label contract only needs proving once.
+  # Device-free: every driver call is faked.
   e2e-unit:
     name: Runner and release-tool unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      # The runner targets the WSL rig's interpreter, which is 3.10. Pinned
-      # rather than floating so a syntax feature that only lands later cannot
-      # pass CI and then fail on the machine that drives the devices.
+      # Pinned to 3.10, the interpreter the runner must support.
       - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
@@ -165,10 +123,7 @@ jobs:
           ruff check --config tool/e2e/ruff.toml tool/e2e
           ruff format --check --config tool/e2e/ruff.toml tool/e2e
 
-      # Its own config, and not tool/e2e's: tool/demo targets Python 3.9
-      # because the Mac that runs its live commands has nothing newer, and
-      # linting it under the runner's py310 target would let an autofix
-      # rewrite the one alias that keeps it importable there.
+      # Own config: tool/demo targets Python 3.9, not the runner's py310.
       - name: Lint the release tool
         run: |
           ruff check --config tool/demo/ruff.toml tool/demo
@@ -177,10 +132,6 @@ jobs:
       - name: Test the runner
         run: python -m pytest tool/e2e/tests tool/demo/tests -q
 
-  # macOS only proves the thing Linux cannot: that the generated Swift and the
-  # hand-written iOS implementation actually agree. PR-only, because that
-  # mismatch can only be introduced by a source change, and macOS minutes bill
-  # at ~10x Linux on a private repo.
   ios:
     name: iOS build
     runs-on: macos-26
@@ -188,8 +139,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Pinned to the same floor as the Linux job, so both halves of the Pigeon
-      # contract are proven against the oldest Flutter the pubspec allows.
+      # Pinned to the same Flutter floor as the Linux job.
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.2'
@@ -197,8 +147,7 @@ jobs:
 
       - run: flutter pub get
 
-      # Resolves PayCross/PayCrossCore from CocoaPods trunk — the exact
-      # artifacts merchants get.
+      # Resolves the SDK from CocoaPods trunk, as merchants do.
       - name: Build example for simulator
         run: flutter build ios --simulator --no-codesign
         working-directory: example

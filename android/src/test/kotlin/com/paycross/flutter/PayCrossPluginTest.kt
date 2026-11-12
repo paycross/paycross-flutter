@@ -20,19 +20,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/*
- * JVM-only tests of the plugin's guard rails: the paths that fail before any
- * Activity is launched or any native SDK call is made. The happy path needs a
- * real Activity and the SDK's own payment screen, so it can only be exercised
- * on a device.
- *
- * None of these tests call configure(). The cached configuration is
- * process-wide (see the companion object in PayCrossPlugin), so configuring in
- * one test would leak into every other test in this JVM and break the
- * not-configured assertion.
- *
- * Run with `./gradlew testDebugUnitTest` in `example/android/`.
- */
 internal class PayCrossPluginTest {
 
     private fun presentPaymentError(token: String): FlutterError {
@@ -59,8 +46,6 @@ internal class PayCrossPluginTest {
         val info = PayCrossPlugin().versionInfo()
 
         assertEquals("0.7.4", info.pluginVersion)
-        // The Android SDK declares no version constant; the plugin reports
-        // null rather than fabricating one.
         assertNull(info.nativeSdkVersion)
     }
 
@@ -74,8 +59,6 @@ internal class PayCrossPluginTest {
             savedCardToken = "tok"
         ).toPigeon() as PcSuccess
 
-        // The merchant's only route to the vault reference: the sheet that
-        // saved the card is the SDK's own, so nothing else crosses it.
         assertEquals("tok", pigeon.savedCardToken)
     }
 
@@ -88,8 +71,6 @@ internal class PayCrossPluginTest {
             currency = "EUR"
         ).toPigeon() as PcSuccess
 
-        // Saving is asked for at session creation, so most payments save
-        // nothing and this must stay null rather than becoming "".
         assertNull(pigeon.savedCardToken)
     }
 
@@ -101,8 +82,6 @@ internal class PayCrossPluginTest {
             recoveryRaw = "issuer_wants_a_phone_call"
         ).toPigeon() as PcFailure
 
-        // Verbatim, so Dart lands on RecoveryUnrecognized with the real token
-        // rather than reporting a terminal decline it never received.
         assertEquals("issuer_wants_a_phone_call", pigeon.recovery)
     }
 
@@ -118,8 +97,6 @@ internal class PayCrossPluginTest {
 
     @Test
     fun everyRecoveryHasATokenAndNoneOfThemIsEmpty() {
-        // The empty string is how both SDKs spell "the server said nothing",
-        // which Dart reads as retry. No enum member may collapse to it.
         for (recovery in Recovery.entries) {
             assertEquals(
                 true,
@@ -150,17 +127,12 @@ internal class PayCrossPluginTest {
             reason = PendingReason.POLL_TIMEOUT
         ).toPigeon()
 
-        // Its own case, not a Failure: this is the outcome where reading a
-        // decline and offering a retry can charge the shopper twice.
         assertEquals("tx-4", (pigeon as PcPending).transactionId)
         assertEquals("poll_timeout", pigeon.reason)
     }
 
     @Test
     fun everyPendingReasonCrossesAsItsWireName() {
-        // The vocabulary is agreed verbatim with the iOS SDK and with Dart's
-        // parser. A member whose wire name drifts is a wire break, so it is
-        // pinned here rather than only by the enum's own spelling.
         val expected = mapOf(
             PendingReason.POLL_TIMEOUT to "poll_timeout",
             PendingReason.RESULT_LOST to "result_lost",
@@ -175,8 +147,6 @@ internal class PayCrossPluginTest {
 
             assertEquals(expected[reason], pigeon.reason, "$reason crossed as ${pigeon.reason}")
         }
-        // A reason added to the SDK fails on the map above rather than
-        // reaching Dart as an unpinned string.
         assertEquals(expected.keys, PendingReason.entries.toSet())
     }
 
@@ -212,10 +182,6 @@ internal class PayCrossPluginTest {
         val native = pigeon.toNative()
 
         val light = requireNotNull(native.light)
-        // Every role, because a field that silently stops crossing is
-        // invisible until a merchant's sheet is the wrong colour. The 0x80
-        // alpha proves the top byte survives: a packing that dropped it would
-        // still look right for every opaque colour anybody checks by hand.
         assertEquals(0xFF1E88E5.toInt(), light.brand)
         assertEquals(0xFFFFFFFF.toInt(), light.onBrand)
         assertEquals(0xFFF7F7F7.toInt(), light.surface)
@@ -251,10 +217,6 @@ internal class PayCrossPluginTest {
             themeMode = PcThemeMode.SYSTEM
         ).toNative()
 
-        // Zero is not absence here: 0x00000000 is transparent black, a legal
-        // colour the SDK would paint. Absence has to stay null all the way
-        // down, because that is what the SDK reads as "keep the platform
-        // default".
         assertEquals(0xFF6750A4.toInt(), native.light?.brand)
         assertNull(native.light?.surface)
         assertNull(native.light?.onBrand)
@@ -276,17 +238,11 @@ internal class PayCrossPluginTest {
         for (mode in PcThemeMode.entries) {
             assertEquals(expected[mode], PcAppearance(themeMode = mode).toNative().themeMode)
         }
-        // A mode added to the wire fails on the map above rather than being
-        // quietly folded into SYSTEM.
         assertEquals(expected.keys, PcThemeMode.entries.toSet())
     }
 
     @Test
     fun aLostResultPayload_isPendingRatherThanAnError() {
-        // The branch `deliver` takes when the Activity returns RESULT_OK with
-        // no payload. It used to fail the call with `paycross_result_unknown`,
-        // which reached merchants as a thrown exception rather than as the
-        // unresolved payment it is.
         val pigeon = lostResult()
 
         assertEquals("result_lost", pigeon.reason)

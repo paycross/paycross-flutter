@@ -1,9 +1,6 @@
-# 16.0, not the template's default: the PayCross native SDK is built against
-# iOS 16, so anything lower fails pod resolution before a line of Swift is
-# compiled. Merchants integrating this plugin must do the same.
+# iOS 16.0, not the template default. The PayCross native SDK is built against iOS 16; merchants must match it.
 platform :ios, '16.0'
 
-# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {

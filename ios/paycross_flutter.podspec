@@ -12,16 +12,10 @@ Pod::Spec.new do |s|
   s.author           = 'PayCross'
   s.source           = { :path => '.' }
 
-  # The same tree Package.swift compiles, so CocoaPods and Swift Package
-  # Manager cannot drift into building different sources. The glob is recursive
-  # because the Pigeon output sits in a generated/ subdirectory and has to be
-  # compiled with the hand-written Swift beside it.
+  # Recursive, so the generated Pigeon sources under generated/ are compiled too.
   s.source_files = 'paycross_flutter/Sources/paycross_flutter/**/*.swift'
 
-  # CocoaPods does not read Package.swift's `resources:`, so the privacy
-  # manifest is declared again here. Apple reads it out of the built bundle,
-  # and a pod that shipped without one would be rejected at App Store submission
-  # with nothing in the build log to point at.
+  # CocoaPods ignores Package.swift's resources, so the privacy manifest is declared here too. Apple reads it from the built bundle; a missing one is silent in the build log.
   s.resource_bundles = {
     'paycross_flutter_privacy' => ['paycross_flutter/Sources/paycross_flutter/PrivacyInfo.xcprivacy']
   }
@@ -29,17 +23,14 @@ Pod::Spec.new do |s|
   s.dependency 'Flutter'
   s.dependency 'PayCross', '0.8.0'
 
-  # 16.0, not the template's 13.0: PayCross declares platforms: [.iOS(.v16)],
-  # and CocoaPods surfaces that mismatch as an opaque resolution failure rather
-  # than a legible minimum-version error. Stated here, where a merchant sees it.
+  # Matches the wrapped SDK's iOS 16 minimum; CocoaPods reports a mismatch only as a resolution failure.
   s.platform = :ios, '16.0'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
-    # Flutter.framework does not contain an i386 slice.
+    # Flutter.framework has no i386 architecture.
     'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
-    # The wrapped SDK is written against Swift 6 strict concurrency, and a Pods
-    # project does not inherit .swiftLanguageMode(.v6) from Package.swift.
+    # The wrapped SDK uses Swift 6 strict concurrency, which Pods do not inherit from Package.swift.
     'SWIFT_VERSION' => '6.0'
   }
   s.swift_version = '6.0'

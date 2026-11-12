@@ -2,9 +2,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_demo/demo/secrets.dart';
 
-/// A store whose every read fails, which is what an iOS Runner without the
-/// Keychain Sharing entitlement and an Android device whose KeyStore key was
-/// lost both look like from Dart.
 class _ThrowingBackend implements SecretBackend {
   @override
   Future<String?> read(String key) async => throw StateError('no keychain');
@@ -17,8 +14,6 @@ class _ThrowingBackend implements SecretBackend {
   Future<void> delete(String key) async => throw StateError('no keychain');
 }
 
-/// Fails the write of one named key and no other, which is how a store runs
-/// out of room or loses its key part-way through a multi-key write.
 class _FailOneWriteBackend implements SecretBackend {
   _FailOneWriteBackend(this.failKey);
 
@@ -40,12 +35,6 @@ class _FailOneWriteBackend implements SecretBackend {
 
 void main() {
   test('the Keychain item stays on the device that wrote it', () {
-    // The iOS mirror of the Android backup exclusion. An item written with
-    // the plugin's default accessibility migrates to a new device on a
-    // restore, where it belongs to a different install of the app --
-    // exactly what data_extraction_rules.xml stops on the other platform.
-    // `first_unlock` rather than `unlocked` so a launch before the first
-    // manual unlock can still read it.
     expect(
       SecureStorageBackend.iosOptions.accessibility,
       KeychainAccessibility.first_unlock_this_device,
@@ -122,9 +111,6 @@ void main() {
         throwsStateError,
       );
 
-      // The dangerous state is not an empty store, it is `new-id` sitting
-      // beside `old-secret`: a pair that reads back as configured, so nothing
-      // routes the human to Settings, and that can never authenticate.
       expect(await store.read(), isNull);
       expect(backend.entries, isEmpty);
     },
@@ -135,9 +121,6 @@ void main() {
     backend.entries['paycross_demo_client_id'] = 'id-1';
     final store = SecretStore(backend: backend);
 
-    // A store holding an id and no secret cannot mint. Answering "not
-    // configured" routes to Settings; answering a half-built Credentials
-    // would fail later with an HTTP 401 that reads as a backend problem.
     expect(await store.read(), isNull);
   });
 }

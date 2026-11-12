@@ -71,10 +71,6 @@ void main() {
       );
     });
 
-    /// The label vocabulary was frozen in Phase 0 and every cell file in
-    /// `tool/e2e/` compares against it whole, so the cancelled label keeps its
-    /// shape even though the result now carries a transaction id. Changing it
-    /// would silently fail every cancel cell already signed off.
     test('cancelled names no transaction, with or without one', () {
       expect(labelForResult(const PayCrossCancelled()), 'result:cancelled');
       expect(
@@ -96,8 +92,6 @@ void main() {
       );
     });
 
-    /// A lost result is the case with nothing to name, so the field is empty
-    /// rather than the label being a different shape.
     test('pending with no transaction ends in an empty field', () {
       expect(
         labelForResult(
@@ -140,8 +134,6 @@ void main() {
       );
     });
 
-    /// Round-trips the vocabulary the plugin parses, so the label and the
-    /// wire cannot drift apart without a test saying so.
     test('round-trips every canonical wire name the plugin parses', () {
       for (final name in const [
         'poll_timeout',
@@ -170,9 +162,6 @@ void main() {
     });
 
     test('spells every declared code as a pinned literal', () {
-      // Written out rather than derived from code.name: deriving the
-      // expectation from the implementation's own expression would assert
-      // nothing. These are the strings cell files compare against.
       const pinned = <PayCrossErrorCode, String>{
         PayCrossErrorCode.notConfigured: 'error:notConfigured',
         PayCrossErrorCode.testPrefillInProduction:
@@ -182,8 +171,6 @@ void main() {
         PayCrossErrorCode.noActivity: 'error:noActivity',
         PayCrossErrorCode.noPresenter: 'error:noPresenter',
         PayCrossErrorCode.invalidToken: 'error:invalidToken',
-        // Deprecated and no longer thrown, but still a member of the enum for
-        // one minor, so the map below still has to cover it.
         // ignore: deprecated_member_use
         PayCrossErrorCode.resultUnknown: 'error:resultUnknown',
         PayCrossErrorCode.unknown: 'error:unknown',
@@ -193,8 +180,6 @@ void main() {
         expect(labelForError(PayCrossIntegrationError(code, 'x')), label);
       });
 
-      // A code added to the enum fails here rather than reaching a cell file
-      // as an unpinned label; a renamed one fails on the map key above.
       expect(pinned.keys.toSet(), PayCrossErrorCode.values.toSet());
     });
   });

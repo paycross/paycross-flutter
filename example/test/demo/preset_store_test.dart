@@ -6,8 +6,6 @@ import 'package:paycross_demo/demo/live.dart';
 import 'package:paycross_demo/demo/preset_store.dart';
 import 'package:paycross_demo/demo/presets.dart';
 
-/// A store whose first write fails and whose later ones do not, which is
-/// what a device that was briefly out of space looks like.
 class _FailOnceBackend implements PresetBackend {
   bool _failed = false;
   List<String> rows = <String>[];
@@ -25,8 +23,6 @@ class _FailOnceBackend implements PresetBackend {
   }
 }
 
-/// A store nothing is behind, which is what `SharedPreferences` is under
-/// `flutter test` and what an app whose platform store is missing sees.
 class _ThrowingBackend implements PresetBackend {
   @override
   Future<List<String>> read() async => throw StateError('no store');
@@ -51,9 +47,6 @@ void main() {
   test('a preset with no override reads as the bytes it ships with', () async {
     final saved = await PresetStore(backend: InMemoryPresetBackend()).read();
 
-    // The whole point of keeping overrides in a store rather than in the
-    // preset list: the automated matrix runs `demoPresets`, and an app with
-    // an empty store has to hand back exactly what it always did.
     expect(saved.bodyFor(_builtIn), _builtIn.body);
     expect(saved.isEdited(_builtIn), isFalse);
   });
@@ -66,7 +59,6 @@ void main() {
 
     expect(saved.bodyFor(_builtIn), '{"amount":2500}');
     expect(saved.isEdited(_builtIn), isTrue);
-    // And the preset in code is untouched, which is what the matrix runs.
     expect(_builtIn.body, isNot('{"amount":2500}'));
   });
 
@@ -113,8 +105,6 @@ void main() {
     final second = await store.addCustom(name: 'Second', body: '{"amount":2}');
 
     expect(first.id, isNot(second.id));
-    // Prefixed, so nothing somebody makes can ever collide with a built-in
-    // id and silently override a shipped tile.
     for (final preset in demoPresets) {
       expect(first.id, isNot(preset.id));
     }
@@ -157,14 +147,10 @@ void main() {
     expect(tile.id, saved.id);
     expect(tile.name, 'Mine');
     expect(tile.body, '{"amount":1}');
-    // A tile with nothing to say about what should happen says who does.
     expect(tile.expected, customPreset.expected);
   });
 
   test('one corrupt row does not take the rest of the store with it', () async {
-    // A process killed mid-write leaves a truncated last line, and a build
-    // older than the current shape leaves a row this cannot parse. Neither
-    // is worth throwing away the presets somebody saved correctly.
     final backend = InMemoryPresetBackend()
       ..rows = [
         jsonEncode({
@@ -192,9 +178,6 @@ void main() {
   });
 
   test('a store that cannot be read at all reads as empty', () async {
-    // An app with no saved presets is a usable app; an exception on the way
-    // to Home is not. `SharedPreferences` under `flutter test` is exactly
-    // this, which is why every widget test gets the shipped bodies.
     final saved = await PresetStore(backend: _ThrowingBackend()).read();
 
     expect(saved.overrides, isEmpty);
@@ -202,8 +185,6 @@ void main() {
   });
 
   test('two saves landing at once both survive', () async {
-    // Every mutator is read-modify-write over one key. Unserialised, both
-    // reads see the old list and the second write drops the first one's row.
     final store = PresetStore(backend: InMemoryPresetBackend());
 
     await Future.wait([
@@ -218,9 +199,6 @@ void main() {
   });
 
   test('a write that fails does not stop the next one', () async {
-    // The queue is what serialises the writes, so a link that threw must not
-    // be what every later save is still waiting on. The caller still sees
-    // the failure.
     final store = PresetStore(backend: _FailOnceBackend());
 
     await expectLater(
@@ -233,9 +211,6 @@ void main() {
   });
 
   test('every built-in preset has a stable id, and no two share one', () {
-    // The id is what an edit is filed under, and it is deliberately duller
-    // than the name: a re-worded tile must not lose somebody's saved body,
-    // and two tiles sharing an id would show each other's edits.
     final ids = [for (final preset in demoPresets) preset.id];
 
     expect(ids, everyElement(isNotNull));
@@ -243,17 +218,11 @@ void main() {
   });
 
   test('a preset nothing can be saved into has no id', () {
-    // Custom is the blank body, and a Live tile is built per run from an
-    // identity held in memory. Neither is a row in any store, and a null id
-    // is what makes that true by construction rather than by care.
     expect(customPreset.id, isNull);
   });
 
   group('the two halves of the store', () {
     test('Live and Test write different keys', () {
-      // The addendum's rule, and it is a rule about storage rather than
-      // about care: a body saved in one mode is never offered in the other
-      // because a read in one mode cannot see the other's rows at all.
       const sandbox = SharedPreferencesPresetBackend(DemoEnvironment.test);
       const production = SharedPreferencesPresetBackend(DemoEnvironment.live);
 
@@ -261,9 +230,6 @@ void main() {
     });
 
     test('the Test key is the one that shipped', () {
-      // Changing it would silently empty every preset a colleague has
-      // already saved, and an empty Home reads as the feature having been
-      // taken away rather than as the key having moved.
       expect(
         const SharedPreferencesPresetBackend(DemoEnvironment.test).storageKey,
         'paycross_demo_presets',
@@ -271,9 +237,6 @@ void main() {
     });
 
     test('Test is what a backend defaults to', () {
-      // Every call site written before Live had presets means the sandbox
-      // half, and a default that meant the other one would file a sandbox
-      // edit where the production tiles read.
       expect(
         const SharedPreferencesPresetBackend().storageKey,
         const SharedPreferencesPresetBackend(DemoEnvironment.test).storageKey,
@@ -281,8 +244,6 @@ void main() {
     });
 
     test('a Live scenario round-trips like any other preset', () async {
-      // The same store and the same code path. What makes a preset Live is
-      // which half its row is in, not a second type with its own rules.
       final store = PresetStore(backend: InMemoryPresetBackend());
       final preset = liveDefaultPresets.first;
 
@@ -294,14 +255,6 @@ void main() {
     });
 
     test('a Test read drops rows a Live store wrote', () async {
-      // Defence in depth behind the separate key. If a Live row ever landed
-      // in the sandbox key -- a migration, a merge, a bug -- reading it as a
-      // sandbox tile would put a production body on a sandbox screen. The
-      // kind word is not one this half knows, and an unknown kind is dropped
-      // rather than guessed at.
-      //
-      // One backend deliberately, which is the only way to stage the mixing
-      // the separate keys otherwise make impossible.
       final backend = InMemoryPresetBackend();
       final production = PresetStore(
         backend: backend,
@@ -317,8 +270,6 @@ void main() {
 
       expect(asSandbox.custom, isEmpty);
       expect(asSandbox.overrides, isEmpty);
-      // And the calibration: the rows are there, and the half that wrote
-      // them reads them perfectly well.
       expect(backend.rows, hasLength(2));
       expect((await production.read()).custom, hasLength(1));
       expect((await production.read()).overrides, hasLength(1));
@@ -354,7 +305,6 @@ void main() {
 
       expect(read.custom, isEmpty);
       expect(read.overrides, isEmpty);
-      // And the sandbox tiles still mint the bytes they ship with.
       expect(read.bodyFor(demoPresets.first), demoPresets.first.body);
     });
   });

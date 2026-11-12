@@ -3,9 +3,8 @@
 /// The card form, 3-D Secure and status polling run in the native Android and
 /// iOS SDKs. This package presents them and returns one result.
 ///
-/// `lib/src/generated/` is deliberately not exported: Pigeon's own docs advise
-/// against putting generated code in a public API, and a regenerated field name
-/// must never reach a merchant as a breaking change.
+/// `lib/src/generated/` is not exported: a regenerated field name must not
+/// reach merchants as a breaking change.
 library;
 
 export 'src/appearance.dart'

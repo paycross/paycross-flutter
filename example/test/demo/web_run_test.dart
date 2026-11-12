@@ -12,16 +12,8 @@ import '_surface.dart';
 
 final _preset = demoPresets.first;
 
-/// The shape of a real checkout URL, with a token-shaped tail.
-///
-/// A stand-in, and it has to be one: the real thing is
-/// `…/pay?session=<token>`, so a fixture holding a live value would be the
-/// leak this feature is written to avoid. What matters to these tests is
-/// that the tail is distinctive enough for a finder to prove it is *not* on
-/// screen, in History or in a bug report.
 const String _url = 'https://pay.example.com/pay?session=NOT-A-REAL-TOKEN';
 
-/// Records every URL it was handed and answers what a test told it to.
 class _Launcher {
   _Launcher({this.answer = true, this.throws = false});
 
@@ -38,8 +30,6 @@ class _Launcher {
   }
 }
 
-/// A history whose writes fail, which is what a full or unwritable store
-/// looks like from Dart.
 class _ThrowingHistoryBackend implements HistoryBackend {
   @override
   Future<List<String>> read() async => const <String>[];
@@ -49,8 +39,6 @@ class _ThrowingHistoryBackend implements HistoryBackend {
       throw StateError('no store');
 }
 
-/// A history whose write never answers, which is what a store wedged behind
-/// a stuck platform channel looks like from Dart.
 class _HangingHistoryBackend implements HistoryBackend {
   @override
   Future<List<String>> read() async => const <String>[];
@@ -91,8 +79,6 @@ void main() {
     });
 
     test('a plain http page is one too', () {
-      // The sandbox is reachable over http on a developer machine, and
-      // refusing it would refuse the environment this surface is tested in.
       expect(checkoutUri('http://localhost:8080/pay')?.scheme, 'http');
     });
 
@@ -102,10 +88,6 @@ void main() {
     });
 
     test('a scheme that is not the web is refused', () {
-      // The load-bearing case. `launchUrl` with `externalApplication` hands
-      // whatever it is given to the platform, so a non-web scheme arriving
-      // in a response field would be this app opening an arbitrary
-      // application on somebody's phone on the strength of a JSON string.
       expect(checkoutUri('myapp://pay'), isNull);
       expect(checkoutUri('file:///etc/passwd'), isNull);
       expect(checkoutUri('javascript:alert(1)'), isNull);
@@ -132,10 +114,6 @@ void main() {
       expect(find.textContaining('Finish the payment there'), findsOneWidget);
       expect(find.textContaining('back office'), findsOneWidget);
       expect(find.text('Session sess-9'), findsOneWidget);
-      // The whole discipline of this screen in one line: it says what the
-      // app did, and says outright that it does not know what the payment
-      // did. (The preset's own "Expected:" line further down the screen is
-      // free to say "Approved" -- that is the scenario, not an outcome.)
       expect(
         find.textContaining('does not learn what happened'),
         findsOneWidget,
@@ -162,17 +140,12 @@ void main() {
       expect(rows.single.surface, webSurfaceName);
       expect(rows.single.isWeb, isTrue);
       expect(rows.single.outcome, webOpenedOutcome);
-      // There is no transaction, and there will not be one: a transaction is
-      // created by the payment, and the payment is happening in another app.
       expect(rows.single.transactionId, isNull);
     });
 
     testWidgets('never lets the URL reach the screen, History or a report', (
       tester,
     ) async {
-      // The URL is `…/pay?session=<token>`, so this is the token rule
-      // spelled a different way. Asserted at all three exits at once, since
-      // a leak into any one of them is the same leak.
       final backend = InMemoryHistoryBackend();
 
       await tester.pumpWidget(_screen(history: HistoryStore(backend: backend)));
@@ -215,8 +188,6 @@ void main() {
 
       expect(find.text('Could not mint a session.'), findsOneWidget);
       expect(find.textContaining('HTTP 401'), findsOneWidget);
-      // Nothing was created, so there is no id to look up and nothing that
-      // could have taken money.
       expect(backend.entries, isEmpty);
     });
 
@@ -238,7 +209,6 @@ void main() {
       expect(find.textContaining(noCheckoutUrlMessage), findsOneWidget);
       expect(launcher.opened, isEmpty);
       expect(backend.entries, isEmpty);
-      // Still the only handle on what was created, so it stays on screen.
       expect(find.text('Session sess-9'), findsOneWidget);
     });
 
@@ -284,9 +254,6 @@ void main() {
     testWidgets('a launcher that throws does not strand the screen', (
       tester,
     ) async {
-      // A plugin that is not registered on this build throws rather than
-      // answering false. Unhandled it would leave the screen on "Opening the
-      // browser…" for good.
       final backend = InMemoryHistoryBackend();
 
       await tester.pumpWidget(
@@ -299,8 +266,6 @@ void main() {
 
       expect(find.text('Not opened.'), findsOneWidget);
       expect(find.text('Session sess-9'), findsOneWidget);
-      // The type only. A platform exception is free to quote the URL it was
-      // handed, and that URL is a credential.
       expect(find.textContaining('StateError'), findsOneWidget);
       expect(find.textContaining('NOT-A-REAL-TOKEN'), findsNothing);
       expect(find.textContaining('MissingPluginException'), findsNothing);
@@ -329,8 +294,6 @@ void main() {
       await tester.pumpWidget(
         _screen(history: HistoryStore(backend: _HangingHistoryBackend())),
       );
-      // Past the hand-over and up to the bookkeeping deadline, which is what
-      // lets the bug-report button appear at all on a wedged store.
       await tester.pump();
       await tester.pump();
 
@@ -364,8 +327,6 @@ void main() {
     testWidgets('a Live run that never opened asks for a look, not a refund', (
       tester,
     ) async {
-      // "Go and refund this" on a run that opened no browser would be noise
-      // on the commonest way this surface fails.
       useTallSurface(tester);
 
       await tester.pumpWidget(
@@ -401,9 +362,6 @@ void main() {
   });
 
   testWidgets('it carries no automation label, on any build', (tester) async {
-    // By construction rather than by rule: the matrix runner drives the deep
-    // link, the deep link never selects this surface, and a screen with no
-    // label cannot pass a cell it never reached.
     await tester.pumpWidget(_screen());
     await tester.pumpAndSettle();
 

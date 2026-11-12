@@ -8,10 +8,6 @@ void main() {
   });
 
   test('neither environment reaches the other one host', () {
-    // The failure this catches is a copy-paste that left one of the four
-    // constants pointing at the wrong environment -- which would be
-    // invisible until either a sandbox run charged nothing on production or
-    // a Live run charged nothing at all.
     for (final url in [testEndpoints.tokenUrl, testEndpoints.sessionsUrl]) {
       expect(Uri.parse(url).host, contains('test'), reason: url);
     }
@@ -21,8 +17,6 @@ void main() {
   });
 
   test('both token urls carry the scope the endpoint requires', () {
-    // The scope is part of the URL, not a header. Without it the token
-    // endpoint answers 400, and the failure reads as a bad credential.
     for (final url in [testEndpoints.tokenUrl, liveEndpoints.tokenUrl]) {
       expect(
         Uri.parse(url).queryParameters['scope'],
@@ -33,8 +27,6 @@ void main() {
   });
 
   test('both session urls are the spelling the merchant API routes', () {
-    // Hyphenated. The underscored spelling 404s, which is why the Android
-    // demo's minter rewrites it; this app pins the routed form instead.
     for (final url in [testEndpoints.sessionsUrl, liveEndpoints.sessionsUrl]) {
       expect(Uri.parse(url).path, '/payment-sessions', reason: url);
     }

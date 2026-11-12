@@ -2,22 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// A contract label as it appears in source: one of the two words, a colon,
-/// and something other than whitespace after it.
-///
-/// The lookahead is what tells a label from Dart's own syntax. `dart format`
-/// puts a space after a named argument's colon and no label carries one, so
-/// `Foo(error: e)` is an argument and `'result:success:'` is a label. The
-/// word boundary keeps an identifier that merely ends in one of the two
-/// words out of it.
 final RegExp labelShape = RegExp(r'\b(result|error):(?!\s)');
 
-/// Every `.dart` file under [root] that spells a contract label, except the
-/// one file allowed to.
-///
-/// Takes its root so the rule itself can be exercised over scratch files
-/// rather than only over `lib/`, where a false positive would have to be
-/// provoked by breaking the app.
 List<String> filesSpellingALabel(Directory root) {
   final offenders = <String>[];
   for (final entity in root.listSync(recursive: true)) {
@@ -30,13 +16,6 @@ List<String> filesSpellingALabel(Directory root) {
   return offenders;
 }
 
-/// The frozen automation contract has exactly one source file. Everything
-/// else consumes `labelForResult` / `labelForError` / `recoveryToken`.
-///
-/// A second place that spells a label is how the contract drifts: a screen
-/// grows its own `'result:success:'`, the runner keeps matching it, and the
-/// two definitions disagree the first time a case is added to only one of
-/// them.
 void main() {
   test('no file under lib/ but e2e_label.dart spells a contract label', () {
     expect(
@@ -50,13 +29,8 @@ void main() {
   });
 
   test('the file the check exempts is still the file that defines them', () {
-    // Without this the check above goes quietly vacuous the day
-    // e2e_label.dart is renamed or emptied: nothing would spell a label,
-    // every file would pass, and the invariant would be guarding nothing.
     final contract = File('lib/e2e_label.dart').readAsStringSync();
     expect(contract, contains('result:success:'));
-    // Against the same pattern the check uses, so a lookahead that stopped
-    // matching anything at all could not leave this guard green.
     expect(labelShape.allMatches(contract), isNotEmpty);
   });
 
