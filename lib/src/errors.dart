@@ -62,7 +62,7 @@ PayCrossErrorCode payCrossErrorCodeFrom(String? raw) => switch (raw) {
   'paycross_no_activity' => PayCrossErrorCode.noActivity,
   'paycross_no_presenter' => PayCrossErrorCode.noPresenter,
   'paycross_invalid_token' => PayCrossErrorCode.invalidToken,
-  // WHY: presentPayment intercepts this code first, so it is only reached from other callers.
+  // PresentPayment intercepts this code first, so it is only reached from other callers.
   // ignore: deprecated_member_use_from_same_package
   payCrossResultLostCode => PayCrossErrorCode.resultUnknown,
   _ => PayCrossErrorCode.unknown,

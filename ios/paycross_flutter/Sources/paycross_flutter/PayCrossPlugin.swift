@@ -57,8 +57,8 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
             ))
         }
 
-        // WHY: the slot is process-wide and claimed atomically, because a check-then-set can present twice.
-        // WHY: the completion is retained in the claim, so finishPending is the only way the call completes.
+        // The slot is process-wide and claimed atomically, because a check-then-set can present twice.
+        // The completion is retained in the claim, so finishPending is the only way the call completes.
         guard Self.state.beginPresenting(completion) else {
             return completion(.failure(Self.error(Self.errorBusy, "A payment is already in flight.")))
         }
@@ -70,7 +70,7 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
                 ))
             }
 
-            // WHY: PaymentSheet.present traps in debug without a configuration, so it is re-applied on every call.
+            // PaymentSheet.present traps in debug without a configuration, so it is re-applied on every call.
             Self.apply(configuration)
 
             let result = await PaymentSheet(sessionToken: sessionToken).present(from: presenter)
@@ -84,7 +84,7 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
 
     // MARK: - Presentation
 
-    // WHY: An add-to-app host may bury the Flutter view, so the sheet must come from the topmost controller.
+    // An add-to-app host may bury the Flutter view, so the sheet must come from the topmost controller.
     @MainActor
     private static func topmostViewController() -> UIViewController? {
         let scene = UIApplication.shared.connectedScenes
@@ -125,14 +125,14 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
             testCardPrefill: configuration.testCardPrefill?.toNative(),
             applePayMerchantIdentifier: configuration.applePayMerchantId,
             appearance: configuration.appearance?.toNative()
-                // WHY: Dart sends the deprecated brand colour only when no appearance is given.
+                // Dart sends the deprecated brand colour only when no appearance is given.
                 ?? configuration.brandColorArgb.map {
                     .brand(PayCrossColor(argb: UInt32(truncatingIfNeeded: $0)))
                 },
-            // WHY: The SDK resolves the locale itself and skips a malformed tag.
+            // The SDK resolves the locale itself and skips a malformed tag.
             locale: configuration.locale
         )
-        // WHY: Google Pay's in-app API is Android and web only, so googlePayMerchantId has no iOS effect.
+        // Google Pay's in-app API is Android and web only, so googlePayMerchantId has no iOS effect.
     }
 }
 
@@ -162,7 +162,7 @@ private extension PcTestCardPrefill {
 
 private extension Int64 {
     var asPayCrossColor: PayCrossColor {
-        // WHY: Truncates like Android's toInt(); an exact UInt32(_:) traps outside 0...0xFFFFFFFF.
+        // Truncates like Android's toInt(); an exact UInt32(_:) traps outside 0...0xFFFFFFFF.
         PayCrossColor(argb: UInt32(truncatingIfNeeded: self))
     }
 }
@@ -209,7 +209,7 @@ private extension PcPrimaryButton {
 
 private extension PcTypography {
     func toNative() -> PayCrossTypography {
-        // WHY: The Dart facade already limits the scale to 0.8...1.3; the SDK clamps it too.
+        // The Dart facade already limits the scale to 0.8...1.3; the SDK clamps it too.
         PayCrossTypography(sizeScaleFactor: sizeScaleFactor)
     }
 }
@@ -224,10 +224,10 @@ private extension PcThemeMode {
     }
 }
 
-// WHY: Internal, not private: RunnerTests reaches this through @testable import.
+// Internal, not private: RunnerTests reaches this through @testable import.
 extension PcAppearance {
     func toNative() -> PayCrossAppearance {
-        // WHY: An empty SDK sub-struct draws the same as null, so the ?? defaults change nothing.
+        // An empty SDK sub-struct draws the same as null, so the ?? defaults change nothing.
         PayCrossAppearance(
             light: light?.toNative() ?? PayCrossColors(),
             dark: dark?.toNative() ?? PayCrossColors(),
@@ -256,15 +256,15 @@ extension PaymentResult {
         case let .failed(transactionID, recovery):
             return PcFailure(
                 transactionId: transactionID,
-                // WHY: The wire token, not the case name: .unrecognized keeps the server's own string.
+                // The wire token, not the case name: .unrecognized keeps the server's own string.
                 recovery: recovery.apiValue
             )
 
         case let .pending(transactionID, reason):
-            // WHY: Pending has its own case; as a failure it would read as a decline in Dart.
+            // Pending has its own case; as a failure it would read as a decline in Dart.
             return PcPending(
                 transactionId: transactionID,
-                // WHY: The raw value is the wire vocabulary shared verbatim with the Android SDK.
+                // The raw value is the wire vocabulary shared verbatim with the Android SDK.
                 reason: reason.rawValue
             )
 

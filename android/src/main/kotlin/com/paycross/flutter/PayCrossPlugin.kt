@@ -101,7 +101,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
 
     override fun configure(configuration: PcConfiguration) {
         if (pending != null) {
-            // WHY: changing the environment resets the Retrofit client, which is undefined under a live poll loop.
+            // Changing the environment resets the Retrofit client, which is undefined under a live poll loop.
             throw integrationError(ERROR_BUSY, "Cannot reconfigure while a payment is in flight.")
         }
         cached = configuration
@@ -110,7 +110,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
 
     override fun versionInfo(): PcVersionInfo = PcVersionInfo(
         pluginVersion = PLUGIN_VERSION,
-        // WHY: the Android SDK declares no version constant, so this stays null.
+        // The Android SDK declares no version constant, so this stays null.
         nativeSdkVersion = null
     )
 
@@ -135,7 +135,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
                 )
             )
 
-        // WHY: the latch is process-wide because Flutter engines share one Activity task.
+        // The latch is process-wide because Flutter engines share one Activity task.
         synchronized(LOCK) {
             if (pending != null) {
                 return callback(
@@ -145,7 +145,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
             pending = callback
         }
 
-        // WHY: re-applied on every call, because a hot restart resets the SDK's process state.
+        // Re-applied on every call, because a hot restart resets the SDK's process state.
         applyConfiguration(configuration)
 
         try {
@@ -167,10 +167,10 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
     // MARK: - Result plumbing
 
     private fun deliver(resultCode: Int, data: Intent?) {
-        // WHY: parseResult reads a lost payload as Cancelled, so the payload is checked first.
+        // ParseResult reads a lost payload as Cancelled, so the payload is checked first.
         val lost = resultCode == Activity.RESULT_OK && data?.hasExtra(EXTRA_RESULT) != true
         if (lost) {
-            // WHY: a lost result is a success, not an error: the payment may have been authorized.
+            // A lost result is a success, not an error: the payment may have been authorized.
             return finishPending(Result.success(lostResult()))
         }
 
@@ -200,20 +200,20 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
     private fun applyConfiguration(configuration: PcConfiguration) {
         PayCross.init(
             environment = configuration.environment.toNative(),
-            // WHY: toInt() keeps the low 32 bits, which is the signed @ColorInt the SDK expects.
+            // ToInt() keeps the low 32 bits, which is the signed @ColorInt the SDK expects.
             brandColor = configuration.brandColorArgb?.toInt(),
             testCardPrefill = configuration.testCardPrefill?.toNative(),
-            // WHY: Google rejects a production request without a merchant ID, so it is passed through as is.
+            // Google rejects a production request without a merchant ID, so it is passed through as is.
             googlePayMerchantId = configuration.googlePayMerchantId,
-            // WHY: Apple Pay is iOS only, so there is no Android wallet to configure with applePayMerchantId.
+            // Apple Pay is iOS only, so there is no Android wallet to configure with applePayMerchantId.
             appearance = configuration.appearance?.toNative(),
-            // WHY: the SDK owns locale resolution and skips a malformed tag, so the value is not checked here.
+            // The SDK owns locale resolution and skips a malformed tag, so the value is not checked here.
             locale = configuration.locale
         )
     }
 
     private companion object {
-        // WHY: not 0, because the host Activity's own result codes share this space.
+        // Not 0, because the host Activity's own result codes share this space.
         const val REQUEST_CODE = 0x5043
 
         const val EXTRA_RESULT = "result"
@@ -231,7 +231,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
         var pending: ((Result<PcPaymentResult>) -> Unit)? = null
         var cached: PcConfiguration? = null
 
-        // WHY: FlutterError is what Pigeon forwards to Dart with the code intact.
+        // FlutterError is what Pigeon forwards to Dart with the code intact.
         fun integrationError(code: String, message: String) = FlutterError(code, message)
     }
 }
@@ -239,7 +239,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
 // MARK: - Mapping
 
 private fun PcEnvironment.toNative(): PayCrossEnvironment = when (this) {
-    // WHY: the Android SDK names the non-production environment STAGING.
+    // The Android SDK names the non-production environment STAGING.
     PcEnvironment.SANDBOX -> PayCrossEnvironment.STAGING
     PcEnvironment.PRODUCTION -> PayCrossEnvironment.PRODUCTION
 }
@@ -282,7 +282,7 @@ internal fun PcPrimaryButton.toNative() = PayCrossPrimaryButton(
 )
 
 internal fun PcTypography.toNative() = PayCrossTypography(
-    // WHY: the SDK clamps the scale too, for callers that skip the Dart range check.
+    // The SDK clamps the scale too, for callers that skip the Dart range check.
     sizeScaleFactor = sizeScaleFactor?.toFloat()
 )
 
@@ -311,14 +311,14 @@ internal fun PayCrossResult.toPigeon(): PcPaymentResult = when (this) {
 
     is PayCrossResult.Failure -> PcFailure(
         transactionId = transactionId,
-        // WHY: the server's own recovery string passes through unchanged, so Dart can read values this SDK cannot.
+        // The server's own recovery string passes through unchanged, so Dart can read values this SDK cannot.
         recovery = recoveryRaw ?: recovery.toApiValue()
     )
 
-    // WHY: pending is not a decline, because the payment may already be authorized.
+    // Pending is not a decline, because the payment may already be authorized.
     is PayCrossResult.Pending -> PcPending(
         transactionId = transactionId,
-        // WHY: the enum's wire name keeps this in step with the iOS SDK.
+        // The enum's wire name keeps this in step with the iOS SDK.
         reason = reason.wireName
     )
 
@@ -335,6 +335,6 @@ internal fun Recovery.toApiValue(): String = when (this) {
     Recovery.CONTACT_SUPPORT -> "contact_support"
     Recovery.DO_NOT_RETRY -> "do_not_retry"
     Recovery.VERIFY_BEFORE_RETRY -> "verify_before_retry"
-    // WHY: never the empty string, which Dart reads as absent and so retries.
+    // Never the empty string, which Dart reads as absent and so retries.
     Recovery.UNRECOGNIZED -> "unrecognized"
 }
