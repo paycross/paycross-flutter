@@ -1,10 +1,3 @@
-"""The shared authoring rules, exercised against cells written to break them.
-
-`cell_rules` is what every dimension's cell directory is held to, and until D2
-nothing tested the rules themselves -- only that D0 satisfied them, which a
-rule that never fires also does.
-"""
-
 import textwrap
 from pathlib import Path
 
@@ -28,8 +21,6 @@ expected:
     txn_count: 1
 """
 
-#: A decline cell with `{actions}` left open, so each test writes only the
-#: action list it is about.
 CELL = """\
 id: {id}
 platforms: [android]
@@ -77,9 +68,6 @@ def test_teardown_is_allowed_after_the_action_that_reads_the_outcome(tmp_path):
 
 @pytest.mark.parametrize("verb", ["airplane", "dont_keep_activities"])
 def test_a_cell_that_turns_a_rig_setting_on_must_turn_it_off(tmp_path, verb):
-    # Neither is undone by a failure, and both poison every cell that follows
-    # -- which the drivers' launch guards then report as a rig fault,
-    # correctly but expensively.
     where = directory(
         tmp_path,
         "network_cut",
@@ -91,8 +79,6 @@ def test_a_cell_that_turns_a_rig_setting_on_must_turn_it_off(tmp_path, verb):
 
 
 def test_only_teardown_may_follow_the_action_that_reads_the_outcome(tmp_path):
-    # A cell whose last real action is not terminal never asks for an outcome,
-    # so there is nothing for the expectation to be about.
     where = directory(
         tmp_path,
         "network_cut",
@@ -104,8 +90,6 @@ def test_only_teardown_may_follow_the_action_that_reads_the_outcome(tmp_path):
 
 
 def test_a_bare_wait_belongs_only_to_the_expiry_recipes(tmp_path):
-    # `wait` exists to spend the 300 s between a token's JWT `exp` and its
-    # session's `expires_at`. Anywhere else it is a cell papering over a race.
     where = directory(
         tmp_path,
         "slow_sheet",
@@ -128,8 +112,6 @@ def test_the_expiry_cells_may_wait(tmp_path, cell_id):
 
 
 def test_the_ios_refusal_of_airplane_mode_still_stands(tmp_path):
-    # R6: the simulator shares the host's network, so every network-cut cell
-    # is `platforms: [android]`.
     where = tmp_path / "cells"
     where.mkdir()
     (where / "control.yaml").write_text(
@@ -148,9 +130,6 @@ def test_the_ios_refusal_of_airplane_mode_still_stands(tmp_path):
         check_cell_dir(Path(where), "ios")
 
 
-#: A discovery cell: it asserts nothing about the label, because which label
-#: appears is what it is measuring. `{merchant}` is left open so each test
-#: writes only the session pinning it is about.
 DISCOVERY = """\
 id: {id}
 platforms: [android]
@@ -188,9 +167,6 @@ def discovery(tmp_path, cell_id, merchant):
 def test_a_discovery_cell_pins_the_session_instead_of_no_succeeded_txn(
     tmp_path, merchant
 ):
-    # `<any>` cannot honestly promise `no_succeeded_txn`: whether money moved
-    # is part of what the cell is measuring. What it must not be allowed to do
-    # is assert nothing at all.
     where = discovery(tmp_path, "rotate_after_submit", merchant)
 
     assert {c.id for c in check_cell_dir(where, "android")} == {
@@ -200,7 +176,6 @@ def test_a_discovery_cell_pins_the_session_instead_of_no_succeeded_txn(
 
 
 def test_a_discovery_cell_asserting_nothing_about_the_session_is_refused(tmp_path):
-    # Otherwise it passes on a device that did nothing at all.
     where = discovery(tmp_path, "rotate_after_submit", "    txn_status: failed\n")
 
     with pytest.raises(AssertionError, match="must still pin the session state"):
@@ -208,8 +183,6 @@ def test_a_discovery_cell_asserting_nothing_about_the_session_is_refused(tmp_pat
 
 
 def test_a_silent_cell_pins_the_session_too(tmp_path):
-    # `<none>` is the other sentinel and is held to the same rule -- and it
-    # CAN also carry no_succeeded_txn, which the process-kill cell does.
     where = tmp_path / "cells"
     where.mkdir()
     (where / "control.yaml").write_text(textwrap.dedent(CONTROL), encoding="utf-8")
@@ -225,13 +198,6 @@ def test_a_silent_cell_pins_the_session_too(tmp_path):
 
 
 def test_a_cell_that_rotates_must_rotate_back(tmp_path):
-    # MEASURED, not hypothetical. The D3 iOS probe rotated once and left the
-    # simulator in landscape; the interleaved control that followed failed with
-    # "no element named 'payButton' within 60s", which reads as an SDK finding
-    # and is a rig fault. Orientation outlives the cell on both platforms --
-    # `user_rotation` is a global setting on Android and the simulator keeps
-    # its pose -- and unlike airplane mode it has no on/off pair for the
-    # runner's teardown replay to put back.
     where = directory(
         tmp_path,
         "rotate_after_submit",
@@ -256,8 +222,6 @@ def test_a_cell_that_rotates_there_and_back_is_fine(tmp_path):
 
 
 def test_a_cell_that_sets_a_language_must_put_the_device_back(tmp_path):
-    # `device_language` has no `on`: every tag but `default` is a change, and
-    # left set it draws every later cell's sheet in that language.
     where = directory(
         tmp_path,
         "french",
@@ -276,11 +240,6 @@ def test_a_cell_that_sets_a_language_must_put_the_device_back(tmp_path):
 
 
 def test_a_cell_that_sets_a_language_must_relaunch_before_it_looks(tmp_path):
-    # Neither platform redraws a running app in a language it was handed
-    # afterwards: Android recreates what it can and the sheet is a separate
-    # activity, iOS reads its argument domain once at start-up. A cell that
-    # skipped the relaunch would measure the language it was changing away
-    # from, and pass or fail on it.
     where = directory(
         tmp_path,
         "french",
@@ -299,8 +258,6 @@ def test_a_cell_that_sets_a_language_must_relaunch_before_it_looks(tmp_path):
 
 
 def test_the_teardown_itself_needs_no_relaunch(tmp_path):
-    # The cell is over. Requiring one there would make every localized cell
-    # cold-start the app for nobody to look at.
     where = directory(
         tmp_path,
         "french",
@@ -319,11 +276,6 @@ def test_the_teardown_itself_needs_no_relaunch(tmp_path):
 
 
 def test_a_localized_cell_may_not_reach_for_the_wallet(tmp_path):
-    # The wallet button is the one thing on the sheet the SDK does not draw,
-    # so it is the one thing a language change takes with it: with the app's
-    # locale set to `fr` the row reads `Payer avec GPay`, measured 2026-09-08.
-    # `GOOGLE_PAY_DESC` is the only matcher there is for it, so such a cell
-    # fails looking for a button that was on screen all along.
     where = directory(
         tmp_path,
         "french_wallet",

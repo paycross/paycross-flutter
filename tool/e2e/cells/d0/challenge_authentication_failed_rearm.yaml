@@ -1,29 +1,5 @@
-# A retryable decline. The sheet does NOT resolve: it re-arms the card form
-# with "Payment failed. Please try again." and waits, so Dart gets no result
-# at all until the shopper does something else. That non-result is the whole
-# point of this cell -- it is the only D0 cell that exercises the contract's
-# sheet_rearmed predicate, and it exists so that observation is proven before
-# Phase 0 merges rather than discovered in Phase 1.
-#
-# A rearmed verdict needs the predicate AND the merchant state below: the
-# banner string is identical after any non-cancel submit failure, so on its
-# own it cannot tell a retryable decline from a submit that simply failed.
-#
-# Both platforms get the same answer from the sandbox for this ACS outcome:
-# failure.recovery = change_method, which is retryable, which is why the
-# sheet re-arms rather than resolving.
-#
-# This cell used to carry a per-platform override saying Android returned no
-# recovery at all. It does not. That reading came from the 2026-08-26 verify
-# script, which looked for the field somewhere other than
-# transactions[].failure.recovery and found nothing there; the live run on
-# 2026-08-29 read change_method on Android from the merchant API directly.
-# One expectation, both platforms.
-#
-# Sub-project #2 (re-arm fixes, ios#14 / android#23) is expected to make the
-# sheet resolve terminally here. Updating this file is part of that work's
-# definition of done, not a campaign failure. The sheet_rearmed predicate
-# survives as a negative assertion.
+# The sheet re-arms on a retryable failure, so Dart gets no result until the shopper acts.
+# The rearmed check needs the merchant state below: the banner is the same after any submit failure.
 id: challenge_authentication_failed_rearm
 platforms: [android, ios]
 card:

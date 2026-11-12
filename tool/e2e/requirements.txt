@@ -1,3 +1,2 @@
-# A range rather than an exact pin: an exact one would fight the rig's system
-# PyYAML, and nothing here depends on a version-specific behaviour.
+# Ranges, not exact pins: the rig's system PyYAML must satisfy this.
 PyYAML>=5.4,<7

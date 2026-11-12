@@ -66,8 +66,6 @@ def test_parses_the_colon_and_space_action_forms(tmp_path):
         "  - background 5\n"
         "  - airplane on\n"
         "  - wait_result 120",
-        # `expect rearmed` is only well-formed alongside the expectation it
-        # looks for; load_cell refuses the two apart.
     ).replace("expected:\n", "expected:\n  rearmed: true\n")
     cell = cells.load_cell(write(tmp_path, "control.yaml", body))
     verbs = [(a.verb, a.arg) for a in cell.actions]
@@ -94,11 +92,9 @@ def test_platform_override_merges_over_the_base(tmp_path):
     ios = cell.expected_for("ios")
     android = cell.expected_for("android")
 
-    # The override replaces only the key it names.
     assert ios.merchant["failure_recovery"] == "change_method"
     assert ios.merchant["session_status"] == "completed"
     assert android.merchant["failure_recovery"] is None
-    # An asserted null and an unasserted key are different things.
     assert "failure_recovery" in android.merchant
 
 
@@ -132,8 +128,6 @@ def test_load_cells_filters_by_platform_and_sorts(tmp_path):
         (lambda b: b.replace("  - tap_pay", "  - tap_the_pay_button"), "action"),
         (lambda b: b.replace("  - tap_pay", "  - acs"), "argument"),
         (lambda b: b.replace("  - tap_pay", "  - rotate 90"), "argument"),
-        # Indentation matters: these literals must match CONTROL exactly or
-        # str.replace is a no-op and the test passes by not testing anything.
         (lambda b: b.replace("    txn_count: 1", "    txns: 1"), "merchant key"),
         (lambda b: b.replace("  label:", "  lable:"), "label"),
     ],
@@ -144,22 +138,15 @@ def test_validation_rejects(tmp_path, mutation, message):
     with pytest.raises(cells.CellError) as excinfo:
         cells.load_cell(path)
 
-    # Every message is `<path>: <detail>`. Matching on the detail keeps a
-    # tmp_path that happens to contain the word from passing the case for us.
     assert str(excinfo.value).startswith(f"{path}: ")
     assert message in str(excinfo.value).removeprefix(f"{path}: ")
 
 
-# --- Helpers for the follow-up review items -------------------------------
-
-
 def with_action(body, action):
-    """CONTROL with one extra action spliced in after `tap_pay`."""
     return body.replace("  - tap_pay", f"  - tap_pay\n  - {action}")
 
 
 def with_merchant(body, block):
-    """CONTROL with its whole merchant block replaced."""
     head, marker, _ = body.partition("  merchant:\n")
     assert marker, "the merchant block moved; fix this helper"
     return head + marker + block
@@ -175,9 +162,6 @@ def expect_rejected(tmp_path, body, name="control.yaml"):
     return str(excinfo.value)
 
 
-# --- C1: argument grammar -------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "action",
     [
@@ -186,9 +170,6 @@ def expect_rejected(tmp_path, body, name="control.yaml"):
         "airplane on",
         "airplane off",
         "background 5",
-        # Not `expect rearmed`: that one is only well-formed alongside
-        # `rearmed: true`, which this body does not carry. Its own pairing has
-        # tests of its own under "cross-field rules".
         "expect google_pay",
         "wait_result 1.5",
     ],
@@ -208,9 +189,6 @@ def test_accepts_valid_action_arguments(tmp_path, action):
         "acs:Authentication_Failed",
         "acs:auth-failed",
         "acs:123",
-        # Shape-legal and completely wrong: the sandbox has no such
-        # button, so this costs the 120 s ACS page wait and then fails
-        # looking for text nothing renders.
         "acs:card_expird",
         "acs:decline",
         "airplane maybe",
@@ -230,7 +208,6 @@ def test_rejects_invalid_action_arguments(tmp_path, action):
 
 
 def test_arg_actions_still_reads_as_a_set_of_verbs():
-    # Task 9 does `verb in ARG_ACTIONS`; carrying validators must not break it.
     assert "wait_result" in cells.ARG_ACTIONS
     assert "tap_pay" not in cells.ARG_ACTIONS
     assert set(cells.ARG_ACTIONS) == {
@@ -247,9 +224,6 @@ def test_arg_actions_still_reads_as_a_set_of_verbs():
     }
 
 
-# --- I1: `expected` is the unmerged base ----------------------------------
-
-
 def test_expected_is_the_unmerged_base_and_expected_for_merges(tmp_path):
     body = CONTROL + textwrap.dedent(
         """\
@@ -260,15 +234,10 @@ def test_expected_is_the_unmerged_base_and_expected_for_merges(tmp_path):
     )
     cell = cells.load_cell(write(tmp_path, "control.yaml", body))
 
-    # `.expected` is the base and is wrong for iOS; consumers go through
-    # `.expected_for(platform)`.
     assert "failure_recovery" not in cell.expected.merchant
     assert cell.expected_for("ios") != cell.expected
     assert cell.expected_for("ios").merchant["failure_recovery"] == "change_method"
     assert cell.expected_for("android") == cell.expected
-
-
-# --- I2: load_cells directory errors --------------------------------------
 
 
 def test_load_cells_rejects_a_missing_directory(tmp_path):
@@ -286,11 +255,7 @@ def test_load_cells_rejects_a_directory_with_no_cells(tmp_path):
 
     message = str(excinfo.value)
     assert str(tmp_path) in message
-    # The glob is not recursive, so it must point at the likely mistake.
     assert "d0" in message
-
-
-# --- I3: unknown keys in an expectation block -----------------------------
 
 
 @pytest.mark.parametrize("block", ["expected", "expected.ios"])
@@ -304,9 +269,6 @@ def test_rejects_unknown_keys_in_an_expectation_block(tmp_path, block):
 
     assert "bogus" in message
     assert block in message
-
-
-# --- I4: merchant value types ---------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -357,9 +319,6 @@ def test_rejects_bad_merchant_values_in_an_override(tmp_path):
     assert "txn_count" in expect_rejected(tmp_path, body)
 
 
-# --- I5: the frozen label vocabulary --------------------------------------
-
-
 @pytest.mark.parametrize(
     "label",
     [
@@ -392,9 +351,6 @@ def test_accepts_every_frozen_label_form(tmp_path, label):
         "result:failure:banana:txn_1",
         "result:failure:retry",
         "result:pending:banana:txn_1",
-        # The recovery token, not a pending reason: the plugin maps this
-        # recovery to `server_verify` before a label is ever rendered, so a
-        # cell written against the old spelling must fail loudly.
         "result:pending:verify_before_retry:txn_1",
         "result:pending:poll_timeout",
         "result:cancelled:txn_1",
@@ -408,9 +364,6 @@ def test_rejects_labels_outside_the_frozen_vocabulary(tmp_path, label):
     assert "label" in expect_rejected(tmp_path, with_label(CONTROL, label))
 
 
-# --- M3: errors name the path, not the basename ---------------------------
-
-
 def test_the_error_names_the_path_not_just_the_basename(tmp_path):
     d0 = tmp_path / "d0"
     d0.mkdir()
@@ -421,9 +374,6 @@ def test_the_error_names_the_path_not_just_the_basename(tmp_path):
         cells.load_cell(path)
 
     assert str(excinfo.value).startswith(f"{path}: ")
-
-
-# --- M6: rearmed is a bool ------------------------------------------------
 
 
 @pytest.mark.parametrize("value", ["'yes'", "1", "null"])
@@ -442,11 +392,7 @@ def test_rearmed_true_is_carried_through(tmp_path):
     assert cell.expected_for("android").rearmed is True
 
 
-# --- Plan B: one delimiter grammar ----------------------------------------
-
-
 def test_an_argument_holding_a_colon_is_reported_against_the_verb_that_takes_it():
-    # Not "unknown action": the verb is real and the argument is what is wrong.
     with pytest.raises(cells.CellError, match=r"wait_result 1:20.*positive number"):
         cells.parse_action("wait_result 1:20", "cell.yaml")
 
@@ -455,9 +401,6 @@ def test_the_space_form_and_the_colon_form_parse_the_same():
     assert cells.parse_action("acs approve", "w") == cells.parse_action(
         "acs:approve", "w"
     )
-
-
-# --- Plan B: the new verbs ------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -504,37 +447,23 @@ def test_expect_takes_every_expectation_and_nothing_else(expectation):
 
 @pytest.mark.parametrize("bad", ["wait 0", "wait -30", "wait inf"])
 def test_wait_refuses_a_duration_that_would_never_end(bad):
-    # A bare `wait` exists to spend the 300 s between a token's JWT `exp` and
-    # its session's `expires_at`. Zero spends nothing and `inf` parses as a
-    # float, so a cell carrying one would hang the run rather than time out.
     with pytest.raises(cells.CellError, match="argument must be"):
         cells.parse_action(bad, "w")
 
 
 def test_expect_acs_observes_the_page_without_answering_it():
-    # The network-cut-during-challenge cell has to see the sandbox ACS page
-    # and leave it alone; `acs:<outcome>` would tap a button.
     assert cells.parse_action("expect acs", "w") == cells.Action("expect", "acs")
 
 
 def test_enter_token_refuses_a_token_long_enough_to_be_a_real_one():
-    # ~1011 characters is what a live session token measures. The cap is far
-    # below it so a credential cannot be committed in a cell file by accident.
     with pytest.raises(cells.CellError, match="argument must be"):
         cells.parse_action("enter_token " + "a" * 1011, "w")
 
 
 @pytest.mark.parametrize("character", ["$", "`", '"', "'", "|", ";", "&", "<", ">"])
 def test_enter_token_refuses_every_shell_metacharacter(character):
-    # AndroidDriver._input_text hands this to `input text` on a device shell
-    # that re-splits and expands whatever it is given, so a literal carrying
-    # one of these would be mangled rather than typed -- and the cell would
-    # then be measuring a string it never sent.
     with pytest.raises(cells.CellError, match="argument must be"):
         cells.parse_action(f"enter_token ab{character}cd", "w")
-
-
-# --- Plan B: the label sentinels ------------------------------------------
 
 
 @pytest.mark.parametrize("sentinel", ["<any>", "<none>"])
@@ -553,9 +482,6 @@ def test_the_sentinels_are_the_only_angle_bracket_labels(tmp_path):
     assert "frozen vocabulary" in expect_rejected(tmp_path, body)
 
 
-# --- Plan B: cross-field rules, per platform ------------------------------
-
-
 def test_expecting_a_rearmed_sheet_without_the_action_that_looks_is_refused(tmp_path):
     body = CONTROL.replace("expected:\n", "expected:\n  rearmed: true\n")
 
@@ -571,8 +497,6 @@ def test_looking_for_a_rearmed_sheet_the_cell_does_not_expect_is_refused(tmp_pat
 
 
 def test_a_platform_override_alone_can_require_the_rearm_action(tmp_path):
-    # The case a base-only check lets through: the base says false, so nothing
-    # in `expected:` asks for the action, and only android's override does.
     body = CONTROL + textwrap.dedent(
         """\
         expected.android:
@@ -592,23 +516,13 @@ def test_expecting_no_label_without_the_action_that_looks_is_refused(tmp_path):
 
 
 def test_a_literal_label_with_nothing_that_captures_one_is_refused(tmp_path):
-    # `wait_result` is the only action that sets the label the expectation is
-    # compared against, so a cell expecting one without it cannot pass -- it
-    # would reach the verdict with `label` still None and fail on a device.
     body = CONTROL.replace("  - wait_result 120\n", "  - expect no_result\n")
 
     message = expect_rejected(tmp_path, body)
-    # Both new rules name `wait_result`, so matching that alone would pass
-    # whichever fired. Pin the clause only this one has.
     assert "nothing would ever capture one" in message
 
 
 def test_expecting_no_label_while_still_waiting_for_one_is_refused(tmp_path):
-    # The other half of the same rule, and the sharper one: `wait_result`
-    # RAISES when no label turns up, so a cell holding one can never reach a
-    # verdict with `label` None. Expecting `<none>` beside it is a cell that
-    # cannot pass either way -- it fails in the driver if the label is absent
-    # and on the expectation if it is not.
     body = CONTROL.replace('label: "result:success:<txn>"', 'label: "<none>"')
     body = body.replace("  - tap_pay\n", "  - tap_pay\n  - expect no_result\n")
 
@@ -617,12 +531,6 @@ def test_expecting_no_label_while_still_waiting_for_one_is_refused(tmp_path):
 
 
 def test_one_platform_wanting_silence_beside_one_wanting_a_label_is_refused(tmp_path):
-    # The divergence the replaced pairing rule used to catch, and the reason
-    # dropping it costs nothing. One action list is shared, so a cell where
-    # ios wants silence and android wants a label needs `wait_result` to be
-    # both absent (for ios, which cannot pass with one) and present (for
-    # android, which cannot capture a label without one). The two halves of
-    # the rule disagree, and the `<none>` half fires first and names ios.
     body = CONTROL.replace(
         "  - wait_result 120\n",
         "  - wait_result 120\n  - expect no_result\n",
@@ -639,12 +547,6 @@ def test_one_platform_wanting_silence_beside_one_wanting_a_label_is_refused(tmp_
 
 
 def test_a_label_captured_before_an_absence_is_asserted_is_allowed(tmp_path):
-    # The two-phase shape `session_expired_server` needs: a first phase that
-    # produces a label (the cancel) and a second that must produce none (a
-    # dead session re-presented). The label expectation describes the LAST
-    # `wait_result`, and `expect no_result` is an independent assertion about
-    # what comes after it -- so a literal label and an absence check are not
-    # in conflict, and the runner checks the absence on its own verdict.
     body = CONTROL.replace(
         "  - wait_result 120\n",
         "  - wait_result 120\n  - relaunch\n  - expect no_result\n",
@@ -668,12 +570,7 @@ def test_a_platform_override_alone_can_require_the_no_result_action(tmp_path):
     assert "['ios']" in message
 
 
-# --- Plan B: the threeds block's own keys ---------------------------------
-
-
 def test_a_misspelled_threeds_key_is_refused_at_load(tmp_path):
-    # Untreated it reads as an SDK finding twenty minutes into a run: the
-    # field is simply never compared, so the assertion passes vacuously.
     body = with_merchant(
         CONTROL,
         "    session_status: completed\n    threeds:\n      outcom: authenticated\n",
@@ -700,8 +597,6 @@ def test_a_threeds_value_of_the_wrong_type_is_refused(tmp_path, line, key):
 
 
 def test_eci_and_version_are_not_assertable(tmp_path):
-    # Sandbox implementation detail: a sandbox upgrade must not present as a
-    # finding.
     body = with_merchant(
         CONTROL,
         "    session_status: completed\n    threeds:\n      eci: '05'\n",
@@ -724,12 +619,7 @@ def test_every_threeds_key_a_shipped_cell_uses_is_assertable(tmp_path):
     assert cell.expected_for("android").merchant["threeds"]["flow"] == "challenge"
 
 
-# --- Plan B: shapes that used to load and mean something else -------------
-
-
 def test_a_bare_string_of_platforms_is_refused_as_a_shape(tmp_path):
-    # `tuple("android")` is ('a','n','d',...), and every character is then an
-    # unknown platform -- a message about 'a', 'n', 'd'.
     body = CONTROL.replace("platforms: [android, ios]", "platforms: android")
 
     message = expect_rejected(tmp_path, body)
@@ -759,13 +649,7 @@ def test_the_transaction_placeholder_is_one_constant_in_both_modules():
     assert verify.TXN_PLACEHOLDER is cells.TXN_PLACEHOLDER
 
 
-# --- review: an override for a platform the cell does not run on ----------
-
-
 def test_an_override_for_a_platform_the_cell_does_not_run_on_is_refused(tmp_path):
-    # Silently dead: `expected_for` is only ever called with a platform the
-    # cell declares, so this override would never be read -- and the cell
-    # would run on Android asserting the base it was written to override.
     body = CONTROL.replace("platforms: [android, ios]", "platforms: [android]") + (
         textwrap.dedent(
             """\
@@ -797,18 +681,12 @@ def test_an_override_for_a_declared_platform_is_still_fine(tmp_path):
 
 
 def test_a_duplicate_platform_is_refused(tmp_path):
-    # `platforms: [android, android]` runs the cell once but reads as twice,
-    # and every per-platform loop then double-counts it.
     body = CONTROL.replace("platforms: [android, ios]", "platforms: [android, android]")
 
     assert "duplicate platform" in expect_rejected(tmp_path, body)
 
 
-# --- C1b: the ACS outcome allow-list ---------------------------------------
-
-
 def test_every_acs_outcome_the_sandbox_renders_is_accepted(tmp_path):
-    # The list is the sandbox's, and every token in it is a real button.
     for outcome in sorted(cells.ACS_OUTCOMES):
         cell = cells.load_cell(
             write(tmp_path, "control.yaml", with_action(CONTROL, f"acs:{outcome}"))
@@ -817,25 +695,15 @@ def test_every_acs_outcome_the_sandbox_renders_is_accepted(tmp_path):
 
 
 def test_a_misspelled_acs_outcome_names_what_it_could_have_been(tmp_path):
-    # The whole point of the list: a typo is caught at authoring time rather
-    # than after a live cell has spent two minutes waiting for a button that
-    # does not exist.
     message = expect_rejected(tmp_path, with_action(CONTROL, "acs:card_expird"))
 
     assert "card_expired" in message
 
 
 def test_the_acs_allow_list_holds_all_three_of_the_sandboxs_button_groups():
-    # The challenge page builds an authentication group, an issuer-declines
-    # group AND a technical group, and its template renders each group as
-    # buttons whose visible text is the token. A list covering only two groups
-    # would refuse a legal cell.
     assert {"approve", "authentication_rejected"} <= cells.ACS_OUTCOMES
     assert {"do_not_honor", "card_expired", "invalid_cvv"} <= cells.ACS_OUTCOMES
     assert {"timeout", "issuer_unavailable", "unknown_error"} <= cells.ACS_OUTCOMES
-
-
-# --- C6: tolerated crash markers -------------------------------------------
 
 
 def test_a_cell_declares_no_tolerated_markers_by_default(tmp_path):
@@ -857,9 +725,6 @@ def test_a_cell_may_declare_the_one_marker_its_own_setting_produces(tmp_path):
     ["FATAL EXCEPTION", "ANR in", "Unhandled Exception:", "Fatal error:"],
 )
 def test_no_cell_may_declare_a_marker_that_would_mute_a_crash(tmp_path, marker):
-    # The closed set is the whole point: a cell that could excuse one of these
-    # could pass through a crash, which is the one thing criterion 3 exists to
-    # stop.
     body = CONTROL + f'tolerated_crash_markers:\n  - "{marker}"\n'
 
     message = expect_rejected(tmp_path, body)

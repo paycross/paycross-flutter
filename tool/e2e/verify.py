@@ -1,18 +1,4 @@
-"""Pass criteria 1-3, as pure functions over what the run collected.
-
-1. the Dart label matches the cell's expectation -- `match_label`, which
-   answers whether it matched and hands back the transaction id it captured;
-   `verify_label_transaction` then turns that id into problems
-2. the merchant API agrees -- `verify_merchant`
-3. nothing crashed -- `crash_lines`, which returns the offending log lines
-   verbatim rather than a description of them, sorted into the app's faults,
-   what a cell was excused, and what the test driver did to itself
-
-The two verifiers return a list of human-readable problems; empty means pass.
-A list rather than a bool so a failed cell's report names every mismatch at
-once instead of one per rerun. Every problem line leads with the key it is
-about, so a report can be scanned down its first column.
-"""
+"""Pass criteria 1-3 as pure functions over what a run collected."""
 
 from __future__ import annotations
 
@@ -20,11 +6,8 @@ import re
 from collections.abc import Iterable
 from typing import Any, NamedTuple
 
-#: `<txn>` only ever appears last in a label, so `.*` cannot swallow a later
-#: field. Owned by `cells` because `load_cell` is what refuses a template
-#: carrying two of them; imported here, and still readable as
-#: `verify.TXN_PLACEHOLDER`, because this is where the label rules live.
-#: Importing the other way round would be a cycle.
+# Cells owns TXN_PLACEHOLDER because load_cell refuses a template with two;
+# importing the other way round would be a cycle.
 from .cells import (
     ANY_LABEL,
     LABEL_RE,
@@ -33,66 +16,42 @@ from .cells import (
     TXN_PLACEHOLDER,
 )
 
-#: Faults whose own log line names the component it is about, and which are
-#: therefore matched only when that component is the app under test. `ANR in
-#: <package>` comes from system_server and `Force finishing activity
-#: <package>/<activity>` from the activity manager, and the emulator does
-#: plenty of both on its own housekeeping. Unscoped, one of those fails a cell,
-#: then fails the interleaved control for the same reason, and aborts the whole
-#: run as a rig fault.
+# These log for every app on the device, so they fail a cell only when
+# they name the app under test.
 _SCOPED_FAULTS = ("ANR in", "Force finishing activity")
 
-#: The Android crash header. Its own line carries no package -- the `Process:`
-#: line below it does -- so `_attribute_fatal` scopes it instead. A bare
-#: AndroidRuntime line is not a fault at all: the uiautomator and monkey
-#: harnesses log dozens of those on a perfectly healthy run.
+# The header names no package, so _attribute_fatal scopes it through the
+# Process: line.
+# A bare AndroidRuntime line is no fault: uiautomator and monkey log those on
+# healthy runs.
 _FATAL = "FATAL EXCEPTION"
 _PROCESS = "Process:"
 
-#: How far below the header that line is looked for. It is the very next one;
-#: two leaves room for a logcat that interleaves another buffer's line.
+# Two lines, not one, so a logcat that interleaves another buffer's line
+# still finds Process:.
 _PROCESS_LOOKAHEAD = 2
 
-#: The logcat tag every line of an Android crash carries, and what separates it
-#: from the line's own text. Both shapes are real: a device writes
-#: `E/AndroidRuntime(19931): `, and a capture taken with another format writes
-#: `E AndroidRuntime: `.
+# Logcat writes this tag as `E/AndroidRuntime(19931):` on a device and
+# `E AndroidRuntime:` in other captures.
 _CRASH_TAG = "AndroidRuntime"
 _TAG_RE = re.compile(rf"\b{_CRASH_TAG}(?:\(\s*\d+\))?\s*:\s*")
 
-#: How far below the header the crash's own stack is read. Every real block
-#: ends well inside this -- `_crash_block` stops at the first line that is not
-#: part of it -- and the bound is what keeps a capture truncated mid-crash from
-#: reading the rest of the log as one stack.
+# Bounded, so a capture truncated mid-crash does not read the rest of the
+# log as one stack.
 _STACK_LOOKAHEAD = 80
 
-#: Frames that put the app under test in the stack. `com.paycross` covers the
-#: SDK and the demo app and `io.flutter` the engine; the configured package is
-#: matched alongside these at attribution time, because it is configurable.
 _APP_FRAMES = ("com.paycross", "io.flutter")
 
-#: The driver's own machinery: `uiautomator dump` reads the tree through the
-#: accessibility service, over binder, and this is the traffic it does it on.
 _DRIVER_FRAMES = ("android.view.accessibility.", "android.accessibilityservice.")
 
-#: The namespace a driver-attributed stack may not leave. The dump's crash is
-#: framework frames from top to bottom; a stack reaching anything else has
-#: something in it that is not the driver, and is not reclassified.
 _FRAMEWORK_PREFIX = "android."
 
-#: The thread `uiautomator dump` runs -- and crashes -- on.
 _DRIVER_THREAD = "UiAutomation"
 
-#: Whose crash a `FATAL EXCEPTION` header is.
 _APP = "app"
 _DRIVER = "driver"
 _FOREIGN = "foreign"
 
-#: Why a crash was attributed to the driver instead of failing the cell. Named
-#: here rather than phrased at the call site, because this sentence is the
-#: whole basis on which a reader of report.json has to judge the
-#: reclassification -- and a warning whose reason is not written down is a
-#: warning the next person learns to skip.
 DRIVER_CRASH_REASON = (
     "attributed to the test driver, not the app: no Process: line, thread "
     f"{_DRIVER_THREAD}, and every frame is framework accessibility or binder "
@@ -102,28 +61,20 @@ DRIVER_CRASH_REASON = (
 
 _IOS_FAULTS = ("Fatal error:", "*** Terminating app due to uncaught exception")
 
-#: Dart faults surface identically on both platforms -- `E/flutter` on Android,
-#: the same text through the unified log on iOS -- so they are not per-platform.
-#: This is the fault a plugin bug is most likely to produce, and it appears
-#: nowhere in the 15,647-line healthy reference log at android/smoke.
+# Dart faults read the same on Android (E/flutter) and iOS, so they are
+# not per-platform.
 _DART_FAULTS = ("Unhandled Exception:",)
 
-#: Built once rather than per log line: `crash_lines` scans a whole device log.
-#: These name no component, so they are faults wherever they appear.
 _FAULTS = _IOS_FAULTS + _DART_FAULTS
 
 
-#: Transaction statuses that mean money moved. `succeeded` is the ordinary
-#: `sale` terminal, but an `auth` session stops at `authorized` and an
-#: `auth_capture` at `captured` -- and a cancel/decline cell that only looked
-#: for `succeeded` would pass on either of those.
+# Statuses that mean money moved: an `auth` stops at authorized and an
+# `auth_capture` at captured.
 MONEY_MOVED = frozenset({"succeeded", "authorized", "captured"})
 
 
-#: The merchant assertions `verify_merchant` implements. Kept equal to
-#: `cells.MERCHANT_KEYS` by a test rather than imported from it: a key a cell
-#: can declare but nothing here checks would pass vacuously, which is the one
-#: failure mode a green suite cannot otherwise show.
+# Kept equal to cells.MERCHANT_KEYS by a test; a declared key nothing
+# checks here would pass vacuously.
 MERCHANT_CHECKS = frozenset(
     {
         "session_status",
@@ -141,38 +92,8 @@ MERCHANT_CHECKS = frozenset(
 
 
 def match_label(template: str, actual: str | None) -> tuple[bool, str | None]:
-    """Compares a label against a cell's expectation.
-
-    Three shapes. `<none>` passes only when nothing was rendered. `<any>`
-    passes on any well-formed contract label -- it is a discovery cell's
-    expectation, and the label it measured is recorded in result.json rather
-    than compared. Anything else is a literal, in which `<txn>` is a capture:
-    a transaction id is minted by the server, so a cell can never name one,
-    and `verify_label_transaction` cross-checks the captured value against
-    the merchant API instead.
-
-    `<any>` captures too, and did not used to. Because it captured nothing,
-    the id reaching `verify_label_transaction` was always None and that check
-    returned on its first line -- so every discovery cell in the matrix could
-    report a transaction id naming nothing and still pass. Not hypothetical:
-    D2's `session_expired_server_submit` measured
-    `result:failure:restart:3a9c6d3b-...` on Android and `...:71dfcbf5-...`
-    on iOS against sessions whose merchant record held `"transactions": []`,
-    and both cells passed. It took reading merchant.json by hand to notice.
-
-    What the caller does with the captured id is where the two part company:
-    for a literal the mismatch is a problem, and for `<any>` the runner
-    RECORDS it instead, so a discovery cell still discovers but can no longer
-    hide a phantom id. The corollary is worth stating, because Phase 3 walks
-    into it: a cell whose id does not check out cannot later be pinned to
-    `result:...:<txn>`, because the pin would fail the very check `<any>` was
-    skipping.
-
-    `LABEL_RE` is imported rather than restated -- unlike `MERCHANT_CHECKS`,
-    which is deliberately kept equal to `cells.MERCHANT_KEYS` by a test. Two
-    independent key lists whose equality is the thing under test is not the
-    same as one vocabulary with one meaning.
-    """
+    """Compares a label to a cell's expectation; returns (matched, captured txn id)."""
+    # `<any>` captures too, so verify_label_transaction can catch a phantom id.
     if template == NO_LABEL:
         return actual is None, None
     if actual is None:
@@ -198,20 +119,15 @@ def _latest(resource: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _failure(latest: dict[str, Any] | None) -> dict[str, Any]:
-    # `or {}` on the inner get too: a succeeded transaction plausibly carries
-    # an explicit "failure": null.
+    # "failure" can be an explicit null on a succeeded transaction, not
+    # only absent.
     return (latest or {}).get("failure") or {}
 
 
 def _threeds_problems(
     latest: dict[str, Any] | None, expected: dict[str, Any]
 ) -> list[str]:
-    """One problem per mismatched field, or one for the whole missing block.
-
-    A cell that names five 3DS fields against a card that never went through
-    3DS -- the ...153055 case -- would otherwise report the same absence five
-    times over and bury the finding.
-    """
+    """One problem per mismatched 3DS field, or one for a missing block."""
     actual = (latest or {}).get("threeds_result")
     if not actual:
         return ["threeds: no threeds_result on the latest transaction"]
@@ -223,30 +139,13 @@ def _threeds_problems(
 
 
 def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[str]:
-    """Checks only the keys the cell actually asserts.
-
-    A key that is absent is not asserted. A key present with a null value
-    asserts the field is absent. The two are genuinely different, and the
-    distinction is the reason `failure_recovery: null` is expressible at all.
-    It was written for a reading of authentication_failed that the live runs
-    disproved -- both platforms return `change_method` -- and kept because
-    "this field must not be there" is an assertion a decline cell will want.
-
-    D2 is the dimension that wants it: `acs_invalid_cvv` asserts
-    `network_decline_code: null`, because a CVV failure carries a scheme-
-    specific alphanumeric (Visa's N7) rather than an ISO 8583 decline code,
-    so the server deliberately attaches none. An absent key there would
-    have asserted nothing at all.
-    """
+    """Checks only the keys the cell asserts; a key set to None asserts it is absent."""
     problems: list[str] = []
     latest = _latest(resource)
 
     if "session_status" in expected:
-        # `sandbox.read` raises on any non-2xx or non-JSON response, so a
-        # resource that gets this far without a `status` key is an unexpected
-        # shape rather than a session that reported no status. Saying so beats
-        # `got None`, which reads as a payment-state finding and sends whoever
-        # is debugging after the wrong bug.
+        # A resource without a status key is malformed, not a session with
+        # no status.
         if "status" not in resource:
             problems.append("session_status: the session resource has no 'status' key")
         elif resource["status"] != expected["session_status"]:
@@ -278,8 +177,6 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
                 f"{[t.get('id') for t in moved]}"
             )
         elif not expected["no_succeeded_txn"] and not moved:
-            # `false` used to be a no-op that read like an assertion. It now
-            # means what a reader always thought it meant.
             problems.append(
                 "no_succeeded_txn: expected a transaction that moved money, "
                 "the session holds none"
@@ -300,15 +197,12 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
         ("saved_card_used", "used_token"),
     ):
         if key in expected:
-            # Presence, never the value: `evidence.scrub_resource` drops both
-            # keys by name before this ever sees them, so what is left is the
-            # redaction marker for a card that was stored and `null` for one
-            # that was not -- which is exactly the distinction being asserted.
+            # Presence only; scrub_resource leaves a redaction marker or null,
+            # never the token.
             stored = (latest or {}).get("stored_credentials") or {}
             if not isinstance(stored, dict):
-                # A shape fault, said as one. Without the guard `.get` raises
-                # AttributeError out of a pure function whose whole contract is
-                # to return problems.
+                # Without this guard .get raises AttributeError instead of
+                # returning a problem.
                 problems.append(
                     f"{key}: stored_credentials is a "
                     f"{type(stored).__name__}, not an object"
@@ -328,16 +222,10 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
 
 
 def verify_label_transaction(resource: dict[str, Any], txn_id: str | None) -> list[str]:
-    """A non-empty `<txn>` in the label must name a real transaction.
-
-    An empty one is recorded, not rejected: `PayCrossFailure.transactionId` is
-    genuinely null when the payment failed before a transaction existed.
-    """
+    """A non-empty `<txn>` in the label must name a real transaction."""
     if not txn_id:
         return []
-    # A None id is dropped rather than kept: it can never equal a non-empty
-    # txn_id, and sorting a set holding both None and a string raises -- which
-    # would turn this verification failure into a crash.
+    # A None id is dropped, because sorting a set holding None and a string raises.
     known = {t.get("id") for t in _transactions(resource) if t.get("id") is not None}
     if txn_id in known:
         return []
@@ -345,14 +233,7 @@ def verify_label_transaction(resource: dict[str, Any], txn_id: str | None) -> li
 
 
 class CrashScan(NamedTuple):
-    """What criterion 3 found, in three buckets rather than two.
-
-    `faults` fail the cell. `excused` is what the cell declared its own
-    behaviour produces. `driver` is a crash of the rig rather than of the app:
-    reported as a warning under `DRIVER_CRASH_REASON` and never dropped,
-    because a driver that dies mid-cell is worth seeing even when what it
-    interrupted was a payment that fully worked.
-    """
+    """Crash lines sorted into the app's faults, excused lines and driver crashes."""
 
     faults: list[str]
     excused: list[str]
@@ -371,20 +252,12 @@ def _fatal_thread(line: str) -> str:
 
 
 def _crash_block(lines: list[str], index: int) -> list[str]:
-    """The lines of the crash the header at `index` opened, tags stripped.
-
-    A block is `PID:`/`Process:`, one throwable line, and its frames. It ends
-    at the first crash-tagged line that is none of those, which on a real
-    capture is `Error reporting crash` -- the runtime's follow-on block when it
-    cannot reach the activity manager to report the first one. Reading past
-    that would pull the second block's frames into the first block's stack, and
-    they are not the same crash: the follow-on runs through
-    `com.android.internal.os.RuntimeInit`, which would make every crash look
-    like it left the framework.
-
-    Lines from other buffers interleave freely and are skipped rather than
-    treated as the end: logcat has no obligation to keep a block contiguous.
-    """
+    """The lines of the crash the header at `index` opened, tags stripped."""
+    # The block ends at the first crash-tagged line outside it. The
+    # runtime's follow-on "Error reporting crash" block runs through
+    # RuntimeInit and would look like a framework crash.
+    # Lines from other buffers interleave, so they are skipped, not treated
+    # as the end.
     block: list[str] = []
     throwable_seen = False
     for line in lines[index + 1 : index + 1 + _STACK_LOOKAHEAD]:
@@ -404,29 +277,10 @@ def _crash_block(lines: list[str], index: int) -> list[str]:
 
 
 def _attribute_fatal(lines: list[str], index: int, package: str) -> str:
-    """Whose crash the header at `index` is.
-
-    `E AndroidRuntime: FATAL EXCEPTION: main` is followed by `E AndroidRuntime:
-    Process: <package>, PID: <pid>`, which is the only place a crash names
-    itself, and it decides whenever it is there.
-
-    When it is not -- and it is not on the driver's own dump crash, which is
-    what this was written for -- two things can still settle it. A frame from
-    the app under test makes the crash the app's, whatever thread it surfaced
-    on. Failing
-    that, the driver's own signature makes it the driver's: `uiautomator dump`
-    reads the tree over binder from a thread called `UiAutomation`, and when
-    that binder goes it dies with a stack that is framework accessibility
-    machinery from top to bottom. Measured 2026-09-01: a cell whose payment
-    fully succeeded, transaction and all, was failed by the dump the runner
-    took after it.
-
-    Every other shape keeps the old conservative answer and stays the app's,
-    because a missed crash is still the expensive direction to be wrong in.
-    The keyhole is deliberately narrow -- thread AND an accessibility frame AND
-    nothing outside `android.` AND nothing of ours -- because this is a safety
-    net, and every widening of it is somewhere a real crash can hide.
-    """
+    """Whose crash the header at `index` is: the app, driver or a foreign package."""
+    # The Process: line names the package, and it decides whenever it is present.
+    # The driver is reclassified only on the narrow signature below; a
+    # missed crash costs more.
     for line in lines[index + 1 : index + 1 + _PROCESS_LOOKAHEAD]:
         if _PROCESS in line:
             return _APP if package in line else _FOREIGN
@@ -449,32 +303,9 @@ def _attribute_fatal(lines: list[str], index: int, package: str) -> str:
 
 
 def crash_lines(log: str, package: str, tolerated: Iterable[str] = ()) -> CrashScan:
-    """Pass criterion 3, its excuses, and what the driver did to itself.
-
-    Three lists rather than one. What a cell tolerated is not a fault, but it
-    is not nothing either -- it is the observation the cell was written to
-    make, and it belongs in the evidence beside the verdict rather than
-    being dropped on the floor. Nor is a crash of the test driver: it is not
-    the app's fault, so it must not fail a cell, but a rig that crashed
-    mid-cell is exactly what the next reader wants to know about, so it is
-    carried out under a named reason rather than swallowed.
-
-    Only the closed allow-list is honoured, whatever this is handed. A cell
-    file cannot carry anything else -- `load_cell` refuses it -- but this is
-    called from a runner rather than only from a validated cell, and a
-    function that could be talked into muting a `FATAL EXCEPTION` would
-    defeat the one thing criterion 3 exists to stop. Anything outside the
-    list is silently not honoured rather than raising: the direction that
-    fails safe here is "the fault is still reported", and the load-time guard
-    is what catches the typo that got it here.
-
-    Excusing is reachable only from the scoped-fault branch, which is where
-    `Force finishing activity` lives. A `FATAL EXCEPTION`, an ANR or a Dart
-    or Swift fault is a fault on a structural level, not on the strength of
-    the allow-list alone. Driver attribution is not excusing and is not
-    reachable from a cell file at all: `_attribute_fatal` reads the crash's
-    own stack, and nothing a caller passes can reach it.
-    """
+    """Pass criterion 3: sorts crash lines into faults, excused and driver crashes."""
+    # Only the closed allow-list is honoured, so a caller cannot mute a
+    # FATAL EXCEPTION.
     allowed = set(tolerated) & TOLERABLE_CRASH_MARKERS
     lines = log.splitlines()
     faults: list[str] = []
@@ -488,8 +319,6 @@ def crash_lines(log: str, package: str, tolerated: Iterable[str] = ()) -> CrashS
             elif whose == _DRIVER:
                 driver.append(line)
         elif any(marker in line for marker in _SCOPED_FAULTS):
-            # The package filter decides first: a line naming another app was
-            # never this cell's fault, so it is not this cell's excuse either.
             if package in line:
                 if any(marker in line for marker in allowed):
                     excused.append(line)

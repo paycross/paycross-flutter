@@ -11,19 +11,10 @@ from tool.e2e.drivers.base import DriverError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-#: Shaped like the real thing -- base64url segments joined by dots -- because
-#: the driver now refuses anything that is not, and short enough to fit one
-#: chunk so the stdin assertion can name it exactly.
 TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJzYW5kYm94In0.c2lnbmF0dXJlLWJ5dGVz"
 
 
 def screen(token: str = "") -> str:
-    """The example's token screen, with the sheet's card form behind it.
-
-    Assembled here rather than checked in: no real dump holds the example's
-    own field and the sheet's form at once, and a `paste_token` run reads
-    both. Bounds are nominal -- only the centres are used.
-    """
     return (
         "<hierarchy>"
         f'<node class="android.widget.EditText" text="{token}" content-desc=""'
@@ -37,20 +28,6 @@ def screen(token: str = "") -> str:
 
 
 class FakeShell:
-    """Records calls and replays canned stdout, so nothing runs.
-
-    Outputs are given **as `_run` would return them** -- CRLF already
-    normalised -- so a test never restates the transport's job; `_run` itself
-    is covered directly against a stubbed `subprocess.run`.
-
-    Explicit `outputs` are consumed in order. Once they run out a tree read
-    gets `tree`, or the next of `trees` (the last one repeats), and everything
-    else gets an empty string. That fallback is what lets a multi-step action
-    be exercised without hand-counting round trips: `_tap` and `_key` consume
-    one each while `dump_tree` consumes two, so a fixed `["", form] * n` list
-    desynchronises after the first field.
-    """
-
     def __init__(self, *outputs, tree=None, trees=None):
         self.outputs = list(outputs)
         self.tree = tree
@@ -76,11 +53,6 @@ class FakeShell:
 
 
 def driver(shell, naps=None):
-    """The driver under test, with every wait recorded instead of taken.
-
-    The rig's real durations are still pinned -- by asserting on `naps` -- but
-    the suite no longer spends 17 seconds of wall clock actually sleeping.
-    """
     return android.AndroidDriver(
         shell=shell, sleep=(naps if naps is not None else []).append
     )
@@ -93,9 +65,6 @@ def staged_driver(shell, tmp_path, naps=None):
         windows_staging=r"D:\stage",
         sleep=(naps if naps is not None else []).append,
     )
-
-
-# -- _run, the one place the transport is real --------------------------------
 
 
 def _stub_subprocess(monkeypatch, stdout=b"", stderr=b"", returncode=0):
@@ -123,8 +92,6 @@ def test_run_calls_the_windows_adb_and_normalises_every_line(monkeypatch):
     assert seen["argv"] == [android.ADB, "shell", "getprop", "x"]
     assert seen["kwargs"]["timeout"] == 300
     assert seen["kwargs"]["capture_output"] is True
-    # Replaced throughout, not stripped off the end: a dump is thousands of
-    # lines and every one of them arrives with a CR.
     assert out == "one\ntwo\nthree"
 
 
@@ -136,8 +103,6 @@ def test_run_passes_binary_through_untouched(monkeypatch):
 
 
 def test_run_surfaces_the_stderr_of_a_failed_adb(monkeypatch):
-    # Discarding it was how an install failure could read as "no Success in
-    # ''" instead of naming the ABI mismatch that actually happened.
     _stub_subprocess(
         monkeypatch, stdout=b"", stderr=b"adb: device offline\r\n", returncode=1
     )
@@ -146,7 +111,6 @@ def test_run_surfaces_the_stderr_of_a_failed_adb(monkeypatch):
 
 
 def test_run_refuses_to_return_binary_it_could_not_fetch(monkeypatch):
-    # Appending stderr would corrupt a PNG, so the failure has to raise.
     _stub_subprocess(monkeypatch, stdout=b"", stderr=b"closed\r\n", returncode=1)
 
     with pytest.raises(DriverError) as excinfo:
@@ -156,9 +120,6 @@ def test_run_refuses_to_return_binary_it_could_not_fetch(monkeypatch):
 
 
 def test_run_turns_a_timeout_into_a_driver_error(monkeypatch):
-    # An emulator that has wedged raises TimeoutExpired out of subprocess,
-    # which is not a DriverError -- so it escapes every polling loop and ends
-    # the whole matrix where it should have failed one cell.
     def explode(argv, **kwargs):
         raise android.subprocess.TimeoutExpired(argv, android.RUN_TIMEOUT_SECONDS)
 
@@ -173,8 +134,6 @@ def test_run_turns_a_timeout_into_a_driver_error(monkeypatch):
 
 
 def test_run_turns_a_missing_adb_into_a_driver_error(monkeypatch):
-    # adb.exe is a Windows binary reached over a mount, and is not on every
-    # PATH that runs these tests.
     def explode(argv, **kwargs):
         raise FileNotFoundError(2, "No such file or directory", android.ADB)
 
@@ -195,19 +154,14 @@ def test_run_hands_stdin_to_the_process_rather_than_the_command_line(monkeypatch
     assert seen["kwargs"]["input"] == b"input text abc\n"
 
 
-# -- install ------------------------------------------------------------------
-
-
 def test_install_stages_the_apk_where_the_windows_adb_can_read_it(tmp_path):
     apk = tmp_path / "app-debug.apk"
     apk.write_bytes(b"not really an apk")
-    # uninstall, then install -- which must report Success or install() raises.
     shell = FakeShell("", "Success\n")
     d = staged_driver(shell, tmp_path)
 
     d.install(str(apk))
 
-    # The APK really was copied, and adb was handed the *Windows* spelling.
     staged = tmp_path / "winstage" / "paycross-e2e.apk"
     assert staged.read_bytes() == b"not really an apk"
     text = shell.argv_text()
@@ -237,40 +191,20 @@ def test_install_names_both_paths_when_the_apk_cannot_be_staged(tmp_path):
     message = str(excinfo.value)
     assert str(missing) in message
     assert "paycross-e2e.apk" in message
-    # The staging directory is created rather than assumed.
     assert (tmp_path / "winstage").is_dir()
-    # Nothing was asked of the device once staging had failed.
     assert shell.calls == []
 
 
-# -- launch -------------------------------------------------------------------
-
-
 def test_launch_no_longer_refuses_a_device_that_is_not_en_us():
-    """The guard the identifier switch removed, asserted by its absence.
-
-    It refused anything but `en-US`, because the Pay button's rendered text was
-    the driver's only handle on it. Nothing on the sheet is matched by a
-    rendered string now, and a device drawing French is a case this rig has to
-    be able to MEASURE rather than refuse -- D6 exists to do exactly that.
-
-    What the guard was really protecting is `sheet_rearmed`'s amount half, and
-    that is diagnosed in `wait_rearmed` instead, where it can name the amount
-    the sheet was actually showing.
-    """
     shell = FakeShell("1\n", "0\n", "0\n", "0\n", "0\n", "", "")
 
     driver(shell).launch()
 
     assert any("monkey" in call for call in shell.argv_text())
-    # And the locale is not even read: one getprop, for the boot check.
     assert len([c for c in shell.argv_text() if "getprop" in c]) == 1
 
 
 def test_launch_quotes_adb_when_the_boot_check_cannot_be_read():
-    # With no device attached, getprop's "answer" is adb's own complaint.
-    # Reading that as "not 1" reported an emulator part-way through booting
-    # when the truth was that there was no emulator to talk to.
     shell = FakeShell("adb: no devices/emulators found\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -282,8 +216,6 @@ def test_launch_quotes_adb_when_the_boot_check_cannot_be_read():
 
 
 def test_launch_still_says_booting_when_the_property_is_merely_unset():
-    # A device that is up but mid-boot answers with nothing at all, which is
-    # a different thing from adb being unable to ask.
     shell = FakeShell("\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -301,16 +233,11 @@ def test_launch_force_stops_before_starting():
     text = shell.argv_text()
     assert any("force-stop com.paycross.flutterdemo" in t for t in text)
     assert any("monkey -p com.paycross.flutterdemo" in t for t in text)
-    # Six real seconds on the rig, asserted here rather than spent.
     assert android.LAUNCH_SETTLE_SECONDS == 6
     assert naps == [6]
 
 
-# -- typing -------------------------------------------------------------------
-
-
 def test_type_pan_sends_one_keycode_per_digit():
-    # KEYCODE_0 is 7, so "4111" is 11, 8, 8, 8.
     shell = FakeShell()
 
     driver(shell)._type_digits("4111")
@@ -324,16 +251,11 @@ def test_type_pan_sends_one_keycode_per_digit():
 
 
 def test_type_digits_paces_itself_so_the_formatter_can_keep_up():
-    # fill-card-raw.sh slept 0.4 s after every keyevent, and that is the timing
-    # the 0.3.2 caret fix was proven under. Typing flat out would let a
-    # formatter that merely cannot keep up read as a returning caret bug --
-    # a false finding against the SDK, which is the expensive direction.
     naps = []
 
     driver(FakeShell(), naps)._type_digits("4111")
 
     assert android.DIGIT_PACING_SECONDS == 0.4
-    # One after each digit, last one included: that is what the seed did.
     assert naps == [0.4] * 4
 
 
@@ -347,7 +269,6 @@ def test_input_text_escapes_the_space_that_would_otherwise_split_the_argument():
 
 def test_type_card_clears_then_fills_every_field():
     form = (FIXTURES / "android-rearmed.uix").read_text()
-    # Every tree read returns the same form; typing is fire-and-forget.
     shell = FakeShell(tree=form)
     naps = []
 
@@ -356,18 +277,16 @@ def test_type_card_clears_then_fills_every_field():
     )
 
     text = " | ".join(shell.argv_text())
-    assert "input keyevent 67" in text  # KEYCODE_DEL, clearing the field
+    assert "input keyevent 67" in text
     assert "shell input text 1228" in text
     assert "shell input text 123" in text
     assert "shell input text John%sDoe" in text
-    # 17.4 s on the rig: eleven settling pauses and sixteen paced digits.
     assert naps.count(android.SETTLE_SECONDS) == 11
     assert naps.count(android.DIGIT_PACING_SECONDS) == 16
     assert sum(naps) == pytest.approx(17.4)
 
 
 def test_verify_pan_reports_what_the_field_actually_reads():
-    # One digit short of the PAN: what a caret bug leaves behind.
     form = (
         "<hierarchy>"
         '<node class="android.widget.EditText" resource-id="paycross.cardNumber"'
@@ -388,33 +307,15 @@ def test_verify_pan_reports_what_the_field_actually_reads():
 
     message = str(excinfo.value)
     assert "4111 1111 1111 000" in message
-    # What was seen, not what it is blamed on: the cause is Task 10's to find.
     assert "formatter" not in message
 
 
-# -- select_saved_card --------------------------------------------------------
-
-#: The saved-card sheet, dumped from the emulator on 2026-09-07 against a
-#: session carrying `saved_cards: {show: all, allow_removal: true}` for a
-#: customer with one stored card.
-#:
-#: It is a RADIO LIST, and that is the change Train 2 saw coming: the
-#: `ExposedDropdownMenuBox` this driver used to open, whose popup arrived as a
-#: window of its own, is gone. Every row is addressable where it stands.
 SAVED_SHEET = (FIXTURES / "android-saved-card-sheet.uix").read_text()
 
-#: And the form after the row was tapped: the fresh-card fields are gone and
-#: the saved-card branch has rendered its single CVV box.
 SAVED_CHOSEN = (FIXTURES / "android-saved-card-chosen.uix").read_text()
 
-#: The removal confirmation, which is its OWN window: this dump holds the
-#: dialog and nothing else, so the row whose bin raised it is not in it. That
-#: is why `remove_saved_card` reads the row's identifier BEFORE it taps.
 REMOVE_DIALOG = (FIXTURES / "android-remove-dialog.uix").read_text()
 
-#: The one stored card in those dumps. Spelled out because every assertion
-#: below is about the driver carrying THIS uuid from the row to the bin to the
-#: check that the row went away.
 STORED = "paycross.savedCard.01a0763c-d401-737c-bbb9-948af4e0f60b"
 
 
@@ -424,15 +325,10 @@ def test_select_saved_card_taps_the_stored_row_where_it_stands():
     driver(shell).select_saved_card()
 
     taps = [a for a in shell.argv_text() if a.startswith("shell input tap")]
-    # The centre of the row's own bounds [42,431][1038,559]. One tap: there is
-    # no menu to open first any more.
     assert taps == ["shell input tap 540 495"]
 
 
 def test_select_saved_card_does_not_mistake_a_bin_for_a_row():
-    # `paycross.savedCard.<uuid>.delete` starts with the row's identifier, so
-    # a prefix match alone would find the bin -- and tapping it opens the
-    # removal dialog instead of choosing the card.
     nodes = tree.parse_uiautomator(SAVED_SHEET)
 
     rows = driver(FakeShell())._saved_card_rows(nodes)
@@ -441,14 +337,6 @@ def test_select_saved_card_does_not_mistake_a_bin_for_a_row():
 
 
 def test_select_saved_card_verifies_the_form_really_switched():
-    """The failure mode the card says is worth spending code on.
-
-    A selection that silently did nothing leaves the sheet on the FRESH form.
-    The cell would then type its CVV into a blank card, submit it, and report a
-    saved-card payment -- and `saved_card_used` is the only assertion that would
-    ever notice, an hour into a matrix run. So this raises.
-    """
-    # The tap lands, but the form never switches.
     shell = FakeShell(trees=[SAVED_SHEET, SAVED_SHEET])
 
     with pytest.raises(DriverError) as excinfo:
@@ -458,9 +346,6 @@ def test_select_saved_card_verifies_the_form_really_switched():
 
 
 def test_select_saved_card_is_not_satisfied_by_a_form_that_rendered_nothing():
-    # The switch is `cardNumber` gone AND `cvv` still there. Absence alone
-    # would also be true of a sheet that failed to draw at all, which is a
-    # different finding and must not read as a successful selection.
     empty = "<hierarchy></hierarchy>"
     shell = FakeShell(trees=[SAVED_SHEET, empty])
 
@@ -469,7 +354,6 @@ def test_select_saved_card_is_not_satisfied_by_a_form_that_rendered_nothing():
 
 
 def test_select_saved_card_says_so_when_no_stored_row_is_offered():
-    # `saved_cards` missing from the session, or the customer has no card.
     ordinary = (FIXTURES / "android-rearmed.uix").read_text()
     shell = FakeShell(tree=ordinary)
 
@@ -479,9 +363,6 @@ def test_select_saved_card_says_so_when_no_stored_row_is_offered():
     assert "no stored-card row" in str(excinfo.value)
 
 
-# -- remove_saved_card --------------------------------------------------------
-
-#: The sheet after the card really went: same session, no rows left.
 SAVED_GONE = SAVED_SHEET.replace(STORED, "paycross.somethingElse")
 
 
@@ -493,22 +374,10 @@ def test_remove_saved_card_taps_the_bin_of_the_row_it_read():
     driver(shell).remove_saved_card()
 
     taps = [a for a in shell.argv_text() if a.startswith("shell input tap")]
-    # The bin at the centre of [912,442][1038,559], then Remove at the centre
-    # of [701,1285][897,1411]. The row itself is never tapped: choosing a card
-    # is not what this action does.
     assert taps == ["shell input tap 975 500", "shell input tap 799 1348"]
 
 
 def test_remove_saved_card_raises_when_the_row_survives_the_confirmation():
-    """The defect this action exists to catch, measured on TEST 2026-09-06.
-
-    Confirming the removal answered 200 on the screen and left the row in
-    place, with `Could not remove the card. Try again.` in the error banner,
-    because the web API could not write the session blob back. A driver that
-    tapped Confirm and moved on would have reported a removal that never
-    happened -- and no merchant assertion in the cell grammar would have
-    noticed, because there is no saved-card count to assert.
-    """
     shell = FakeShell(
         trees=[SAVED_SHEET, SAVED_SHEET, REMOVE_DIALOG, REMOVE_DIALOG, SAVED_SHEET]
     )
@@ -521,16 +390,6 @@ def test_remove_saved_card_raises_when_the_row_survives_the_confirmation():
 
 
 def test_remove_saved_card_does_not_read_the_dialogs_own_window_as_success():
-    """The window trap this whole action has to survive.
-
-    A dialog arrives as its own window and the dump taken while it is up holds
-    the dialog and nothing else -- no picker, no form. So "the row is not in
-    the tree" is TRUE of the dialog itself, and a check that asked only that
-    would answer yes the instant Confirm was tapped, whatever the backend then
-    did. Requiring the Pay button back is what makes the look land on the sheet.
-    """
-    # The last two trees are the poll's: the dialog still up, then the sheet
-    # with the row still on it.
     shell = FakeShell(
         trees=[
             SAVED_SHEET,
@@ -549,8 +408,6 @@ def test_remove_saved_card_does_not_read_the_dialogs_own_window_as_success():
 
 
 def test_remove_saved_card_waits_out_the_dialog_before_it_answers():
-    # The same sequence with a removal that really landed: the dialog closes
-    # onto a sheet whose row is gone, and only that is a pass.
     shell = FakeShell(
         trees=[
             SAVED_SHEET,
@@ -574,44 +431,23 @@ def test_remove_saved_card_says_so_when_there_is_nothing_to_remove():
     assert "no stored-card row" in str(excinfo.value)
 
 
-# -- wait_saved_card ----------------------------------------------------------
-
-
 def test_wait_saved_card_finds_the_list_the_sdk_only_composes_when_there_is_one():
-    # `CardFormScreen.kt` composes SavedCardSelector only under
-    # `if (savedCards.isNotEmpty())`, so the list being on screen IS the
-    # predicate -- there is no separate "a card is offered" signal to read.
     assert android.SAVED_CARDS == "paycross.savedCards"
 
     assert driver(FakeShell(tree=SAVED_SHEET)).wait_saved_card() is True
 
 
 def test_wait_saved_card_answers_false_rather_than_raising_when_none_is_offered():
-    # "No stored card was offered" is a cell VERDICT, not a device fault. A
-    # DriverError here would be read as a broken rig and spend an interleaved
-    # control check; False gets the cell the message that names the
-    # expectation and the deadline it really used.
     ordinary = (FIXTURES / "android-rearmed.uix").read_text()
 
     assert driver(FakeShell(tree=ordinary)).wait_saved_card(timeout=0) is False
 
 
 def test_wait_saved_card_still_raises_when_the_device_will_not_dump():
-    # The other half of the same distinction: a device that cannot be read at
-    # all is not "no card was offered".
     with pytest.raises(DriverError):
         driver(FakeShell(tree="")).wait_saved_card(timeout=0)
 
 
-# -- save_card ----------------------------------------------------------------
-
-#: The real form, dumped from the emulator on 2026-09-07 against a session
-#: carrying `save_card_config`, before anything ticked the box. The tagged node
-#: is the `toggleable` Row: it carries the identifier, the checked state and
-#: the click all at once, and the Compose `Checkbox` inside it takes no click
-#: of its own. That is the whole reason `save_card` shrank in Train 4 -- it
-#: used to hunt the tree for anything two-state, because the box carried no
-#: name and its caption was a non-clickable sibling.
 SAVE_FORM = (FIXTURES / "android-save-card-form.uix").read_text()
 SAVE_FORM_TICKED = SAVE_FORM.replace(
     'resource-id="paycross.saveCard" class="android.view.View" '
@@ -625,9 +461,6 @@ assert SAVE_FORM_TICKED != SAVE_FORM, "the fixture's save-card row changed shape
 
 
 def test_save_card_taps_the_row_the_identifier_is_on():
-    # One node, found by name and tapped where it was found. The old hazard is
-    # gone: the caption is inside the toggleable Row now rather than beside it,
-    # so there is no "tapped the words instead" failure left to guard against.
     shell = FakeShell(trees=[SAVE_FORM, SAVE_FORM_TICKED])
 
     driver(shell).save_card()
@@ -637,9 +470,6 @@ def test_save_card_taps_the_row_the_identifier_is_on():
 
 
 def test_save_card_refuses_a_tag_that_is_not_on_a_two_state_control():
-    # If the tag ever moves off the toggleable row, the tap below would land
-    # somewhere plausible and the read-back would blame the tap. Saying it
-    # here points at the SDK change instead.
     loose = SAVE_FORM.replace(
         'resource-id="paycross.saveCard" class="android.view.View" '
         'package="com.paycross.flutterdemo" content-desc="" checkable="true"',
@@ -655,24 +485,15 @@ def test_save_card_refuses_a_tag_that_is_not_on_a_two_state_control():
 
 
 def test_save_card_verifies_the_tick_took():
-    # A tap that misses leaves the box unticked, the cell then pays without
-    # storing, and `saved_card_saved` fails twenty minutes later against a
-    # merchant record that is telling the truth. Failing here names the cause.
-    shell = FakeShell(tree=SAVE_FORM)  # never flips
+    shell = FakeShell(tree=SAVE_FORM)
 
     with pytest.raises(DriverError) as excinfo:
-        # `_poll`'s deadline is real time while the injected sleep is not, so a
-        # test that means to reach it says zero rather than spending fifteen
-        # seconds of the suite getting there.
         driver(shell).save_card(timeout=0)
 
     assert "did not tick" in str(excinfo.value)
 
 
 def test_save_card_leaves_an_already_ticked_box_alone():
-    # Tapping a ticked box UNticks it. `TestCardPrefill.saveCard` pre-ticks it
-    # when a prefill is configured, so "tap it once" is not the same as "make
-    # sure it is ticked" -- and only the second one is what a cell means.
     shell = FakeShell(tree=SAVE_FORM_TICKED)
 
     driver(shell).save_card()
@@ -681,10 +502,6 @@ def test_save_card_leaves_an_already_ticked_box_alone():
 
 
 def test_save_card_says_so_when_the_session_never_rendered_a_box():
-    # `save_card_config` absent from the session means `canSaveCard` is false
-    # and the checkbox is not composed at all. That is a cell-authoring
-    # mistake, and this message is what points at it. The saved-card sheet is
-    # a real dump of exactly such a session.
     shell = FakeShell(tree=SAVED_SHEET)
 
     with pytest.raises(DriverError) as excinfo:
@@ -694,14 +511,7 @@ def test_save_card_says_so_when_the_session_never_rendered_a_box():
     assert android.SAVE_CARD in str(excinfo.value)
 
 
-# -- type_cvv -----------------------------------------------------------------
-
-
 def test_type_cvv_fills_the_cvv_field_and_touches_nothing_else():
-    # The saved-card form is a prompt and one field. `type_card`'s clearing
-    # pass would find no card-number field to clear and raise, and its other
-    # three fields do not exist on this screen at all -- which is why this is
-    # its own action rather than a flag on that one.
     form = (FIXTURES / "android-rearmed.uix").read_text()
     shell = FakeShell(tree=form)
     naps = []
@@ -710,20 +520,12 @@ def test_type_cvv_fills_the_cvv_field_and_touches_nothing_else():
 
     text = " | ".join(shell.argv_text())
     assert "shell input text 123" in text
-    # The same content-desc the fresh form uses: CardFormScreen renders the
-    # same CvvField on both branches, so there is one matcher, not two.
     assert android.CVV == "paycross.cvv"
-    # Nothing else typed and nothing else cleared. A stray DEL here would
-    # eat digits the shopper is about to be asked for again.
     assert text.count("input text") == 1
     assert "input keyevent 67" not in text
 
 
 def test_type_cvv_drops_the_ime_so_the_pay_button_is_reachable():
-    # The numeric pad covers the bottom of the sheet, and `tap_pay` matches the
-    # Pay button by its text and taps the centre of its bounds. Behind the pad
-    # that tap types a digit instead. `type_card` ends the same way and for the
-    # same reason.
     form = (FIXTURES / "android-rearmed.uix").read_text()
     shell = FakeShell(tree=form)
 
@@ -732,9 +534,6 @@ def test_type_cvv_drops_the_ime_so_the_pay_button_is_reachable():
     argv = shell.argv_text()
     typed = argv.index("shell input text 123")
     assert f"shell input keyevent {android._KEYCODE_BACK}" in argv[typed:]
-
-
-# -- paste_token --------------------------------------------------------------
 
 
 def test_paste_token_refuses_an_empty_token_file(tmp_path):
@@ -750,8 +549,6 @@ def test_paste_token_refuses_an_empty_token_file(tmp_path):
 
 
 def test_paste_token_refuses_something_that_is_not_shaped_like_a_token(tmp_path):
-    # adb re-splits what it is handed, on the host and again on the device, so
-    # anything but base64url-and-dots is a command rather than a credential.
     path = tmp_path / "token"
     path.write_text("not a token; rm -rf /sdcard")
     shell = FakeShell()
@@ -761,10 +558,7 @@ def test_paste_token_refuses_something_that_is_not_shaped_like_a_token(tmp_path)
 
     message = str(excinfo.value)
     assert "JWT" in message
-    # The shape check is shared with iOS; the verb is this transport's own
-    # word, so the message still says what was about to happen.
     assert "Refusing to type it" in message
-    # The value is never echoed, whatever it turned out to be.
     assert "rm -rf" not in message
     assert shell.calls == []
 
@@ -776,7 +570,6 @@ def test_paste_token_sends_the_token_on_stdin_never_in_an_argv(tmp_path):
 
     driver(shell).paste_token(path)
 
-    # A command line is world-readable for as long as the process lives.
     assert not any(TOKEN in " ".join(argv) for argv in shell.calls)
     carried = [
         (argv, s) for argv, s in zip(shell.calls, shell.stdins, strict=True) if s
@@ -786,9 +579,6 @@ def test_paste_token_sends_the_token_on_stdin_never_in_an_argv(tmp_path):
 
 
 def test_paste_token_chunks_a_long_token_and_loses_nothing(tmp_path):
-    # The real token is ~1011 characters, well past what one `input text`
-    # delivers. Chunking is only safe if the pieces reassemble exactly, and
-    # nothing downstream would notice a dropped character except as a 401.
     long_token = ".".join("x" * 70 for _ in range(3))
     assert len(long_token) > android.TOKEN_CHUNK_CHARS
     path = tmp_path / "token"
@@ -808,10 +598,9 @@ def test_paste_token_chunks_a_long_token_and_loses_nothing(tmp_path):
 def test_paste_token_waits_for_the_field_to_agree_with_the_file(tmp_path):
     path = tmp_path / "token"
     path.write_text(TOKEN)
-    # The find, then a read that catches the field mid-entry, then agreement.
     shell = FakeShell(trees=[screen(TOKEN[:10]), screen(TOKEN[:10]), screen(TOKEN)])
 
-    driver(shell).paste_token(path)  # a single early read would have raised
+    driver(shell).paste_token(path)
 
 
 def test_paste_token_reports_a_paste_that_never_agreed(tmp_path, monkeypatch):
@@ -825,8 +614,6 @@ def test_paste_token_reports_a_paste_that_never_agreed(tmp_path, monkeypatch):
 
     message = str(excinfo.value)
     assert "10" in message and str(len(TOKEN)) in message
-    # A truncated paste presents as an instant 401, so it is named here and
-    # not left to look like an SDK bug -- without echoing the token.
     assert TOKEN not in message
 
 
@@ -839,14 +626,7 @@ def test_a_find_with_no_needle_does_not_say_it_was_looking_for_nothing():
     assert str(excinfo.value) == "the token field never appeared within 0s"
 
 
-# -- logs, screenshots, dumps -------------------------------------------------
-
-
 def test_logs_since_takes_its_cutoff_from_the_device_not_the_host():
-    # logcat's -v time stamps, and therefore -t, are in the DEVICE's zone.
-    # The emulator runs Europe/Kiev while run_cell hands the driver UTC, so
-    # formatting the UTC value here asks for a three-hour window: measured at
-    # 110,082 lines against 2,187 for the correct cutoff.
     shell = FakeShell("08-28 18:24:27.000\n", "08-28 18:24:28.000 I x: y\n")
     when = datetime.now(timezone.utc) - timedelta(seconds=60)
 
@@ -854,16 +634,11 @@ def test_logs_since_takes_its_cutoff_from_the_device_not_the_host():
 
     asked, fetched = shell.argv_text()
     assert asked.startswith("shell date -d @$(( $(date +%s) - 6")
-    # Quoted as ONE argument: the device shell re-splits on spaces and toybox
-    # date then answers "Max 1 argument".
     assert "'+%m-%d %H:%M:%S.000'" in asked
-    # The device's own answer goes through verbatim; nothing is reformatted.
     assert fetched == "logcat -d -v time -t 08-28 18:24:27.000"
 
 
 def test_logs_since_refuses_a_cutoff_the_device_could_not_produce():
-    # An empty or error cutoff would make logcat return nothing, and criterion
-    # 3 would then pass on an empty log -- the worse of the two failures.
     shell = FakeShell('date: Max 1 argument (see "date --help")\n')
 
     with pytest.raises(DriverError) as excinfo:
@@ -888,9 +663,6 @@ def test_dump_tree_returns_the_device_xml():
 
 
 def test_dump_tree_clears_the_stale_dump_in_the_same_round_trip():
-    # `uiautomator dump` writes nothing when it cannot get an idle state. If
-    # the previous file survived, `cat` would hand back a stale tree that
-    # parses perfectly and the caller would tap a screen that is already gone.
     xml = (FIXTURES / "android-rearmed.uix").read_text()
     shell = FakeShell("", xml)
 
@@ -902,9 +674,6 @@ def test_dump_tree_clears_the_stale_dump_in_the_same_round_trip():
 
 
 def test_dump_tree_retries_a_read_that_came_back_unparsable():
-    # A partly-flushed `cat` raises ParseError out of _nodes -- which is not a
-    # DriverError, so it escapes every polling loop and aborts the cell for one
-    # transient read.
     good = (FIXTURES / "android-rearmed.uix").read_text()
     shell = FakeShell("", "<hierarchy><node ", "", good)
 
@@ -918,12 +687,8 @@ def test_dump_tree_gives_up_as_a_driver_error_carrying_what_it_saw():
         driver(shell).dump_tree(attempts=3, interval=0)
 
     message = str(excinfo.value)
-    # Both halves: what uiautomator said, and what came back off the disk.
     assert "could not get idle state" in message
     assert "no such file" in message
-
-
-# -- the polling waits --------------------------------------------------------
 
 
 def test_wait_rearmed_polls_until_the_banner_appears():
@@ -941,13 +706,6 @@ def test_wait_rearmed_gives_up_and_says_so():
 
 
 def test_wait_rearmed_blames_the_rig_for_an_amount_it_cannot_spell():
-    """The Android half of the rule the two drivers now share.
-
-    A French sheet reads `10,00 €` where the runner computes `€10.00`, and
-    answering False there would report "the sheet never re-armed" about a sheet
-    that plainly had -- the rig fault the removed locale guard used to prevent
-    by refusing to run at all.
-    """
     rearmed = (FIXTURES / "android-rearmed.uix").read_text()
     french = rearmed.replace('text="€10.00"', 'text="10,00 €"', 1)
     assert french != rearmed
@@ -958,15 +716,11 @@ def test_wait_rearmed_blames_the_rig_for_an_amount_it_cannot_spell():
     message = str(excinfo.value)
     assert "10,00" in message
     assert "the rig, not the SDK" in message
-    # The rule lives on the base driver; the noun is this platform's half of
-    # it, and it is what a shared helper can silently lose.
     assert "the device is not drawing" in message
     assert android.AndroidDriver.device_noun == "device"
 
 
 def test_wait_rearmed_still_answers_false_for_a_sheet_that_did_not_re_arm():
-    # The distinction the message above rests on: a cell that really measured
-    # "no re-arm" has a verdict to report and must not be handed a rig fault.
     rearmed = (FIXTURES / "android-rearmed.uix").read_text()
     no_banner = rearmed.replace('resource-id="paycross.errorBanner"', 'resource-id="x"')
     assert no_banner != rearmed
@@ -981,8 +735,6 @@ def test_wait_label_returns_the_contract_label():
     tree_xml = (FIXTURES / "android-result.uix").read_text()
     shell = FakeShell("", tree_xml)
 
-    # The fixture predates the contract, so ask for the legacy prefix set --
-    # this is the same code path the real cells take.
     label = driver(shell).wait_label(
         timeout=10, interval=0, prefixes=("Paid ", "result:")
     )
@@ -991,11 +743,7 @@ def test_wait_label_returns_the_contract_label():
 
 
 def test_a_wait_rides_out_a_device_that_will_not_dump():
-    # uiautomator refuses while the UI animates, which is exactly what it is
-    # doing during the waits that matter -- the 120 s ACS wait, the 60 s sheet
-    # wait. Three refusals in a row must not end a cell that still has 10 s of
-    # its own deadline left; the poll's next round gets a clean tree.
-    refused = ["", ""] * 3  # one whole dump_tree's worth of attempts
+    refused = ["", ""] * 3
     tree_xml = (FIXTURES / "android-result.uix").read_text()
     shell = FakeShell(*refused, "", tree_xml)
 
@@ -1007,8 +755,6 @@ def test_a_wait_rides_out_a_device_that_will_not_dump():
 
 
 def test_a_wait_past_its_deadline_blames_the_dump_not_the_missing_node():
-    # Once the deadline is gone the tolerance goes with it, so the error names
-    # the device rather than reporting a node that was never looked for.
     shell = FakeShell(*(["", ""] * 3))
 
     with pytest.raises(DriverError) as excinfo:
@@ -1027,8 +773,6 @@ def test_wait_label_timing_out_raises_rather_than_returning_none():
 
 
 def test_tapping_an_empty_needle_is_refused_rather_than_matching_every_node():
-    # find_text_exact("") matches every node whose text is empty, which is most
-    # of a real tree, so the tap would land on an arbitrary one.
     shell = FakeShell(tree=(FIXTURES / "android-rearmed.uix").read_text())
     d = driver(shell)
 
@@ -1040,8 +784,6 @@ def test_tapping_an_empty_needle_is_refused_rather_than_matching_every_node():
 
 
 def test_close_is_a_no_op_for_a_driver_with_nothing_to_release():
-    # Concrete on the ABC rather than abstract: only iOS holds anything across
-    # a cell, and Task 9 calls this in a finally for both.
     shell = FakeShell()
 
     assert driver(shell).close() is None
@@ -1049,11 +791,6 @@ def test_close_is_a_no_op_for_a_driver_with_nothing_to_release():
 
 
 def test_a_wait_that_times_out_on_a_legacy_label_names_the_missing_define():
-    # The expensive failure this replaces: a build made without
-    # --dart-define=PAYCROSS_E2E=true renders "Paid 1000 EUR - ..." instead of
-    # "result:success:<txn>", so wait_result spends its whole 180 s and then
-    # reports "no contract label", which reads as an SDK hang. The screen was
-    # showing the answer the entire time.
     shell = FakeShell(tree=(FIXTURES / "android-result.uix").read_text())
 
     with pytest.raises(DriverError) as excinfo:
@@ -1063,7 +800,6 @@ def test_a_wait_that_times_out_on_a_legacy_label_names_the_missing_define():
 
 
 def test_a_wait_that_times_out_on_nothing_at_all_does_not_blame_the_build():
-    # The diagnosis has to be earned: an empty screen is not a wrong build.
     shell = FakeShell(tree="<hierarchy></hierarchy>")
 
     with pytest.raises(DriverError) as excinfo:
@@ -1073,8 +809,6 @@ def test_a_wait_that_times_out_on_nothing_at_all_does_not_blame_the_build():
 
 
 def test_the_rig_paths_are_overridable_from_the_environment(monkeypatch):
-    # Every constant here is one workstation's. A second rig -- a nightly
-    # runner, another laptop -- must not need a fork of this file.
     monkeypatch.setenv("PAYCROSS_E2E_ADB", "/opt/android/adb")
     monkeypatch.setenv("PAYCROSS_E2E_STAGING_DIR", "/mnt/d/stage")
     monkeypatch.setenv("PAYCROSS_E2E_WINDOWS_STAGING", r"D:\stage")
@@ -1089,18 +823,12 @@ def test_the_rig_paths_are_overridable_from_the_environment(monkeypatch):
 
 
 def test_the_rig_paths_fall_back_to_this_workstation():
-    # adb is the exception: its fallback names no home directory, because a
-    # default that did would put one machine's account in a public repo.
     assert android.ADB == "adb.exe"
     assert android.STAGING_DIR == "/mnt/c/dev/tmp"
     assert android.WINDOWS_STAGING == r"C:\dev\tmp"
 
 
-# --- Plan B: the Driver contract is enforced at construction --------------
-
-
 def test_a_driver_that_skips_super_init_has_no_package_at_all():
-    # Bare annotations let a driver forget one and fail mid-run instead.
     class Forgetful(base.Driver):
         _parse_dump = staticmethod(lambda dump: [])
 
@@ -1112,7 +840,6 @@ def test_a_driver_that_skips_super_init_has_no_package_at_all():
         wait_rearmed = dump_tree = screenshot = logs_since = lambda *a, **k: None
 
     with pytest.raises(AttributeError, match="package"):
-        # The access is the assertion: nothing set the attribute.
         assert Forgetful().package
 
 
@@ -1125,12 +852,7 @@ def test_the_android_driver_exposes_what_it_was_constructed_with():
     assert slept == [1.5]
 
 
-# --- Plan B: watching for a label that must not arrive --------------------
-
-
 def test_wait_no_label_hands_back_the_label_that_appeared():
-    # Naming it means the failure says what showed up, not only that
-    # something did.
     resolved = (
         "<hierarchy>"
         '<node class="android.view.View" text=""'
@@ -1143,19 +865,12 @@ def test_wait_no_label_hands_back_the_label_that_appeared():
 
 
 def test_wait_no_label_answers_none_when_the_app_said_nothing():
-    # The Android process-kill cell's pass: the pending Dart call dies with
-    # the isolate and no result is delivered, by design.
     shell = FakeShell(tree=screen())
 
     assert driver(shell).wait_no_label(0) is None
 
 
 def test_relaunch_on_android_is_exactly_launch():
-    # Nothing on this side is truncated by a launch, so there is nothing for a
-    # relaunch to preserve. The base implementation is the whole answer.
-    # Two launches' worth: FakeShell pops one output per call, and a launch
-    # spends eight -- boot, locale, airplane, don't-keep-activities, the two
-    # rotation settings, force-stop, monkey.
     one = ["1\n", "0\n", "0\n", "0\n", "0\n", "", ""]
     shell = FakeShell(*one, *one)
     made = driver(shell)
@@ -1168,15 +883,7 @@ def test_relaunch_on_android_is_exactly_launch():
     assert shell.calls == launched
 
 
-# --- Plan B: the four actions with no unit coverage on this side ----------
-#
-# The iOS driver has the equivalents; the asymmetry was an accident, not a
-# decision. Each one asserts the exact `input tap X Y` argv, so a matcher that
-# starts finding the wrong node is caught here rather than on a device.
-
-
 def sheet(*rows: tuple[str, str, str]) -> str:
-    """A tree of `(text, content-desc, bounds)` nodes and nothing else."""
     return (
         "<hierarchy>"
         + "".join(
@@ -1189,12 +896,6 @@ def sheet(*rows: tuple[str, str, str]) -> str:
 
 
 def tagged(*rows: tuple[str, str, str]) -> str:
-    """A tree of `(resource-id, text, bounds)` nodes and nothing else.
-
-    The sibling of `sheet` for everything the SDK draws: those nodes are found
-    by identifier now, and a tree built out of `content-desc` would prove a
-    matcher that no longer exists.
-    """
     return (
         "<hierarchy>"
         + "".join(
@@ -1211,13 +912,6 @@ def taps(shell):
 
 
 def test_tap_pay_taps_the_sheets_own_pay_button_and_not_the_examples():
-    """One identifier, and the amount is no longer part of the matcher.
-
-    This used to match `text="Pay €10.00"` exactly, which is what made the
-    amount a parameter, made the `en-US` guard necessary and made the example
-    app's own `Pay` a hazard worth a test. Two of those are gone; the hazard is
-    not, because the example's Pay is still on the screen behind the sheet.
-    """
     shell = FakeShell(
         tree=(
             "<hierarchy>"
@@ -1239,9 +933,6 @@ def test_tap_pay_taps_the_sheets_own_pay_button_and_not_the_examples():
 
 
 def test_tap_pay_does_not_need_the_amount_it_is_given():
-    # The parameter survives only because the base class and the runner pass
-    # it on both platforms. A cell whose amount the driver could not compute
-    # must still be able to press Pay.
     shell = FakeShell(tree=tagged(("paycross.payButton", "", "[0,60][100,100]")))
 
     driver(shell).tap_pay("nonsense")
@@ -1260,14 +951,9 @@ def test_acs_waits_for_the_sandbox_page_before_it_taps_an_outcome():
 
     driver(shell).acs("authentication_failed")
 
-    # The outcome is chosen by which button is tapped, never by the PAN.
     assert taps(shell) == ["shell input tap 50 280"]
 
 
-#: The cancel confirmation as it really arrives -- its own window, holding the
-#: dialog and nothing else. Confirmed against a dump on 2026-09-07
-#: (`android-cancel-dialog.uix`); the tags reach one only because 0.8.0 sets
-#: `testTagsAsResourceId` per window rather than once on the sheet.
 CANCEL_WINDOW = tagged(
     ("paycross.cancelDialog", "", "[0,300][100,500]"),
     ("paycross.cancelDismiss", "", "[0,400][50,440]"),
@@ -1291,8 +977,6 @@ def test_cancel_challenge_backs_out_of_the_acs_page_then_confirms():
 
 
 def test_cancel_form_confirms_without_waiting_for_the_acs_page():
-    # BackHandler is unconditional on both screens (PaymentActivity.kt), and
-    # the card form is not the ACS page -- so this one must not look for it.
     shell = FakeShell(tree=CANCEL_WINDOW)
 
     driver(shell).cancel_form()
@@ -1303,14 +987,6 @@ def test_cancel_form_confirms_without_waiting_for_the_acs_page():
 
 
 def test_dismiss_cancel_presses_the_other_button_and_waits_for_the_form():
-    """The one dialog button no cell ever pressed.
-
-    `cancel_form` and `cancel_challenge` both confirm, so `cancelDismiss` shipped
-    untested from this side. The last look is not decoration either: the dialog
-    is its own window and a dump taken while it is up holds only the dialog, so
-    "the dialog closed" and "the sheet came back" are two different
-    observations and only the second one says the cell can carry on paying.
-    """
     form = tagged(("paycross.payButton", "", "[0,60][100,100]"))
     shell = FakeShell(trees=[CANCEL_WINDOW, CANCEL_WINDOW, form])
 
@@ -1321,7 +997,6 @@ def test_dismiss_cancel_presses_the_other_button_and_waits_for_the_form():
 
 
 def test_dismiss_cancel_raises_when_the_sheet_does_not_come_back():
-    # A dialog that closed onto nothing is not a form the cell can pay from.
     shell = FakeShell(
         trees=[CANCEL_WINDOW, CANCEL_WINDOW, "<hierarchy></hierarchy>"] * 2
     )
@@ -1332,16 +1007,7 @@ def test_dismiss_cancel_raises_when_the_sheet_does_not_come_back():
     assert "did not come back" in str(excinfo.value)
 
 
-# -- present_token, tap_example_pay, enter_token -------------------------------
-
-
 def token_screen_without_the_form(token: str) -> str:
-    """The example's own screen: its field and its Pay, and no sheet behind it.
-
-    What a cell using `present_token` actually sees. The SDK is expected to
-    refuse the token, so the card form is never going to appear -- which is
-    the one thing `screen()` above cannot say, since it always carries one.
-    """
     return (
         "<hierarchy>"
         f'<node class="android.widget.EditText" text="{token}" content-desc=""'
@@ -1353,17 +1019,12 @@ def token_screen_without_the_form(token: str) -> str:
 
 
 def test_present_token_does_not_wait_for_a_card_form_that_will_never_come(tmp_path):
-    # `paste_token` ends by giving the sheet 60 s. For a token the SDK is
-    # expected to refuse there is no sheet coming, so that wait spends a
-    # minute and then reports "the card form never appeared" instead of the
-    # label the app has been showing the whole time.
     path = tmp_path / "token"
     path.write_text(TOKEN)
     shell = FakeShell(tree=token_screen_without_the_form(TOKEN))
 
     driver(shell).present_token(path)
 
-    # The example's Pay is the last thing it does; nothing waits after it.
     assert taps(shell)[-1] == "shell input tap 50 80"
     assert shell.calls[-1] == ["shell", "input", "tap", "50", "80"]
 
@@ -1394,8 +1055,6 @@ def test_present_token_still_refuses_something_that_is_not_a_token(tmp_path):
 
 
 def test_tap_example_pay_matches_the_content_desc_not_the_sheets_text():
-    # A Flutter widget surfaces as content-desc with an empty text, and the
-    # SDK's own Compose Pay does the opposite.
     shell = FakeShell(
         tree=sheet(
             ("Pay €10.00", "", "[0,0][100,40]"),
@@ -1417,9 +1076,6 @@ def test_enter_token_types_the_literal_verbatim():
 
 
 def test_enter_token_never_reads_a_file(tmp_path):
-    # Deliberately not through `read_token`: what the SDK does with something
-    # that is *not* a credential is the whole point of the cells that use
-    # this. A literal that looks like a path is typed, not opened.
     missing = str(tmp_path / "absent.token")
     shell = FakeShell(tree=screen())
 
@@ -1429,9 +1085,6 @@ def test_enter_token_never_reads_a_file(tmp_path):
 
 
 def test_enter_token_takes_a_literal_that_paste_token_would_refuse(tmp_path):
-    # `paste_token` refuses anything that is not JWT-shaped, because a mint
-    # that answered with an error document would otherwise be typed as though
-    # it were a credential. `enter_token` exists to type exactly that.
     path = tmp_path / "token"
     path.write_text("short")
     shell = FakeShell(tree=screen())
@@ -1440,9 +1093,6 @@ def test_enter_token_takes_a_literal_that_paste_token_would_refuse(tmp_path):
         driver(shell).paste_token(path)
 
     driver(FakeShell(tree=screen())).enter_token("short")
-
-
-# -- airplane -----------------------------------------------------------------
 
 
 def test_airplane_cuts_the_network_and_reads_the_setting_back():
@@ -1470,9 +1120,6 @@ def test_airplane_off_asks_for_disable_and_expects_zero():
 
 
 def test_airplane_quotes_what_the_toggle_itself_said():
-    # On API < 30 the service is not there and `cmd` says so, while the
-    # read-back then reports a perfectly ordinary '0'. Without the toggle's own
-    # answer the message describes the symptom and hides the cause.
     shell = FakeShell("cmd: Can't find service: connectivity\n", "0\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -1482,8 +1129,6 @@ def test_airplane_quotes_what_the_toggle_itself_said():
 
 
 def test_airplane_bounds_the_device_text_it_quotes():
-    # Driver messages reach stdout and `problems`; a wedged adb answering with
-    # a screenful must not become the failure line.
     shell = FakeShell("x" * 4000, "y" * 4000)
 
     with pytest.raises(DriverError) as excinfo:
@@ -1496,10 +1141,6 @@ def test_airplane_bounds_the_device_text_it_quotes():
 
 
 def test_airplane_refuses_a_cut_that_did_not_take():
-    # `cmd connectivity` rather than `settings put` plus a broadcast: that
-    # broadcast needs a system permission, and without it the setting flips
-    # while the radios stay up -- so a cell would report that the SDK
-    # "survived a network cut" having measured nothing at all.
     shell = FakeShell("", "0\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -1509,8 +1150,6 @@ def test_airplane_refuses_a_cut_that_did_not_take():
 
 
 def test_launch_refuses_a_device_a_previous_cell_left_in_airplane_mode():
-    # Neither a failure nor an exception turns it off again, and every cell
-    # after it would fail for that reason while looking like an SDK finding.
     shell = FakeShell("1\n", "1\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -1519,12 +1158,7 @@ def test_launch_refuses_a_device_a_previous_cell_left_in_airplane_mode():
     message = str(excinfo.value)
     assert "airplane mode" in message
     assert "airplane-mode disable" in message
-    # Nothing was started: the interleaved control fails here too, which is
-    # exactly right -- this is a rig fault.
     assert not any("monkey" in c for c in shell.argv_text())
-
-
-# -- wait_acs -----------------------------------------------------------------
 
 
 def test_wait_acs_waits_for_the_page_without_answering_it():
@@ -1548,13 +1182,6 @@ def test_wait_acs_says_which_page_never_came():
     assert "sandbox ACS page" in str(excinfo.value)
 
 
-# -- D4: the wallet button, which Play services owns --------------------------
-
-
-#: The real node, lifted from this campaign's own evidence
-#: (`evidence/demo-rename-android/20260830-161244-android/control/01-paste_token.uix`):
-#: a wrapper carrying the description, with `clickable="false"` on it. Its
-#: centre is (540, 242), which is what every tap assertion below expects.
 GOOGLE_PAY_BOUNDS = "[42,179][1038,305]"
 
 
@@ -1576,10 +1203,6 @@ def test_wait_google_pay_finds_the_button_play_services_draws():
 
 
 def test_wait_google_pay_polls_rather_than_looking_once():
-    # Readiness is a LaunchedEffect that runs after the session loads and
-    # after an asynchronous isReadyToPay (PaymentActivity.kt), so the button
-    # is genuinely late rather than instant. A single look would fail the
-    # cell on a sheet that was about to offer the wallet.
     shell = FakeShell(
         trees=[sheet_without_wallet(), sheet_without_wallet(), offered_sheet()]
     )
@@ -1590,21 +1213,12 @@ def test_wait_google_pay_polls_rather_than_looking_once():
 
 
 def test_wait_google_pay_answers_false_rather_than_raising():
-    # A falsy answer is what `_observe` turns into "expect: never observed
-    # 'google_pay'", which names the cell's own expectation. Raising here
-    # would report the device instead, and spend an interleaved control check
-    # on a screen that was read perfectly well.
     shell = FakeShell(tree=sheet_without_wallet())
 
     assert driver(shell).wait_google_pay(timeout=0) is False
 
 
 def test_wait_no_google_pay_is_disproved_by_a_button_that_is_merely_late():
-    # The one thing this expectation must never do is pass on every session.
-    # Absence has to be waited OUT rather than waited for: readiness is
-    # asynchronous, so a single look is satisfied by a button that has not
-    # rendered yet -- and the cell would then go green on a sheet that plainly
-    # offers the wallet, which is the failure it exists to catch.
     shell = FakeShell(
         trees=[sheet_without_wallet(), sheet_without_wallet(), offered_sheet()]
     )
@@ -1621,20 +1235,13 @@ def test_wait_no_google_pay_answers_true_when_the_window_passes_empty():
 
 
 def test_wait_no_google_pay_rides_out_a_device_that_will_not_dump():
-    # A refused dump inside the window is not an absent button. Tolerated
-    # while the deadline is live, exactly as every other wait treats it --
-    # otherwise `uiautomator` refusing once would be recorded as the SDK
-    # suppressing the wallet.
-    refused = ["", ""] * 3  # one whole dump_tree's worth of attempts
+    refused = ["", ""] * 3
     shell = FakeShell(*refused, "", offered_sheet())
 
     assert driver(shell).wait_no_google_pay(timeout=20) is False
 
 
 def test_tap_google_pay_taps_the_wrapper_because_the_node_is_not_clickable():
-    # The click handler lives on the AndroidView, not on a Compose node, so
-    # the node carrying the description reports clickable="false". Tapping its
-    # bounds centre is the only route in.
     shell = FakeShell(tree=offered_sheet())
 
     driver(shell).tap_google_pay()
@@ -1652,18 +1259,9 @@ def test_tap_google_pay_says_which_button_never_appeared():
 
 
 def test_the_google_pay_description_is_the_one_the_evidence_shows():
-    # It is Play services' string, not the SDK's: the SDK's own
-    # Modifier.testTag("google_pay_button") is invisible to uiautomator
-    # because testTagsAsResourceId is set nowhere in either repo (filed
-    # upstream). So this constant moves with the GMS version and the device
-    # locale, and pinning it here is what makes that visible when it moves.
     assert android.GOOGLE_PAY_DESC == "Pay with GPay"
 
 
-# -- D3: lifecycle ------------------------------------------------------------
-
-
-#: What `dumpsys window | grep mCurrentFocus` answers with, for one app.
 def focused(package, activity="com.paycross.MainActivity"):
     return f"  mCurrentFocus=Window{{c4b8ac1 u0 {package}/{activity}}}\n"
 
@@ -1673,8 +1271,6 @@ OURS = focused("com.paycross.flutterdemo")
 
 
 def test_the_foreground_package_is_asked_of_the_window_manager():
-    # Not inferred from a tree dump: a dump of the launcher and a dump of an
-    # app mid-transition look alike from up here.
     shell = FakeShell(OURS)
 
     assert driver(shell)._foreground_package() == "com.paycross.flutterdemo"
@@ -1688,8 +1284,6 @@ def test_nothing_focused_reads_as_no_package():
 
 
 def test_wait_foreground_gives_up_naming_what_it_saw():
-    # timeout=0 looks once and then gives up, which is how a test reaches the
-    # failure branch without spending the wait.
     shell = FakeShell(LAUNCHER)
 
     with pytest.raises(DriverError) as excinfo:
@@ -1711,11 +1305,6 @@ def test_wait_foreground_keeps_looking_until_the_app_is_back():
 
 
 def test_background_goes_home_waits_and_resumes_the_existing_task():
-    # `monkey` with the LAUNCHER category exactly as `launch()` uses -- but
-    # WITHOUT the force-stop that precedes it there. That is the whole point:
-    # tapping the icon RESUMES the existing task with the SDK's
-    # PaymentActivity still on top of it, where `am start` on MainActivity
-    # would reorder the task and change what is being measured.
     shell = FakeShell("", LAUNCHER, "", OURS)
     naps = []
 
@@ -1733,25 +1322,20 @@ def test_background_goes_home_waits_and_resumes_the_existing_task():
         60,
         android.BACKGROUND_SETTLE_SECONDS,
     ]
-    # No force-stop anywhere: that would end the very task being measured.
     assert not any("force-stop" in t for t in shell.argv_text())
 
 
 def test_background_refuses_a_home_that_did_not_take():
-    # Otherwise the cell reports that the SDK survived something that never
-    # happened.
     shell = FakeShell("", OURS)
 
     with pytest.raises(DriverError) as excinfo:
         driver(shell).background(60)
 
     assert "still in the foreground after HOME" in str(excinfo.value)
-    # And the wait was never spent, nor the app re-launched.
     assert not any("monkey" in t for t in shell.argv_text())
 
 
 def test_rotate_turns_the_accelerometer_off_first():
-    # Or the emulator's own sensor puts the screen straight back.
     shell = FakeShell("", "0\n")
     naps = []
 
@@ -1774,9 +1358,6 @@ def test_rotate_toggles_from_whatever_it_read():
 
 
 def test_kill_activity_force_stops_rather_than_killing():
-    # `am kill` only takes processes that are safe to kill, and this one is
-    # foreground with the SDK's activity on top -- so it would do nothing at
-    # all and the cell would pass having killed nothing.
     shell = FakeShell()
     naps = []
 
@@ -1808,8 +1389,6 @@ def test_dont_keep_activities_off_asks_for_zero():
 
 
 def test_dont_keep_activities_refuses_a_setting_that_did_not_take():
-    # A setting that silently did not take would make the cell measure an
-    # ordinary payment and report it as the developer option's behaviour.
     shell = FakeShell("", "0\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -1817,13 +1396,6 @@ def test_dont_keep_activities_refuses_a_setting_that_did_not_take():
 
     assert "always_finish_activities reads '0'" in str(excinfo.value)
 
-
-# -- the per-app locale: the write, the read-back, and what it refuses --------
-#
-# Every string below is what the rig's emulator (API 35) really answered on
-# 2026-09-07. The write side reports nothing whether it worked or not, so the
-# read-back is the only evidence there is that a language reached the app --
-# which is the gap flutter#60 was filed for.
 
 SET_FR = "shell cmd locale set-app-locales com.paycross.flutterdemo --locales 'fr'"
 GET = "shell cmd locale get-app-locales com.paycross.flutterdemo"
@@ -1839,15 +1411,10 @@ def test_the_read_back_parses_the_list_the_device_names():
 
 
 def test_an_empty_list_is_an_answer_and_not_a_failure():
-    # `[]` is the app having no locale of its own, which is a real state and
-    # the one the teardown restores. It must not read the same as "adb said
-    # something this parser does not know", or a cleared locale would raise.
     assert android.parse_app_locales(said()) == []
 
 
 def test_the_read_back_refuses_anything_that_is_not_a_list():
-    # What the device answers for a package it does not hold -- with a ZERO
-    # exit, so nothing but the shape of the answer can tell.
     with pytest.raises(DriverError) as excinfo:
         android.parse_app_locales(
             "Unknown package com.paycross.flutterdemo for userId 0\n"
@@ -1868,8 +1435,6 @@ def test_device_language_writes_the_tag_and_reads_it_back():
 
 
 def test_device_language_default_clears_the_list():
-    # The teardown. An empty `--locales` is how `cmd locale` is told to forget
-    # the app's own language, and `[]` is what it then reports.
     shell = FakeShell("", said())
 
     driver(shell).device_language("default")
@@ -1881,10 +1446,6 @@ def test_device_language_default_clears_the_list():
 
 
 def test_device_language_refuses_a_write_that_did_not_take():
-    # The whole reason the read-back exists. `set-app-locales` prints nothing
-    # when it worked and nothing when it silently did not, so without this the
-    # cell measures the device rung against a device whose language never
-    # changed -- and reports the English sheet as an SDK finding.
     shell = FakeShell("", said())
 
     with pytest.raises(DriverError) as excinfo:
@@ -1892,13 +1453,10 @@ def test_device_language_refuses_a_write_that_did_not_take():
 
     message = str(excinfo.value)
     assert "read [] after asking for ['fr']" in message
-    # And it names the command, so whoever reads this can run it by hand.
     assert "cmd locale set-app-locales com.paycross.flutterdemo" in message
 
 
 def test_device_language_accepts_the_regions_case_as_the_device_spells_it():
-    # The system stores back what it was given rather than a canonical form,
-    # and a device that answered `FR-fr` for `fr-FR` has done what was asked.
     shell = FakeShell("", said("FR-fr"))
 
     driver(shell).device_language("fr-FR")
@@ -1911,12 +1469,7 @@ def test_device_language_refuses_a_device_that_will_not_say():
         driver(shell).device_language("fr")
 
 
-# -- the French sheet, read off the Pay button --------------------------------
-
-
 def pay_button(caption: str) -> str:
-    """The Pay button as a real dump holds it: a `View` with no text of its
-    own, and a child `TextView` inside its box carrying the caption."""
     return (
         "<hierarchy>"
         '<node class="android.view.View" resource-id="paycross.payButton"'
@@ -1934,10 +1487,6 @@ def test_the_sheet_is_french_when_the_pay_button_says_payer():
 
 
 def test_the_sheet_is_french_even_when_the_amount_is_not():
-    # The case this expectation exists for. A session naming a tag the SDK
-    # ships no words for falls to the device for its LANGUAGE and keeps that
-    # tag for its FORMATTING, so the words are French and the amount is not.
-    # Matching the whole caption would call this English.
     shell = FakeShell(tree=pay_button("Payer € 10.00"))
 
     assert driver(shell).wait_french_sheet(timeout=0) is True
@@ -1950,16 +1499,12 @@ def test_the_sheet_is_not_french_when_the_pay_button_says_pay():
 
 
 def test_the_sheet_is_not_french_when_there_is_no_pay_button_at_all():
-    # A spinner, a challenge page, the example's own screen: no button, no
-    # answer, and the expectation is a cell failure rather than a crash.
     shell = FakeShell(tree="<hierarchy></hierarchy>")
 
     assert driver(shell).wait_french_sheet(timeout=0) is False
 
 
 def test_launch_refuses_a_device_left_not_keeping_activities():
-    # Left on it poisons every later cell -- the plugin's detach path fires on
-    # every one of them, and each failure looks like an SDK finding.
     shell = FakeShell("1\n", "0\n", "1\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -1972,10 +1517,6 @@ def test_launch_refuses_a_device_left_not_keeping_activities():
 
 
 def test_launch_refuses_a_device_a_previous_cell_left_turned():
-    # Measured on the D3 probe: a cell that rotated once left the device
-    # turned, and the next cell failed looking for a button that was off
-    # screen. Without this the cell fails naming that button, which reads as an
-    # SDK finding rather than as the rig fault it is.
     shell = FakeShell("1\n", "0\n", "0\n", "0\n", "1\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -1988,9 +1529,6 @@ def test_launch_refuses_a_device_a_previous_cell_left_turned():
 
 
 def test_launch_ignores_a_stale_user_rotation_the_sensor_overrides():
-    # `user_rotation` only takes effect while `accelerometer_rotation` is 0.
-    # With the sensor in charge the device is upright whatever that value
-    # says, and refusing on it would break a rig nothing had turned.
     shell = FakeShell("1\n", "0\n", "0\n", "1\n", "1\n", "", "")
 
     driver(shell).launch()
@@ -1998,30 +1536,16 @@ def test_launch_ignores_a_stale_user_rotation_the_sensor_overrides():
     assert any("monkey" in c for c in shell.argv_text())
 
 
-# -- the ACS page detector, after the sandbox redesigned it -------------------
-
 REDESIGNED_ACS = (FIXTURES / "android-acs-redesigned.uix").read_text()
 
 
 def test_wait_acs_recognises_the_redesigned_sandbox_page():
-    # MEASURED, and it cost a whole android run. The sandbox's 687bf4e
-    # ("Redesign challenge page to match payment page design system") replaced
-    # `<strong>Sandbox 3DS Challenge</strong>` with
-    # `<div class="sandbox-badge">Sandbox</div>`, and the phrase now survives
-    # only in `<title>` -- which never reaches an accessibility tree, because a
-    # WebView exposes rendered DOM text and not the document title. TEST was
-    # redeployed onto that build mid-campaign: the page carried the old text at
-    # 22:07Z and did not at 11:41Z the next morning.
-    #
-    # The fixture IS the page that broke it, taken from the failing run.
     shell = FakeShell(tree=REDESIGNED_ACS)
 
     assert driver(shell).wait_acs(timeout=0) is True
 
 
 def test_wait_acs_still_recognises_the_old_page():
-    # Deployments lag. A detector that only knew the new wording would break
-    # every rig still serving the old one, which is the mistake in the mirror.
     old = REDESIGNED_ACS.replace("AUTHENTICATION OUTCOMES", "Sandbox 3DS Challenge")
 
     assert driver(FakeShell(tree=old)).wait_acs(timeout=0) is True
@@ -2035,7 +1559,5 @@ def test_wait_acs_still_refuses_a_page_that_is_not_the_challenge():
 
 
 def test_the_acs_markers_are_page_text_rather_than_a_document_title():
-    # The rule this encodes: match something the page RENDERS. `<title>` is
-    # invisible to uiautomator, and matching on it is how this broke.
     assert "Sandbox 3DS Challenge" in android.ACS_MARKERS
     assert "AUTHENTICATION OUTCOMES" in android.ACS_MARKERS

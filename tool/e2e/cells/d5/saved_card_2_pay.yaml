@@ -1,20 +1,8 @@
-# Pay again with the card the previous cell stored, re-entering the CVV.
-#
-# `saved_cards: {show: "all"}` is what makes the backend put the customer's
-# cards into the session snapshot at all -- omit it and `saved_cards` comes
-# back empty however many cards the customer has
-# (the server's saved-card lookup). Expired cards are filtered there and
-# re-checked at submit, which is why the stored card's 12/28 expiry matters.
-#
-# Neither SDK auto-selects a stored card, deliberately, so the selection is
-# an explicit action. `saved_card_used` asserts the submit really carried
-# `card.saved_uuid` rather than a re-typed PAN -- the one thing a screenshot
-# of a filled form could never tell you.
-#
-# The `card:` block is still required by the loader and the PAN is never
-# typed here: `type_cvv` reads `card.cvv` and nothing else. It names the same
-# PAN as the cell that stored it so a reader can see which card is being
-# re-used.
+# Pays again with the card the previous cell stored, re-entering the CVV.
+# saved_cards show: all is required: without it the session snapshot carries no cards. Expired cards are
+# filtered there and re-checked at submit, so the stored card's expiry must stay valid.
+# Neither SDK auto-selects a stored card, so the selection is an explicit action.
+# The card block is required by the loader, but the PAN is not typed here: type_cvv reads only card.cvv.
 id: saved_card_2_pay
 platforms: [android, ios]
 card:

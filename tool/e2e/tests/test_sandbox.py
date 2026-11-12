@@ -22,12 +22,6 @@ MINTED = json.dumps({"id": "01a0-sess", "session_token": TOKEN}).encode()
 
 
 class FakeTransport:
-    """Records every request and replays canned responses in order.
-
-    A canned response is a `(status, body)` pair, a bare body (taken as 200)
-    or an exception to raise, so a test can spell out only what it cares about.
-    """
-
     def __init__(self, *responses):
         self.responses = [_canned(response) for response in responses]
         self.calls = []
@@ -47,13 +41,6 @@ def _canned(response):
 
 
 class FakeClock:
-    """A monotonic clock the test moves by hand; sleeping moves it.
-
-    `time` is the wall clock the JWT `exp` claim is measured against. It
-    advances with `now`, so a test moves both by assigning `now`.
-    """
-
-    #: Arbitrary, and far from zero so an `exp` is a plausible epoch stamp.
     WALL_EPOCH = 1_700_000_000.0
 
     def __init__(self):
@@ -72,8 +59,6 @@ class FakeClock:
 
 
 def jwt_with(payload):
-    """A syntactically real JWT carrying `payload`; the signature is a stub."""
-
     def segment(raw):
         return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
@@ -141,7 +126,6 @@ def test_env_file_missing_a_key_is_a_clear_error(tmp_path):
         sandbox.read_env_file(path)
 
     assert "CLIENT_PAYX_SANDBOX_ID" in str(excinfo.value)
-    # The error must name the key, never the value of anything it did read.
     assert "https://x" not in str(excinfo.value)
 
 
@@ -174,7 +158,6 @@ def test_mint_posts_the_session_and_returns_id_and_token():
 
 
 def test_mint_sends_the_browser_user_agent_and_a_json_content_type():
-    # Cloudflare refuses urllib's own UA, so losing it breaks every live run.
     client, transport, _ = client_with(access_token_response(), MINTED)
 
     client.mint(amount=1000, currency="EUR", options={})
@@ -222,7 +205,6 @@ def test_mint_takes_a_caller_supplied_reference():
 
 
 def test_two_mints_in_the_same_second_get_different_references():
-    # A whole-second timestamp alone collides across a fast matrix run.
     client, transport, _ = client_with(access_token_response(), MINTED, MINTED)
 
     client.mint(amount=1000, currency="EUR", options={})
@@ -260,8 +242,6 @@ def test_the_access_token_is_refreshed_before_it_expires():
     client.mint(amount=1000, currency="EUR", options={})
     assert [c[1] for c in transport.calls].count(ENV["TOKEN_URL"]) == 1
 
-    # The API-Gateway cache in front of the token endpoint holds for 3300 s, so
-    # refreshing at 3300 is what makes the replacement token actually fresh.
     clock.now = 3600 - sandbox.TOKEN_REFRESH_MARGIN_SECONDS
     client.mint(amount=1000, currency="EUR", options={})
     assert [c[1] for c in transport.calls].count(ENV["TOKEN_URL"]) == 2
@@ -313,8 +293,6 @@ def test_mint_failure_names_no_token():
 
 
 def test_mint_never_echoes_a_token_it_could_not_use():
-    # The "no session_token" branch fires on a token without an id too, and
-    # that message reaches the run log.
     orphaned = json.dumps({"session_token": TOKEN}).encode()
     client, _, _ = client_with(access_token_response(), orphaned)
 
@@ -363,8 +341,6 @@ def test_a_refusal_is_reported_with_its_status_and_reason():
 
 
 def test_an_error_body_never_echoes_a_session_token():
-    # A GET on a session returns the whole resource, session_token included,
-    # and a non-2xx body is exactly the thing that gets logged.
     leaky = json.dumps({"id": "s", "session_token": TOKEN, "message": "gone"}).encode()
     client, _, _ = client_with(access_token_response(), (410, leaky))
 
@@ -376,8 +352,6 @@ def test_an_error_body_never_echoes_a_session_token():
 
 
 def test_a_nested_session_token_is_dropped_by_key_not_by_shape():
-    # Deliberately not JWT-shaped: the regex mask must not be what saves this,
-    # or _scrub could stop recursing and no test would notice.
     opaque = "opaque-session-token-value"
     leaky = json.dumps({"errors": [{"session": {"session_token": opaque}}]}).encode()
     client, _, _ = client_with(access_token_response(), (422, leaky))
@@ -389,7 +363,6 @@ def test_a_nested_session_token_is_dropped_by_key_not_by_shape():
 
 
 def test_a_non_json_body_is_reported_with_any_token_masked():
-    # Cloudflare answers with an HTML page, not JSON, when the UA is wrong.
     page = b"<html>Attention Required! trace: " + TOKEN.encode() + b"</html>"
     client, _, _ = client_with(access_token_response(), page)
 
@@ -444,15 +417,11 @@ def test_a_5xx_is_retried_once_and_then_reported():
     assert clock.slept == [sandbox.RETRY_BACKOFF_SECONDS]
     assert "503" in str(excinfo.value)
 
-    # The invariant that makes retrying a mint safe at all: replay the key,
-    # never regenerate it, or the retry bills a second live session.
     first, second = transport.calls[1][2], transport.calls[2][2]
     assert first["Idempotency-Key"] == second["Idempotency-Key"]
 
 
 def test_a_truncated_response_is_retried_like_a_connection_failure():
-    # A short read raises out of response.read(), after the status line, so it
-    # is not a URLError and would otherwise escape as a raw HTTPException.
     client, transport, clock = client_with(
         http.client.IncompleteRead(b"partial"), access_token_response(), MINTED
     )
@@ -474,7 +443,6 @@ def test_a_truncated_response_that_persists_is_reported():
 
 
 def test_a_4xx_is_never_retried():
-    # A refusal is the API's considered answer; repeating it wastes a run.
     client, transport, clock = client_with(access_token_response(), (422, b"{}"))
 
     with pytest.raises(sandbox.SandboxError):
@@ -485,9 +453,6 @@ def test_a_4xx_is_never_retried():
 
 
 def test_the_refresh_is_scheduled_from_the_jwt_exp_not_from_expires_in():
-    # The gateway replays a cached token with a full expires_in, so only the
-    # signed `exp` says when this token actually dies. Here they disagree by
-    # 50 minutes and `exp` must win.
     clock = FakeClock()
     short_lived = jwt_with({"exp": clock.time() + 600})
     client, transport, _ = client_with(
@@ -501,7 +466,6 @@ def test_the_refresh_is_scheduled_from_the_jwt_exp_not_from_expires_in():
     )
 
     client.mint(amount=1000, currency="EUR", options={})
-    # Past exp - margin, and far short of what expires_in would have bought.
     clock.now = 600 - sandbox.TOKEN_REFRESH_MARGIN_SECONDS + 1
     client.mint(amount=1000, currency="EUR", options={})
 
@@ -509,9 +473,6 @@ def test_the_refresh_is_scheduled_from_the_jwt_exp_not_from_expires_in():
 
 
 def test_the_refresh_margin_stays_under_the_cache_boundary():
-    # The bound, stated once: a margin at or above lifetime - cacheTTL puts
-    # the refresh inside the cache window, where the gateway returns the same
-    # token with the same exp and the client refetches forever.
     headroom = (
         sandbox.OBSERVED_TOKEN_LIFETIME_SECONDS
         - sandbox.OBSERVED_TOKEN_CACHE_TTL_SECONDS
@@ -521,10 +482,6 @@ def test_the_refresh_margin_stays_under_the_cache_boundary():
 
 
 def test_a_refresh_scheduled_from_exp_lands_after_the_cache_has_let_go():
-    # The same bound as behaviour: at the cache boundary the token is still in
-    # use, so the refresh -- whenever it fires -- fires past it and reaches the
-    # origin. A margin of 300 would refresh exactly on the boundary; 3300 s in
-    # this test the client must still be holding its first token.
     clock = FakeClock()
     minted = jwt_with({"exp": clock.time() + sandbox.OBSERVED_TOKEN_LIFETIME_SECONDS})
     client, transport, _ = client_with(
@@ -560,11 +517,6 @@ def test_a_token_whose_exp_has_not_come_near_is_still_reused():
 
 
 def test_a_token_handed_over_already_expired_is_not_reused():
-    # Exactly the cached-token case: the gateway replays a token with minutes
-    # already spent but a full expires_in. `exp` is in the past, so the cache
-    # window collapses to zero and the next call refetches rather than
-    # spending the run on 401s. (The request that fetched it still goes out
-    # with it; the 401 retry is what rescues that one.)
     clock = FakeClock()
     client, transport, _ = client_with(
         access_token_response(
@@ -648,8 +600,6 @@ def _token_fetches(transport):
 
 
 def test_a_401_refetches_the_token_and_replays_the_request():
-    # The 2026-08-29 Android run died here: a cached token reported as fresh
-    # expired mid-matrix and every later mint was a 401.
     client, transport, _ = client_with(
         access_token_response(expires_in=3600),
         UNAUTHORIZED,
@@ -663,7 +613,6 @@ def test_a_401_refetches_the_token_and_replays_the_request():
 
 
 def test_the_replayed_mint_reuses_its_idempotency_key():
-    # Regenerating it would bill a second live sandbox session for one cell.
     client, transport, _ = client_with(
         access_token_response(),
         UNAUTHORIZED,
@@ -691,8 +640,6 @@ def test_a_401_on_read_is_replayed_too():
 
 
 def test_a_second_401_is_reported_rather_than_retried_again():
-    # One retry, never a loop: if a freshly minted token is also refused the
-    # credentials or the environment are wrong and the run must say so.
     client, transport, _ = client_with(
         access_token_response(),
         UNAUTHORIZED,
@@ -723,8 +670,6 @@ def test_a_401_never_echoes_the_token_it_was_refused_with():
 
 
 def test_the_real_transport_returns_the_status_and_body_of_an_error(monkeypatch):
-    # urlopen raises on 4xx/5xx, so without this the caller cannot tell a
-    # refusal from a success and a bad cell is a raw traceback.
     import io
 
     def refuse(request, timeout=None):
@@ -745,8 +690,6 @@ def test_the_real_transport_returns_the_status_and_body_of_an_error(monkeypatch)
 
 
 def test_the_real_transport_puts_every_header_on_the_request(monkeypatch):
-    # Mutation guard: dropping `headers=headers`, the method, the body or the
-    # timeout from the Request has to fail here rather than at the live API.
     seen = {}
 
     class Response:
@@ -777,7 +720,6 @@ def test_the_real_transport_puts_every_header_on_the_request(monkeypatch):
 
     request = seen["request"]
     assert status == 200
-    # urllib capitalises header names as it stores them.
     assert request.get_header("User-agent") == sandbox.USER_AGENT
     assert request.get_header("Paycross-version") == "2026-01-01"
     assert request.get_method() == "POST"
@@ -795,19 +737,12 @@ def test_repr_never_shows_credentials():
 
 
 def test_repr_survives_an_env_that_is_missing_the_api_url():
-    # repr runs inside tracebacks; raising KeyError there hides the real error.
     client = sandbox.Sandbox({}, transport=FakeTransport())
 
     assert "?" in repr(client)
 
 
-# --- Plan B: session.options is merged all the way down -------------------
-
-
 def test_a_nested_override_keeps_the_rest_of_the_block():
-    # D5 pins customer.merchant_reference so two sessions resolve to one
-    # customer. A shallow merge would drop the email, the name and the
-    # billing address with it -- and the create schema requires them.
     client, transport, _ = client_with(access_token_response(), MINTED)
 
     client.mint(
@@ -831,7 +766,6 @@ def test_a_top_level_scalar_override_still_wins():
 
 
 def test_the_callers_options_are_not_mutated_by_a_mint():
-    # A cell's options mapping is loaded once and reused across a resume.
     client, _, _ = client_with(access_token_response(), MINTED)
     options = {"customer": {"merchant_reference": "CUST-D5"}}
 
@@ -840,13 +774,7 @@ def test_the_callers_options_are_not_mutated_by_a_mint():
     assert options == {"customer": {"merchant_reference": "CUST-D5"}}
 
 
-# --- Plan B: the fallback says when it has happened -----------------------
-
-
 def test_a_string_exp_warns_and_still_schedules_from_expires_in():
-    # The trap this closes: "1756468800" is not an int or a float, so _jwt_exp
-    # answers None and the code silently falls back to the very field it was
-    # written to distrust.
     clock = FakeClock()
     client, transport, _ = client_with(
         access_token_response(
@@ -868,7 +796,6 @@ def test_a_string_exp_warns_and_still_schedules_from_expires_in():
 
 
 def test_an_exp_further_back_than_a_whole_lifetime_warns_and_falls_back():
-    # On this rig that means a suspended-WSL clock rather than a dead token.
     clock = FakeClock()
     stale = clock.time() - sandbox.IMPLAUSIBLE_EXP_AGE_SECONDS - 1800
     client, transport, _ = client_with(
@@ -882,7 +809,6 @@ def test_an_exp_further_back_than_a_whole_lifetime_warns_and_falls_back():
     clock.now = 3600 - sandbox.TOKEN_REFRESH_MARGIN_SECONDS - 1
     client.mint(amount=1000, currency="EUR", options={})
 
-    # Fell back rather than refetching on every call.
     assert len(_token_fetches(transport)) == 1
     assert len(client.warnings) == 1
     assert "in the past" in client.warnings[0]
@@ -891,8 +817,6 @@ def test_an_exp_further_back_than_a_whole_lifetime_warns_and_falls_back():
 
 @pytest.mark.parametrize("token", ["bearer-789", "not.a.jwt"])
 def test_a_token_that_is_not_a_jwt_falls_back_and_warns_about_nothing(token):
-    # A legitimate expires_in case. Warning about it would teach the next
-    # person to ignore the warning that matters.
     client, _, _ = client_with(
         access_token_response(expires_in=3600, token=token), MINTED
     )
@@ -918,9 +842,6 @@ def test_an_ordinary_token_warns_about_nothing():
 
 
 def test_a_token_expired_within_its_own_lifetime_is_a_dead_token_not_a_clock():
-    # The boundary: still scheduled from `exp` (a zero delay, so the next call
-    # refetches) and no warning, because a token that has just passed its own
-    # exp is exactly what a cached hand-over looks like.
     clock = FakeClock()
     client, transport, _ = client_with(
         access_token_response(
@@ -957,8 +878,6 @@ def test_a_warning_never_quotes_the_claim_it_read():
 
 
 def test_the_same_warning_is_recorded_once_however_often_it_recurs():
-    # A 40-minute matrix refreshes repeatedly. The same degradation restated
-    # forty times in a report reads as forty findings.
     clock = FakeClock()
     stale = jwt_with({"exp": "not-a-number"})
     client, transport, _ = client_with(

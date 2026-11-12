@@ -1,20 +1,4 @@
-"""Drives the example app on the emulator, from WSL, through the Windows adb.
-
-Ported from the campaign's smoke-cell.sh / fill-card-raw.sh /
-flutter-paste-token.sh. Three properties of this setup shape everything here:
-
-* `adb.exe` is a Windows binary and cannot read WSL paths, so an APK has to be
-  staged under /mnt/c and handed over in its Windows spelling.
-* `adb shell` output arrives with CRLF line endings; `adb exec-out` does not.
-* A Flutter widget surfaces as `content-desc` with an empty `text`, while the
-  SDK's own Compose text surfaces as `text`. Matching the wrong one cost the
-  2026-08-26 run a false 270-second timeout.
-
-The sheet itself is no longer matched either way: every control the SDK draws
-carries a `paycross.*` identifier, published as a `resource-id`. What is left
-on text and description is what has no identifier to use -- the example app's
-own Flutter widgets, the sandbox challenge page, and Google's wallet button.
-"""
+"""Drives the example app on the emulator through the Windows adb."""
 
 from __future__ import annotations
 
@@ -30,106 +14,66 @@ from .. import tree
 from ..cells import DEVICE_LANGUAGE_DEFAULT, Card
 from .base import Driver, DriverError, device_text, read_token, rig_path
 
-#: The Windows adb, off PATH. PAYCROSS_E2E_ADB names a specific binary, which
-#: is what a rig whose Windows SDK is not on PATH sets.
+# The Windows adb cannot open a WSL path, so the staging dir is given in
+# both spellings.
 ADB = rig_path("PAYCROSS_E2E_ADB", "adb.exe")
 PACKAGE = "com.paycross.flutterdemo"
 
-#: Every adb call is bounded. A wedged emulator would otherwise hold the whole
-#: matrix on one round trip.
+# A wedged emulator would otherwise hold the whole matrix on one adb round trip.
 RUN_TIMEOUT_SECONDS = 300
 
-#: Staged here because the Windows adb cannot open a WSL path. The two
-#: spellings are the same directory seen from either side of the fence, so a
-#: rig that moves one must move both -- hence two variables rather than one
-#: guessed from the other.
 STAGING_DIR = rig_path("PAYCROSS_E2E_STAGING_DIR", "/mnt/c/dev/tmp")
 WINDOWS_STAGING = rig_path("PAYCROSS_E2E_WINDOWS_STAGING", r"C:\dev\tmp")
 STAGED_APK = "paycross-e2e.apk"
 
-#: Where `uiautomator dump` is told to write, and how many times a dump is
-#: attempted before the driver calls the device unusable.
 _DUMP_PATH = "/sdcard/ui.xml"
 _DUMP_ATTEMPTS = 3
 
-#: The category `monkey` needs in order to start the launcher activity.
 _LAUNCHER = "android.intent.category.LAUNCHER"
 
-#: `input text` splits its argument on spaces; %s is its escape.
+# `input text` splits its argument on spaces; %s is the escape.
 _SPACE = "%s"
 
-#: The gap fill-card-raw.sh left after every keyevent, and therefore the timing
-#: the 0.3.1 caret bug's fix, shipped in 0.3.2, was proven under on this
-#: emulator. Typing flat out would let a formatter that merely cannot keep up
-#: present as the caret bug returning -- a false finding against the SDK, which
-#: is the expensive direction to be wrong in.
+# A faster pace reads as the caret bug returning on this emulator, a false
+# finding against the SDK.
 DIGIT_PACING_SECONDS = 0.4
 
-#: What the seed scripts waited after a tap, an entry or a cold start. Kept
-#: as named values because the unit tests assert them rather than spend them:
-#: the rig's timing stays pinned without the suite sleeping through it.
 SETTLE_SECONDS = 1
 LAUNCH_SETTLE_SECONDS = 6
 
-#: How long the token read-back is given to agree with the file. The field is
-#: filled by ~13 `input text` calls and the last of them is still landing when
-#: the first read happens.
+# The last `input text` chunk is still landing when the first read happens.
 TOKEN_READBACK_SECONDS = 10
 
-#: `input text` does not reliably deliver much more than this at once.
+# `input text` does not reliably deliver more than this many characters at once.
 TOKEN_CHUNK_CHARS = 80
 
-#: KEYCODE_0. Digit n is _KEYCODE_ZERO + n.
 _KEYCODE_ZERO = 7
 _KEYCODE_DEL = 67
 _KEYCODE_BACK = 4
 _KEYCODE_MOVE_END = 123
 
-#: The example app's own Pay, which is a Flutter widget and therefore a
-#: content-desc. The SDK's Compose Pay carries the amount in `text` instead.
+# The example app's Pay is a Flutter widget, so it matches on
+# content-desc, not text.
 EXAMPLE_PAY = "Pay"
 
-#: How long the radios take to settle after the toggle. Measured generously:
-#: a cell that submits into a half-cut network measures neither state.
+# The radios settle slowly; a shorter wait reads a half-applied state.
 AIRPLANE_SETTLE_SECONDS = 8
 
-#: How long the window manager is given to settle after a HOME, a resume or
-#: a rotation. Generous: a look taken mid-animation reads the old screen.
+# A look taken mid-animation reads the old screen.
 BACKGROUND_SETTLE_SECONDS = 3
 ROTATE_SETTLE_SECONDS = 3
 _KEYCODE_HOME = 3
 
-#: `mCurrentFocus=Window{... com.example/com.example.MainActivity}`.
 _FOCUSED = re.compile(r"([A-Za-z0-9_.]+)/[A-Za-z0-9_.$]+")
-#: How long the save-card checkbox is given to appear, and to read back as
-#: ticked. Short: it is composed with the rest of the form, so a wait here is
-#: covering a slow frame rather than a round trip.
-#:
-#: Named for the BOX, not for the saved-card list: `runner` separately has a
-#: SAVED_CARD_TIMEOUT_SECONDS, which is the `expect saved_card` deadline and
-#: a different number for a different thing.
+# Not the same deadline as runner's SAVED_CARD_TIMEOUT_SECONDS.
 SAVE_BOX_TIMEOUT_SECONDS = 15
 
-#: How much raw device text a driver message may carry. These reach stdout and
-#: the cell's `problems`, and a wedged adb answers with a screenful.
 QUOTED_DEVICE_TEXT_CHARS = 80
 
-#: The identifiers the SDK publishes, from 0.8.0. Compose is told to write a
-#: node's `testTag` as its `resource-id`, once per window, so each of these
-#: reaches a `uiautomator dump` -- but ONLY in a debuggable host app, which the
-#: debug example APK is and a release build is not. iOS publishes the same
-#: strings as accessibility identifiers, so the names below are the contract
-#: rather than this file's shorthand.
-#:
-#: These replaced content-desc and rendered-text matchers throughout. Two
-#: things measured against a real dump make that more than a tidy-up
-#: (2026-09-07, `evidence/train4/t7-probe/02-paste_token.uix`):
-#:
-#: * a card field's `content-desc` sits on a NON-CLICKABLE child `View` of the
-#:   tagged `EditText`, so the old matchers were tapping a wrapper and relying
-#:   on the touch bubbling down;
-#: * every rendered string the driver used to match is now drawn in French
-#:   when the session says so, and would have taken the driver with it.
+# The testTag resource-ids reach a uiautomator dump only in a debuggable
+# host app, not in a release build.
+# A card field's content-desc sits on a non-clickable child View, so the
+# tagged EditText is the tap target.
 CARD_NUMBER = "paycross.cardNumber"
 EXPIRY = "paycross.expiry"
 CVV = "paycross.cvv"
@@ -138,104 +82,39 @@ SAVE_CARD = "paycross.saveCard"
 PAY_BUTTON = "paycross.payButton"
 SAVED_CARDS = "paycross.savedCards"
 
-#: The two SDK-drawn dialogs. Each is its own window and publishes its own
-#: identifiers, which is what the 0.8.0 per-window flag fixed and what a dump
-#: taken on this rig confirms (`evidence/train4/dialog-ids/`). A dump taken
-#: while one is up holds ONLY the dialog -- the form behind it is not in the
-#: tree -- so anything checked after a dismissal needs a second look.
+# A dump taken while a dialog is up holds only the dialog, so checks after
+# a dismissal need a second look.
 CANCEL_DIALOG = "paycross.cancelDialog"
 CANCEL_CONFIRM = "paycross.cancelConfirm"
 CANCEL_DISMISS = "paycross.cancelDismiss"
 REMOVE_DIALOG = "paycross.removeDialog"
 REMOVE_CONFIRM = "paycross.removeConfirm"
 
-#: One stored card's row is `paycross.savedCard.<uuid>` and its bin is that
-#: plus `.delete`. The uuid is the session's own, so a driver that has not read
-#: the session finds a row by its prefix -- and has to exclude the bin, whose
-#: identifier starts with the row's.
+# The delete bin's identifier starts with the row's prefix, so a row match
+# must exclude it.
 SAVED_CARD_PREFIX = "paycross.savedCard."
 SAVED_CARD_DELETE_SUFFIX = ".delete"
-#: How the sandbox's challenge page is recognised. More than one marker, and
-#: both of them text the page RENDERS, because this detector has already been
-#: broken once by a change that was nobody's fault here.
-#:
-#: The sandbox's 687bf4e ("Redesign challenge page to match payment page
-#: design system") replaced `<strong>Sandbox 3DS Challenge</strong>` with
-#: `<div class="sandbox-badge">Sandbox</div>`. The phrase survives only in
-#: `<title>`, which never reaches an accessibility tree -- a WebView exposes
-#: rendered DOM text, not the document title.
-#:
-#: What bit us was NOT that redesign landing. 687bf4e is dated 2026-04-13,
-#: four months earlier: what happened mid-campaign was the TEST DEPLOYMENT
-#: CATCHING UP to it. That is the worse failure mode, because a rig cannot see
-#: which build is deployed -- reading `main` would have shown this markup all
-#: along while the rig passed against an older deployed page. Source and
-#: behaviour disagreed for four months and nothing here could tell. The page
-#: carried the old text at 22:07Z and did not at 11:41Z the next morning, and
-#: every android cell that waits for a challenge failed in between while the
-#: frictionless control passed five times.
-#:
-#: `AUTHENTICATION OUTCOMES` is the section heading above the outcome buttons
-#: and is present in both designs. The old phrase is kept because deployments
-#: lag, and a detector that knew only the new wording would break every rig
-#: still serving the old page -- the same mistake in the mirror.
-#:
-#: A bare `Sandbox` is deliberately NOT here: it is the badge text on the new
-#: design and far too generic to be evidence of anything.
+# The page title never reaches the accessibility tree, so only rendered
+# text is matched.
+# Deployments lag the source, so the old heading phrase stays alongside the
+# new one.
 ACS_MARKERS = ("AUTHENTICATION OUTCOMES", "Sandbox 3DS Challenge")
-#: The wallet button is the one thing on the sheet still matched by a rendered
-#: string, and it is not a leftover.
-#:
-#: `paycross.walletButton` is attached (`GooglePaySection.kt:85`) and does NOT
-#: reach a uiautomator dump: the tag sits on an `AndroidView`, and the node in
-#: the dump belongs to Google's hosted `PayButton` rather than to a Compose
-#: semantics node, so `testTagsAsResourceId` has nothing to write it onto. This
-#: is the same shape as the dialog bug 0.8.0 fixed and it is still open --
-#: measured 2026-09-07, `evidence/train4/t7-probe/02-paste_token.uix` has the
-#: wallet row with `content-desc="Pay with GPay"` and no resource-id at all.
-#: The Android README's "assert its presence by id" is not true today. Filed as
-#: **payment-android-sdk#54**, together with `paycross.threeDS`, which the
-#: challenge `WebView` loses the same way. Neither costs this driver a
-#: workaround -- the wallet has Google's description and the challenge has
-#: `ACS_MARKERS`, both of which were the matchers here anyway.
-#:
-#: So this string stays, and its old caveat is now a measurement rather than a
-#: warning: it is rendered by Google Play services, so it moves with the GMS
-#: version AND with the device's language. On 2026-09-08, with the app's own
-#: locale set to `fr`, the wallet row read `Payer avec GPay`
-#: (`evidence/train6/android-60/01-sheet.xml`). A cell that sets a device
-#: language may therefore not touch the wallet, and `cell_rules` refuses one
-#: that tries.
+# The wallet button has no resource-id in a uiautomator dump, so it
+# matches on Google's description.
+# Google Play services renders this text in the device language, so a cell
+# that sets a language may not touch the wallet.
 GOOGLE_PAY_DESC = "Pay with GPay"
 
-#: What `logcat -t` will accept. Validated rather than trusted, because an
-#: unusable cutoff yields an empty log, which reads as "nothing crashed".
+# An unusable logcat cutoff prints nothing, which reads as "nothing crashed".
 _LOGCAT_CUTOFF = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$")
 
-#: How `cmd locale get-app-locales` answers. One line, and the list is the tail
-#: of it:
-#:
-#:     Locales for com.paycross.flutterdemo for user 0 are [fr-FR]
-#:
-#: An unset list reads `[]`. A package the device does not hold answers
-#: `Unknown package <id> for userId 0` -- with a ZERO exit and no brackets at
-#: all, which is why this is parsed rather than trusted. Measured on the rig's
-#: emulator, API 35, 2026-09-07.
+# A package the device does not hold exits 0 with no brackets, so the
+# output is parsed, not trusted.
 _APP_LOCALES = re.compile(r"\bare \[(?P<tags>[^\]]*)\]")
 
 
 def parse_app_locales(said: str) -> list[str]:
-    """The tags `cmd locale get-app-locales` reported, in the order it gave.
-
-    Module level and taking the raw text, so the parsing is testable against
-    what a device really says without a device -- which matters more here than
-    usual, because the WRITE side of this setting reports nothing at all and
-    this read is the only evidence there is that it landed.
-
-    Raises rather than answering `[]` for anything it does not recognise. An
-    empty list is a real answer (`[]`, the app has no locale of its own) and it
-    must not be the same answer as "adb said something else entirely".
-    """
+    """Returns the tags `cmd locale get-app-locales` reported."""
     match = _APP_LOCALES.search(said)
     if match is None:
         raise DriverError(
@@ -246,20 +125,7 @@ def parse_app_locales(said: str) -> list[str]:
 
 
 def _run(argv: list[str], *, binary: bool = False, stdin: str | None = None):
-    """Invokes adb once, normalising CRLF and never discarding a failure.
-
-    A non-zero exit has its stderr appended to the text result rather than
-    raised: `uninstall` is expected to fail on a first install, and `install`
-    reads this text to report what actually went wrong. Binary results cannot
-    carry an explanation -- appending to a PNG would corrupt it -- so those
-    raise instead.
-
-    An emulator that has wedged raises TimeoutExpired rather than exiting
-    non-zero, and adb.exe lives on a Windows mount that is not always there,
-    which raises FileNotFoundError. Neither is a DriverError, so both escape
-    every polling loop above and end the whole matrix where they should have
-    failed one cell. The iOS driver's `_ssh` closes the same gap.
-    """
+    """Runs adb once and returns its output, with CRLF normalised."""
     what = argv[0] if argv else "adb"
     try:
         done = subprocess.run(
@@ -306,18 +172,7 @@ class AndroidDriver(Driver):
     # -- primitives ----------------------------------------------------------
 
     def getprop(self, name: str) -> str:
-        """One property, or a DriverError quoting what adb said instead.
-
-        `getprop` answers with a bare value or with nothing at all, while
-        every way the connection can fail puts a sentence on the wire --
-        `no devices/emulators found`, `error: device offline`, `error:
-        closed` -- which `_run` now appends rather than discards. Whitespace
-        is the tell, and the text is quoted back rather than matched against
-        a catalogue of adb's wording. Without this the boot check reads a
-        dead connection as "still booting" and the locale check reports
-        adb's sentence as though it were a locale. An empty answer is left
-        alone: that is a real device with the property not set yet.
-        """
+        """Returns one property, or raises DriverError quoting what adb said instead."""
         answer = self._shell(["shell", "getprop", name]).strip()
         if any(character.isspace() for character in answer):
             raise DriverError(f"adb could not read {name}: {answer!r}")
@@ -333,15 +188,11 @@ class AndroidDriver(Driver):
         self._shell(["shell", "input", "text", text.replace(" ", _SPACE)])
 
     def _type_digits(self, digits: str) -> None:
-        """One real key event per digit, at the seed script's pace.
-
-        Bulk `input text` bypasses the formatter, which is precisely the code
-        path a card form has to survive -- typing raw is what caught the 0.3.1
-        caret bug, which 0.3.2 fixed, and what proves 0.3.3 still holds.
-        """
+        """Sends one key event per digit, paced by DIGIT_PACING_SECONDS."""
+        # Bulk `input text` bypasses the card formatter, so digits are sent one
+        # key event at a time.
         for digit in digits:
             self._key(_KEYCODE_ZERO + int(digit))
-            # After each digit, last one included, as the seed script did.
             self._sleep(DIGIT_PACING_SECONDS)
 
     def _find(
@@ -357,16 +208,14 @@ class AndroidDriver(Driver):
             lambda nodes: next(iter(finder(nodes, needle)), None), timeout, interval
         )
         if found is None:
-            # The token field is looked up by class, with no needle to name.
+            # The token field is found by class, so an empty needle is valid.
             named = f"{what} {needle!r}" if needle else what
             raise DriverError(f"{named} never appeared within {timeout}s")
         return found
 
     def _tap_text(self, text: str, **kw) -> None:
-        # An empty needle matches every node whose text is empty, which is
-        # most of the tree: the tap would land on an arbitrary one instead
-        # of failing. Nothing in Phase 0 passes one, so this is about the
-        # caller a later phase adds.
+        # An empty needle matches every node with empty text, so the tap would
+        # land on an arbitrary one.
         if not text:
             raise DriverError("refusing to tap on an empty text match")
         self._tap(self._find(tree.find_text_exact, text, "node with text", **kw).centre)
@@ -399,13 +248,7 @@ class AndroidDriver(Driver):
         )
 
     def _saved_card_rows(self, nodes: list[tree.Node]) -> list[tree.Node]:
-        """Every stored card's ROW, each card's bin excluded.
-
-        Both carry an identifier starting with `SAVED_CARD_PREFIX` -- the bin's
-        is the row's plus `.delete` -- so the suffix is what separates them.
-        Matched by prefix because the uuid in the middle is the session's and
-        the driver has not read the session.
-        """
+        """Returns each stored card's row, excluding its delete bin."""
         return [
             n
             for n in nodes
@@ -414,13 +257,7 @@ class AndroidDriver(Driver):
         ]
 
     def _pay_buttons(self, nodes: list[tree.Node]) -> list[tree.Node]:
-        """The identifier, with no fallback -- Android publishes it correctly.
-
-        The iOS override carries one because the button there answered to a
-        container's name until PayCross 0.7.1. Nothing equivalent happened
-        here: `paycross.payButton` has reached a uiautomator dump since 0.8.0
-        turned the per-window flag on.
-        """
+        """Returns the Pay button, found by its identifier."""
         return tree.find_identifier(nodes, PAY_BUTTON)
 
     # -- lifecycle -----------------------------------------------------------
@@ -432,7 +269,8 @@ class AndroidDriver(Driver):
             shutil.copyfile(app_path, staged)
         except OSError as exc:
             raise DriverError(f"could not stage {app_path} at {staged}: {exc}") from exc
-        self._shell(["uninstall", PACKAGE])  # first install has nothing to remove
+        # Uninstall fails on a first install, and that failure is expected.
+        self._shell(["uninstall", PACKAGE])
         out = self._shell(["install", f"{self._windows_staging}\\{STAGED_APK}"])
         if "Success" not in out:
             raise DriverError(
@@ -442,49 +280,24 @@ class AndroidDriver(Driver):
     def launch(self) -> None:
         if self.getprop("sys.boot_completed") != "1":
             raise DriverError("the emulator has not finished booting")
-        # No locale guard. This used to refuse anything but `en-US`, because
-        # the Pay button's rendered text was the only handle the SDK gave and
-        # that text is NumberFormat output under the device locale. Every
-        # control the driver touches is now reached by identifier, so the
-        # device's language is the device's business -- and a French device is
-        # a case this rig has to be able to MEASURE rather than refuse.
-        #
-        # `sheet_rearmed` still reads the amount, and still reads it in the
-        # runner's en-US spelling; see `tree.format_amount_en_us` for what that
-        # costs and which cells it excludes.
-        #
-        # Fails OPEN, and the read-back in `airplane()` fails closed. The
-        # asymmetry is deliberate: a device that has never had this setting
-        # written answers `null`, and refusing to launch on that would break
-        # every rig where nothing has ever touched it -- whereas `null` from
-        # the read-back means the write we just asked for did nothing. `null`
-        # cannot reach `airplane('off')`, because `cell_rules` only lets a
-        # cell turn it off after turning it on, which writes it.
+        # The device language is not refused, since a French device is a case
+        # the rig must measure.
+        # sheet_rearmed reads the amount in the en-US spelling; see
+        # tree.format_amount_en_us.
+        # A device never written to answers null, so this read fails open;
+        # airplane() fails closed.
         airplane = self._shell(["shell", "settings get global airplane_mode_on"])
         if airplane.strip() == "1":
-            # A cell that failed between `airplane on` and `airplane off` left
-            # it on, and every cell after it would fail for that reason while
-            # looking like an SDK finding. Refusing here makes the interleaved
-            # control fail too, which is exactly right: this is a rig fault,
-            # and exit 3 says so.
-            #
-            # `run_cell` now replays a teardown the cell did not live to
-            # reach, so arriving here means that replay was REACHED AND
-            # FAILED -- or never ran, because the runner itself died. Either
-            # way the device is dirty and nothing in this process knows how to
-            # clean it. Which is why this still refuses rather than clearing
-            # the setting: a run that silently repaired the rig would be a run
-            # that had stopped reporting that it broke it.
+            # Airplane mode left on by an earlier cell is a rig fault; refusing
+            # here keeps it from reading as an SDK finding.
+            # Clearing the setting here would hide that the rig was left dirty,
+            # so this refuses instead.
             raise DriverError(
                 "the device is in airplane mode: a previous cell left it on. "
                 "Run: adb shell cmd connectivity airplane-mode disable"
             )
-        # The same shape, for the same reason, one setting along. This one is
-        # worse to inherit than airplane mode: the plugin's detach path fires
-        # on EVERY cell that follows, so each of them reports
-        # `result:pending:result_lost:` and each looks like an SDK finding
-        # rather than like the one rig fault it is. Older runs show the same
-        # fault as `error:resultUnknown`; plugin 0.4.0 made it an outcome.
+        # A leftover detach on the plugin makes every following cell
+        # report result:pending:result_lost:, a rig fault.
         if (
             self._shell(
                 ["shell", "settings get global always_finish_activities"]
@@ -497,19 +310,10 @@ class AndroidDriver(Driver):
                 "like an SDK finding. Run: adb shell settings put global "
                 "always_finish_activities 0"
             )
-        # And the third: a cell that rotated and did not rotate back. Both
-        # settings are read, because `user_rotation` only takes effect while
-        # `accelerometer_rotation` is 0 -- with the sensor in charge the device
-        # is upright whatever `user_rotation` says, and refusing on that alone
-        # would break a rig nothing had turned. `rotate()` writes both, so this
-        # is exactly the state it leaves.
-        #
-        # Measured on the D3 probe: one un-restored rotation, and the
-        # interleaved control after it failed looking for the Pay button, which
-        # was off screen -- a message that reads as an SDK finding and is a rig
-        # fault. `cell_rules` refuses a cell with an odd number of turns; this
-        # catches the cell that died between two of them, where the teardown
-        # replay cannot help because `rotate` has no on/off pair.
+        # user_rotation only applies while accelerometer_rotation is 0,
+        # so both settings are read.
+        # An un-restored rotation leaves the Pay button off screen, which
+        # reads as an SDK finding.
         sensor = self._shell(
             ["shell", "settings get system accelerometer_rotation"]
         ).strip()
@@ -525,16 +329,9 @@ class AndroidDriver(Driver):
         self._shell(["shell", "monkey", "-p", PACKAGE, "-c", _LAUNCHER, "1"])
         self._sleep(LAUNCH_SETTLE_SECONDS)
 
-    # -- actions -------------------------------------------------------------
-
     def _type_token(self, text: str) -> None:
-        """Enters the token without it ever entering this process's argv.
-
-        A command line is world-readable for as long as the process lives, so
-        the chunks go to `adb shell` on stdin instead. The device's own shell
-        still sees them -- `input text` is the only channel there is -- but
-        that exposure lasts as long as the keystrokes do.
-        """
+        """Types the token through `adb shell` stdin."""
+        # A command line is world-readable, so the token chunks stay out of argv.
         script = "".join(
             f"input text {text[at : at + TOKEN_CHUNK_CHARS]}\n"
             for at in range(0, len(text), TOKEN_CHUNK_CHARS)
@@ -542,8 +339,7 @@ class AndroidDriver(Driver):
         self._shell(["shell"], stdin=script)
 
     def _find_token_field(self):
-        # By class, because the example's field carries no identifier: it is
-        # the only EditText the screen has.
+        # The example's token field has no identifier, so it is found by class.
         return self._find(
             lambda nodes, _: [n for n in nodes if n.type.endswith("EditText")],
             "",
@@ -551,14 +347,14 @@ class AndroidDriver(Driver):
         )
 
     def _enter_token_text(self, text: str) -> None:
-        """Everything `paste_token` does up to and including the read-back."""
+        """Types the token and waits until the field reads it back."""
         field = self._find_token_field()
         self._tap(field.centre)
         self._sleep(SETTLE_SECONDS)
 
         self._type_token(text)
 
-        self._key(_KEYCODE_BACK)  # drop the IME
+        self._key(_KEYCODE_BACK)
         self._sleep(SETTLE_SECONDS)
 
         expected, seen = len(text), 0
@@ -570,10 +366,10 @@ class AndroidDriver(Driver):
             )
             return True if seen == expected else None
 
-        # Polled rather than read once: the last chunks are still arriving.
+        # Polled, because the last chunks are still arriving.
         if self._poll(agreed, TOKEN_READBACK_SECONDS, SETTLE_SECONDS) is None:
             # A truncated paste shows up as an instant 401, which would read as
-            # an SDK bug. Fail here instead, without echoing the token.
+            # an SDK bug.
             raise DriverError(
                 f"token entry never agreed with the file: {seen} characters on "
                 f"screen, {expected} expected"
@@ -585,32 +381,19 @@ class AndroidDriver(Driver):
         self._find(tree.find_identifier, CARD_NUMBER, "the card form", timeout=60)
 
     def present_token(self, token_path: Path) -> None:
-        """The token and the example's Pay, with no wait for a sheet.
-
-        `paste_token` ends by waiting 60 s for the SDK's card form. For a
-        token the SDK is expected to refuse there is never going to be one --
-        on iOS the refusal happens before `present` is called at all
-        (PaymentSheet.swift:42-51 against line 65) -- so that wait spends a
-        minute and then reports "the card form never appeared" instead of the
-        label the app has been showing the whole time.
-        """
+        """Enters the token and taps the example's Pay, not waiting for a card form."""
+        # A token the SDK refuses never shows a card form, so waiting for
+        # one only delays the report.
         self._enter_token_text(read_token(Path(token_path), verb="type"))
         self.tap_example_pay()
 
     def tap_example_pay(self) -> None:
-        # content-desc, not text: a Flutter widget surfaces as content-desc
-        # with an empty text, and the SDK's own Compose Pay does the opposite.
         self._tap_desc(EXAMPLE_PAY)
 
     def enter_token(self, literal: str) -> None:
-        """Types a short literal into the example's token field.
-
-        Deliberately not through `read_token`: what the SDK does with
-        something that is *not* a credential is the whole point of the cells
-        that use this. `cells.py` caps the literal at 200 printable,
-        space-free, colon-free characters, so nothing a live token could be
-        fits through here.
-        """
+        """Types a short literal into the example's token field."""
+        # The literal is not read through read_token, and cells.py caps it
+        # so no live token fits.
         field = self._find_token_field()
         self._tap(field.centre)
         self._sleep(SETTLE_SECONDS)
@@ -619,18 +402,10 @@ class AndroidDriver(Driver):
         self._sleep(SETTLE_SECONDS)
 
     def airplane(self, on: bool) -> None:
-        """Cuts the device's network, and proves it was cut.
-
-        `cmd connectivity airplane-mode` rather than the older
-        `settings put global airplane_mode_on` plus a broadcast: that
-        broadcast needs a system permission on modern Android, and without it
-        the setting flips while the radios stay up -- so a cell would report
-        that the SDK "survived a network cut" having measured nothing at all.
-        The read-back is what makes that impossible.
-
-        API 30 and up. D6's API 24 floor image runs D0 only, which never
-        reaches this.
-        """
+        """Cuts the device's network, and reads back that it was cut."""
+        # The cmd connectivity command is used because a settings broadcast
+        # needs a system permission and leaves the radios up.
+        # Cmd connectivity exists only from API 30.
         want = "1" if on else "0"
         said = self._shell(
             ["shell", f"cmd connectivity airplane-mode {'enable' if on else 'disable'}"]
@@ -638,19 +413,14 @@ class AndroidDriver(Driver):
         self._sleep(AIRPLANE_SETTLE_SECONDS)
         got = self._shell(["shell", "settings get global airplane_mode_on"]).strip()
         if got != want:
-            # The toggle's own answer as well as the read-back. Below API 30
-            # the service is not there and `cmd` says exactly that, while the
-            # read-back reports a perfectly ordinary '0' -- so without this
-            # the message describes the symptom and hides the cause. Both are
-            # bounded: they are raw device text on their way to stdout.
+            # Below API 30 the read-back reports '0' while cmd reports
+            # the service is missing, so both are quoted.
             raise DriverError(
                 f"airplane mode reads {got[:QUOTED_DEVICE_TEXT_CHARS]!r} after "
                 f"asking for {want!r}: the cut did not take, so anything this "
                 "cell measured is meaningless. The toggle said "
                 f"{said.strip()[:QUOTED_DEVICE_TEXT_CHARS]!r}"
             )
-
-    # -- the app process and the device --------------------------------------
 
     def _foreground_package(self) -> str:
         """Which app the window manager says is focused, or "".
@@ -669,9 +439,7 @@ class AndroidDriver(Driver):
     def _wait_foreground(
         self, package: str, *, timeout: float = 30, interval: float = 1
     ) -> None:
-        # Same deadline convention as `_poll`: with timeout=0 it looks once
-        # and then gives up, which is how a test reaches the failure branch
-        # without spending the wait.
+        # As in _poll, timeout=0 looks once and then gives up.
         deadline = time.monotonic() + timeout
         while True:
             live = time.monotonic() < deadline
@@ -686,18 +454,9 @@ class AndroidDriver(Driver):
             self._sleep(interval)
 
     def background(self, seconds: float) -> None:
-        """HOME, wait, and bring the task back the way a shopper would.
-
-        `monkey` with the LAUNCHER category, exactly as `launch()` uses --
-        but WITHOUT the force-stop that precedes it there. That is the whole
-        point: tapping the icon RESUMES the existing task with the SDK's
-        PaymentActivity still on top of it, where `am start` on MainActivity
-        would reorder the task and change what is being measured.
-
-        Both halves are verified. A HOME that did not take would background
-        nothing and the cell would report that the SDK survived something
-        that never happened.
-        """
+        """Sends HOME, waits, and brings the task back as a shopper's icon tap would."""
+        # `am start` on MainActivity would reorder the task and drop the
+        # SDK's activity from the top.
         self._key(_KEYCODE_HOME)
         self._sleep(BACKGROUND_SETTLE_SECONDS)
         if self._foreground_package() == self.package:
@@ -708,24 +467,12 @@ class AndroidDriver(Driver):
         self._sleep(BACKGROUND_SETTLE_SECONDS)
 
     def rotate(self) -> None:
-        """A quarter turn, and it stays turned.
-
-        Accelerometer rotation goes off first or the emulator's own sensor
-        puts it straight back.
-
-        What this actually exercises: the SDK's PaymentActivity declares no
-        `android:configChanges` at all (sdk AndroidManifest.xml:12-15), so a
-        rotation DESTROYS AND RECREATES it. The example app does the
-        opposite -- its manifest lists orientation, screenSize and locale --
-        so MainActivity absorbs the change and the plugin's
-        onDetachedFromActivityForConfigChanges never fires. A rotation here
-        measures the SDK's recreation, not the plugin's detach path.
-
-        One consequence for cell authoring: the CVV field is a plain
-        `remember`, not `rememberSaveable` (CardFormScreen.kt:91-95, citing
-        PCI DSS 3.3.1), so rotating on the form clears it. Rotate after
-        submitting, or retype.
-        """
+        """Turns the screen a quarter turn and leaves it turned."""
+        # The sensor would turn the screen straight back, so auto-rotate
+        # goes off first.
+        # PaymentActivity declares no configChanges, so a rotation recreates it.
+        # The CVV field is not saved across a recreation, so rotate after
+        # submitting or retype.
         self._shell(["shell", "settings put system accelerometer_rotation 0"])
         current = self._shell(["shell", "settings get system user_rotation"]).strip()
         target = "0" if current == "1" else "1"
@@ -733,34 +480,15 @@ class AndroidDriver(Driver):
         self._sleep(ROTATE_SETTLE_SECONDS)
 
     def kill_activity(self) -> None:
-        """Ends the app's process, sheet and all.
-
-        `am force-stop`, not `am kill`: `am kill` only takes processes that
-        are safe to kill, and this one is foreground with the SDK's activity
-        on top, so it would do nothing at all and the cell would pass having
-        killed nothing. What this stands in for is a low-memory kill -- the
-        Dart isolate dies with the process and the pending call dies with it,
-        which is the contract D3 exists to record. The verb's name is Phase
-        0's; what it does is end the process.
-        """
+        """Ends the app's process, sheet and all."""
+        # `am kill` skips foreground processes, so only force-stop ends this one.
         self._shell(["shell", "am", "force-stop", self.package])
         self._sleep(SETTLE_SECONDS)
 
     def dont_keep_activities(self, on: bool) -> None:
-        """The developer option, from the command line.
-
-        With it on, MainActivity is destroyed the moment the SDK's
-        PaymentActivity comes to the front, so the plugin's
-        `onDetachedFromActivity` fires and finishes the pending call with
-        `paycross_result_unknown` (PayCrossPlugin.kt:84-96) while the sheet
-        is still up and the shopper can still pay. That code no longer reaches
-        the merchant as an exception: Dart turns it into a pending result, so
-        the label to look for is `result:pending:result_lost:`.
-
-        Read back, because a setting that silently did not take would make
-        the cell measure an ordinary payment. And left on it poisons every
-        later cell, which is why `launch()` refuses to start while it is set.
-        """
+        """Sets the "don't keep activities" developer option and reads it back."""
+        # With it on, the host activity is destroyed under the open sheet
+        # and the pending call comes back as result_lost.
         want = "1" if on else "0"
         self._shell(["shell", f"settings put global always_finish_activities {want}"])
         self._sleep(SETTLE_SECONDS)
@@ -773,48 +501,17 @@ class AndroidDriver(Driver):
             )
 
     def device_language(self, tag: str) -> None:
-        """Sets the languages the APP sees, and proves the write landed.
-
-        `cmd locale` is the only route to one on this rig, and that is a
-        property of the emulator rather than a preference: the image is
-        `google_apis_playstore`, a production build, so `setprop
-        persist.sys.locale` is refused and there is no `adb root`. The SYSTEM
-        language cannot be changed at all. The app's own list can, and it is
-        the list the SDK actually reads -- `PayCrossResources.kt` takes its
-        device candidates from `LocalConfiguration.current.locales`, which is
-        the app's Configuration, and a per-app locale is exactly what
-        `LocaleManager` writes there.
-
-        `DEVICE_LANGUAGE_DEFAULT` clears the list, which is this verb's
-        teardown. It has to be one: the setting is the system's own record of
-        the package, so it outlives the cell, the app's process and a cold
-        restart of the emulator -- measured 2026-09-08, where `fr` was still
-        set after a `-no-snapshot-load` boot. A cell that set one and died
-        would leave every later sheet drawn in its language.
-
-        Fails CLOSED, unlike `launch`'s guards. `set-app-locales` prints
-        nothing when it worked and nothing when it silently did not, so
-        without the read-back a cell would measure the device rung against a
-        device whose language never changed -- and report the English sheet as
-        an SDK finding. This is the gap flutter#60 was filed over: on
-        2026-09-07 the setting was written and read back by hand, the sheet
-        still drew English, and nothing could say whether the app had been
-        given the language at all. (It had. The sheet was English because the
-        SESSION named `en`, which core defaults, and the session rung sits
-        above the device rung.)
-
-        Does NOT relocalize the running app on its own. `LocaleManager`
-        recreates the activities it can, but the sheet is a separate activity
-        and the cell's own screen is a Flutter host, so a cell that means to
-        be read in the new language says `relaunch` next. `cell_rules` refuses
-        one that does not.
-        """
+        """Sets the app's own language list to `tag`, or clears it for the default."""
+        # The system language cannot be set on this image, so the app's own
+        # list is the one the SDK reads.
+        # The list is cleared in teardown because it outlives the cell
+        # and the app's process.
+        # Set-app-locales prints nothing on failure, so the list is read
+        # back below.
+        # The running app keeps its old language until it relaunches;
+        # cell_rules requires a relaunch step.
         wanted = [] if tag == DEVICE_LANGUAGE_DEFAULT else [tag]
-        # One string rather than an argv list: the empty list is written by
-        # passing an empty `--locales`, and an empty element through the
-        # Windows adb is not reliably still empty by the time the device's
-        # shell has re-split the line. Quoting it here puts the emptiness
-        # where the shell that reads it can see it.
+        # The empty list must reach the device shell as an empty quoted argument.
         listed = ",".join(wanted)
         self._shell(
             ["shell", f"cmd locale set-app-locales {PACKAGE} --locales '{listed}'"]
@@ -823,10 +520,8 @@ class AndroidDriver(Driver):
         got = parse_app_locales(
             self._shell(["shell", f"cmd locale get-app-locales {PACKAGE}"])
         )
-        # Compared case-insensitively and by whole tag. The system stores back
-        # what it was given rather than a canonical form -- `fr-FR` reads back
-        # `fr-FR`, `fr` reads back `fr` -- so this is an equality check and not
-        # a match against the ladder's rules, which are the SDK's business.
+        # The system stores tags as given, so this compares tags, not
+        # canonical forms.
         if [t.lower() for t in got] != [t.lower() for t in wanted]:
             raise DriverError(
                 f"the app's languages read {got} after asking for {wanted}: "
@@ -850,8 +545,8 @@ class AndroidDriver(Driver):
         if verify_pan:
             nodes = self._nodes()
             if not any(n.text.replace(" ", "") == card.pan for n in nodes):
-                # What was seen, not what it is blamed on: a caret bug and a
-                # mistyped tap look identical from here.
+                # A caret bug and a mistyped tap look identical here, so the
+                # value read is reported.
                 field = tree.find_identifier(nodes, CARD_NUMBER)
                 reads = field[0].text if field else None
                 raise DriverError(
@@ -868,51 +563,31 @@ class AndroidDriver(Driver):
             self._input_text(value)
             self._sleep(SETTLE_SECONDS)
 
-        self._key(_KEYCODE_BACK)  # drop the IME so the Pay button is reachable
+        # The keyboard covers the Pay button, so it is dismissed.
+        self._key(_KEYCODE_BACK)
         self._sleep(SETTLE_SECONDS)
 
     def save_card(self, *, timeout: float = SAVE_BOX_TIMEOUT_SECONDS) -> None:
-        """Makes sure the save-card box is ticked, and proves that it is.
-
-        "Makes sure" rather than "taps": tapping a box that is already ticked
-        UNticks it, and `TestCardPrefill.saveCard` pre-ticks it whenever a
-        prefill is configured. A cell asking to save a card means the end
-        state, not the gesture.
-
-        The verification is the reason this is not two lines. A tap that lands
-        beside the box -- on the label, which does nothing -- leaves the submit
-        carrying `card.save: false`, so the payment succeeds, the cell reaches
-        its label, and only `saved_card_saved` fails, twenty minutes later,
-        against a merchant record that is telling the truth. Reading the state
-        back turns that into a message naming the cause.
-
-        This used to hunt the whole tree for anything two-state, because the
-        SDK's checkbox carried no name and its caption was a separate,
-        non-clickable sibling -- the label could not be tapped and the box
-        could not be found. `paycross.saveCard` is on the `toggleable` Row that
-        holds both, so one node now carries the identifier, the state and the
-        click, and the search and its "which of these is the save box" guard
-        are gone with it.
-        """
+        """Ensures the save-card box is ticked and checks that it is."""
+        # Tapping a ticked box unticks it, so the state is checked before the tap.
+        # A tap that misses the box leaves the submit with card.save false,
+        # and only the saved-card check fails later.
         box = self._poll(
             lambda nodes: next(iter(tree.find_identifier(nodes, SAVE_CARD)), None),
             timeout,
             SETTLE_SECONDS,
         )
         if box is None:
-            # Almost always the cell rather than the device: without
-            # `save_card_config` on the session `canSaveCard` is false and the
-            # box is never composed.
+            # Without save_card_config on the session, canSaveCard is false
+            # and the box is never composed.
             raise DriverError(
                 f"no {SAVE_CARD} on screen within {timeout}s: the session's "
                 "options are missing save_card_config, or the form has not "
                 "rendered"
             )
         if box.checked is None:
-            # The identifier is there and the node under it is not two-state,
-            # which means the tag moved off the toggleable row. Said out loud:
-            # the tap below would otherwise land somewhere plausible and the
-            # read-back would blame the tap.
+            # The tap would land somewhere plausible and the read-back would
+            # blame the tap.
             raise DriverError(
                 f"{SAVE_CARD} is on screen at {box.bounds} but is not a "
                 "two-state control; the tag is no longer on the toggleable row"
@@ -938,53 +613,27 @@ class AndroidDriver(Driver):
             )
 
     def type_cvv(self, cvv: str) -> None:
-        """Fills the CVV field and nothing else.
-
-        The saved-card branch of the form is a prompt and one field
-        (`CardFormScreen.SavedCardCvvInput`), so `type_card` cannot serve: its
-        first act is to clear a card-number field that is not on this screen,
-        and it would raise looking for it.
-
-        The field itself is the same one -- both branches render `CvvField`,
-        so `CVV` is one matcher rather than two. What differs is the
-        validation behind it: the saved-card branch passes `CardType.UNKNOWN`,
-        which is three digits whatever the stored card's brand is.
-
-        No clearing pass. The field starts empty on this path, and a DEL sweep
-        would be the one way to lose digits that are about to be asked for
-        again.
-        """
+        """Fills the saved-card CVV field and nothing else."""
+        # type_card cannot serve here, its first act clears a card-number
+        # field that is not on this screen.
         self._tap_id(CVV)
         self._sleep(SETTLE_SECONDS)
         self._input_text(cvv)
         self._sleep(SETTLE_SECONDS)
-        # The numeric pad covers the Pay button's bounds, and `tap_pay` taps a
-        # centre rather than pressing a control -- behind the pad that lands on
-        # a digit key. `type_card` ends the same way for the same reason.
+        # The numeric pad covers the Pay button, so it is dismissed
+        # before the Pay tap.
         self._key(_KEYCODE_BACK)
         self._sleep(SETTLE_SECONDS)
 
     def tap_pay(self, amount_text: str) -> None:
-        """Taps the sheet's Pay button. `amount_text` is not read.
-
-        It used to be the whole matcher -- `Pay €10.00`, exact, because the
-        button tagged nothing and its rendered text was the only handle. That
-        is what made the `en-US` guard in `launch` necessary and what a French
-        sheet would have broken. The parameter stays because the base class and
-        the runner pass it on both platforms, and iOS ignores it for the same
-        reason.
-        """
+        """Taps the sheet's Pay button. `amount_text` is not read."""
         self._tap_id(PAY_BUTTON)
 
     def tap_google_pay(self, **kw) -> None:
-        # Tapped by bounds and found by description, not by identifier: see
-        # GOOGLE_PAY_DESC for why `paycross.walletButton` is not in the dump.
-        # The node carrying the description is a non-clickable wrapper, because
-        # the click handler lives on the AndroidView rather than on a Compose
-        # node. `**kw` reaches `_find`'s timeout, exactly as `_tap_text` and
-        # `_tap_desc` pass theirs -- the runner never uses it, and a test that
-        # means to reach the deadline would otherwise spend thirty real seconds
-        # getting there.
+        # The wallet button is found by description; its identifier is
+        # not in the dump.
+        # The description sits on a non-clickable wrapper, so the tap
+        # goes by bounds.
         self._tap(
             self._find(
                 tree.find_content_desc, GOOGLE_PAY_DESC, "the Google Pay button", **kw
@@ -1006,11 +655,8 @@ class AndroidDriver(Driver):
         return label
 
     def wait_acs(self, timeout: float = 120) -> bool:
-        """Waits for the sandbox ACS page without answering it.
-
-        Any of `ACS_MARKERS` identifies it. See that constant for why this is
-        a list rather than the single title it used to be.
-        """
+        """Waits for the sandbox ACS page without answering it."""
+        # The page's title varies by locale, so any of ACS_MARKERS identifies it.
         found = self._poll(
             lambda nodes: next(
                 (n for n in nodes if n.text in ACS_MARKERS),
@@ -1027,32 +673,13 @@ class AndroidDriver(Driver):
         return True
 
     def select_saved_card(self, *, timeout: float = 30) -> None:
-        """Chooses the first stored card, and proves the form switched.
-
-        Three lines of matching where there used to be thirty, because the
-        sheet is a different shape and publishes identifiers now.
-
-        It is a **radio list**, not the `ExposedDropdownMenuBox` this drove
-        until Train 2. There is no popup window to open, no collapsed text to
-        read and no masked PAN to recognise by shape: every row is a
-        `paycross.savedCard.<uuid>` node, tagged on the `selectable` Row
-        itself, so the first of them is tapped where it stands.
-
-        The verification is `paycross.cardNumber` going away while
-        `paycross.cvv` stays. The two branches of the form are mutually
-        exclusive, so the card-number field is present before the selection and
-        gone after it -- and requiring the CVV field to still be there is what
-        keeps that from also being satisfied by a form that failed to render at
-        all. It replaces the old `Enter CVV for ` prompt check for one reason:
-        that prompt is a rendered string and reads
-        `Entrez le code de sécurité pour …` on a French sheet.
-
-        Without this check a selection that silently failed would leave the
-        cell typing its CVV into the FRESH form, submitting a blank card, and
-        reporting a saved-card payment -- with `saved_card_used` the only
-        assertion that would ever notice, an hour into a matrix run. So this
-        raises rather than returns.
-        """
+        """Chooses the first stored card and checks that the form switched."""
+        # The saved-card rows are a radio list tagged with identifiers,
+        # so the first is tapped where it stands.
+        # The card-number field must be gone and the CVV field must remain,
+        # or the switch did not happen.
+        # The prompt text is localised, so the switch is checked by
+        # identifier rather than by prompt.
         row = self._poll(
             lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
             timeout,
@@ -1086,29 +713,13 @@ class AndroidDriver(Driver):
             )
 
     def remove_saved_card(self, *, timeout: float = 30) -> None:
-        """Deletes the first stored card, and proves the row is gone.
-
-        The proof is the point, and it is not theoretical. Train 2 measured
-        exactly this path failing on TEST while looking like it had worked:
-        confirming the dialog left the row on the sheet and put
-        `Could not remove the card. Try again.` in the error banner, because
-        the web API lacked the IAM grant to write the session blob back. A
-        driver that tapped Confirm and moved on would have reported a removal
-        that never happened.
-
-        So the row's own identifier is read before the bin is tapped and waited
-        out afterwards. It carries the card's uuid, which makes it exact: this
-        is not "a row went away", it is "the row for the card whose bin was
-        tapped went away".
-
-        The dialog is its own window and a dump taken while it is up holds
-        NOTHING ELSE -- not the picker, not the form. So "the row is not in the
-        tree" is true of the dialog itself, and a check that asked only that
-        would answer yes the instant Confirm was tapped, whatever the backend
-        then did. The sheet has to be back first, which is what
-        `paycross.payButton` says: it is on the form in every state, including
-        the one where the last stored card has gone and the picker with it.
-        """
+        """Deletes the first stored card and checks that its row is gone."""
+        # A removal can fail after Confirm and leave the row on the sheet,
+        # so the row is checked, not the dialog.
+        # The row's identifier carries the card's uuid, so the check is
+        # for this card only.
+        # The dialog's dump holds nothing else, so the check waits until
+        # the pay button is back on the sheet.
         row = self._poll(
             lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
             timeout,
@@ -1144,23 +755,9 @@ class AndroidDriver(Driver):
             )
 
     def wait_saved_card(self, timeout: float = 30) -> bool:
-        """Whether the sheet is offering a stored card.
-
-        The list's presence is the whole predicate, because the SDK composes
-        `SavedCardSelector` only under `if (savedCards.isNotEmpty())` -- there
-        is no separate signal to read, and an empty list is not a state that
-        exists.
-
-        Answers False rather than raising, unlike `wait_acs`. "No stored card
-        was offered" is a cell verdict -- the finding a D5 cell is there to
-        make -- and a DriverError would be classified as a broken device and
-        spend an interleaved control check proving a rig that was never in
-        doubt. A device that will not dump *does* still raise, out of `_poll`:
-        that is not the same answer.
-
-        The default is the literal `runner.EXPECT_TIMEOUT_SECONDS` uses, and a
-        test pins the pair equal.
-        """
+        """Returns whether the sheet is offering a stored card."""
+        # No stored card is a cell verdict, so it returns False rather than
+        # raising a device error.
         found = self._poll(
             lambda nodes: next(iter(tree.find_identifier(nodes, SAVED_CARDS)), None),
             timeout,
@@ -1170,7 +767,7 @@ class AndroidDriver(Driver):
 
     def acs(self, outcome: str) -> None:
         self.wait_acs()
-        # The outcome is chosen by which button is tapped, not by the PAN.
+        # The outcome is chosen by the button tapped, not by the card number.
         self._tap_text(outcome)
 
     def cancel_challenge(self) -> None:
@@ -1183,21 +780,9 @@ class AndroidDriver(Driver):
         self._tap_id(CANCEL_CONFIRM)
 
     def dismiss_cancel(self, *, timeout: float = 30) -> None:
-        """Raises the cancel dialog, backs out of it, and proves the form is back.
-
-        The path a shopper takes when they nearly abandoned the payment and
-        then did not. It is worth driving because it is the one dialog button
-        no cell ever pressed: `cancel_form` and `cancel_challenge` both confirm,
-        so `paycross.cancelDismiss` was shipped untested from this side.
-
-        The last check is not decoration, and it is two halves on purpose. The
-        dialog has to be GONE and the Pay button has to be BACK. On this
-        platform the dialog is its own window and a dump taken while it is up
-        holds only the dialog, so either half would do -- but the iOS
-        confirmation is drawn inside the sheet, where the Pay button never
-        left, and there only the first half means anything. One rule, so the
-        two drivers cannot drift into checking different things.
-        """
+        """Raises the cancel dialog, dismisses it, and checks that the form is back."""
+        # The dialog must be gone and the Pay button back; on iOS the
+        # dialog is drawn inside the sheet.
         self._raise_cancel_dialog(timeout=timeout)
         self._tap_id(CANCEL_DISMISS, timeout=timeout)
         self._sleep(SETTLE_SECONDS)
@@ -1213,14 +798,9 @@ class AndroidDriver(Driver):
             )
 
     def _raise_cancel_dialog(self, *, timeout: float = 30) -> None:
-        """Back, then the dialog the SDK catches it with.
-
-        Android's sheet has no cancel control of its own -- `paycross.cancel`
-        is iOS-only -- so the gesture is the affordance and the dialog is the
-        first thing here that can be named. `BackHandler` is unconditional on
-        both screens (`PaymentActivity.kt`), so this reaches it from the form
-        and from the challenge alike.
-        """
+        """Presses Back and waits for the cancel dialog."""
+        # The sheet has no cancel control on Android, so the Back gesture
+        # is the only way to raise the dialog.
         self._key(_KEYCODE_BACK)
         self._find(
             tree.find_identifier, CANCEL_DIALOG, "the cancel dialog", timeout=timeout
@@ -1229,8 +809,8 @@ class AndroidDriver(Driver):
     def wait_rearmed(
         self, amount_text: str, timeout: float, *, interval: float = 2
     ) -> bool:
-        # A device that will not dump raises out of _poll rather than answering
-        # False: "the sheet did not re-arm" is a cell verdict and this is not.
+        # A device that will not dump raises rather than answering False,
+        # which would read as a verdict.
         found = self._poll(
             lambda nodes: tree.sheet_rearmed(nodes, amount_text) or None,
             timeout,
@@ -1249,20 +829,9 @@ class AndroidDriver(Driver):
         return found is not None
 
     def wait_no_google_pay(self, timeout: float = 20) -> bool:
-        """True only if the button is absent for the WHOLE window.
-
-        Absence has to be waited out rather than waited for. Readiness is a
-        LaunchedEffect that runs after the session loads and after an
-        asynchronous isReadyToPay (PaymentActivity.kt), so a button that is
-        merely late would satisfy a single look -- and this expectation would
-        then pass on every session, which is the one thing it must never do.
-
-        Written out rather than expressed through `_poll`, which answers as
-        soon as its `look` finds something: here finding something is the
-        answer False, and finding nothing has to keep going. Tolerating a
-        refused dump while the deadline is live is the one rule it does share,
-        because a device that will not dump is not a device with no button.
-        """
+        """Returns True only if the Google Pay button is absent for the whole window."""
+        # The button can appear late after an async readiness check,
+        # so absence must hold for the whole window.
         deadline = time.monotonic() + timeout
         while True:
             live = time.monotonic() < deadline
@@ -1272,31 +841,15 @@ class AndroidDriver(Driver):
                 return True
             self._sleep(2)
 
-    # -- evidence ------------------------------------------------------------
-
     def dump_tree(
         self, *, attempts: int = _DUMP_ATTEMPTS, interval: float = 1
     ) -> bytes:
-        """One accessibility dump, retaken until it parses.
-
-        Two failures hide behind a plain dump-then-cat. `uiautomator dump`
-        refuses while the UI is animating -- it prints `ERROR: could not get
-        idle state.` and writes nothing -- so the previous dump is still on
-        the device and `cat` hands back a *stale* tree that parses perfectly.
-        A polling caller then matches a screen that is already gone and taps
-        its coordinates. Removing the file in the same round trip turns that
-        into an empty read, which is detectable.
-
-        A partly-flushed `cat` is the other failure and presents the same
-        way. Untreated it raises `ParseError` out of `_nodes`, which is not a
-        `DriverError` and so escapes every polling loop -- one transient read
-        would abort the cell.
-        """
+        """Returns one parsable accessibility dump, retaken while the UI is busy."""
         if attempts < 1:
             raise ValueError(f"attempts must be at least 1, got {attempts}")
         for attempt in range(attempts):
-            # One round trip, so this stays two adb invocations: a dump that
-            # never ran cannot leave the previous one behind to be read.
+            # Uiautomator dump leaves the previous file in place when the
+            # UI is animating, so it is removed in the same call.
             said = self._shell(
                 ["shell", f"rm -f {_DUMP_PATH}; uiautomator dump {_DUMP_PATH}"]
             )
@@ -1316,33 +869,16 @@ class AndroidDriver(Driver):
         ) from problem
 
     def screenshot(self) -> bytes:
-        """Black for the whole sheet: PaymentActivity sets FLAG_SECURE.
-
-        Kept anyway -- the black frame is itself evidence that the flag is on,
-        and the .uix dump is what actually proves what was on screen.
-        """
+        """Returns a screenshot, black on the sheet because it is FLAG_SECURE."""
         return self._shell(["exec-out", "screencap", "-p"], binary=True)
 
     def logs_since(self, since: datetime) -> str:
-        """Logcat from `since` to now, with the cutoff asked of the device.
-
-        `logcat -v time` stamps -- and therefore the `-t` cutoff -- are in the
-        **device's** zone, while `run_cell` hands us UTC. The emulator runs
-        `Europe/Kiev`, so formatting the UTC value here asks for a window three
-        hours too wide: measured at 110,082 lines against 2,187 for the correct
-        cutoff. That is not just evidence bloat -- `crash_lines` would then scan
-        hours of an emulator that has been up for days, and one unrelated
-        `FATAL EXCEPTION` fails the cell, fails the interleaved control for the
-        same reason, and aborts the run as a rig fault. A device whose zone is
-        *behind* UTC is worse still: the cutoff lands in the future, the log
-        comes back empty, and criterion 3 passes on nothing.
-
-        So the device computes it, for the same reason the iOS driver uses
-        `--last <n>s`: there is no timezone left to get wrong.
-        """
+        """Returns logcat lines from `since` to now; the device computes the cutoff."""
+        # Logcat stamps are in the device's zone, so the cutoff is
+        # computed on the device.
         seconds = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
-        # Quoted as ONE argument. The device shell re-splits on spaces, and
-        # toybox `date` then answers "Max 1 argument (see date --help)".
+        # The device shell re-splits on spaces, so the date format is
+        # quoted as one argument.
         cutoff = self._shell(
             ["shell", f"date -d @$(( $(date +%s) - {seconds} )) '+%m-%d %H:%M:%S.000'"]
         ).strip()

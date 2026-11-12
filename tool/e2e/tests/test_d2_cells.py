@@ -1,22 +1,7 @@
-"""The D2 cells are data, and data has typos too.
-
-D2 is the failure matrix: every way a payment can end that is not an approval
--- issuer declines, ACS declines, a provider that never answers, a shopper who
-walks away, four integration errors and three network cuts. It is the first
-dimension with cells that *discover* rather than assert, and the first with
-cells that run on one platform only, so both of those get a rule here.
-
-Everything that is true of every dimension lives in `cell_rules.py`. What
-stays here is what is true of D2 and of nothing else.
-"""
-
 import re
 from pathlib import Path
 
 import pytest
-
-# A sibling module, imported the way pytest resolves one -- see the note in
-# `test_d0_cells.py`.
 from cell_rules import check_cell_dir
 
 from tool.e2e import cells
@@ -24,11 +9,6 @@ from tool.e2e import cells
 CELLS = Path(__file__).resolve().parents[1] / "cells"
 D2 = CELLS / "d2"
 
-#: The cells that cut the network, and so the cells that cannot run on the iOS
-#: simulator: it shares the host's network and every route to cutting that
-#: needs sudo or the GUI, so `IosDriver.airplane` refuses rather than
-#: pretending. `cell_rules` enforces the platform list; this names the three so
-#: the per-platform counts below are readable rather than arithmetic.
 ANDROID_ONLY = {
     "airplane_before_submit",
     "airplane_during_challenge",
@@ -70,28 +50,17 @@ def test_the_d2_cells_satisfy_the_shared_authoring_rules(platform, count):
     assert {c.id for c in loaded} == (
         EXPECTED_IDS if platform == "android" else EXPECTED_IDS - ANDROID_ONLY
     )
-    # The numbers the plan predicted, spelled out: a cell that quietly drops a
-    # platform still satisfies every rule above and would shrink a matrix run
-    # without failing anything.
     assert len(loaded) == count
 
 
 def test_the_control_cell_is_the_same_payment_in_every_dimension():
-    # Every dimension directory needs its own control (the runner refuses one
-    # without it) and every copy must stay identical, or "the control passed"
-    # means a different thing in each dimension.
     d0 = (CELLS / "d0" / "control.yaml").read_bytes()
     for path in sorted(CELLS.glob("d*/control.yaml")):
         assert path.read_bytes() == d0, f"{path} has drifted from d0's control"
 
 
 def test_every_pan_is_quoted_and_is_one_the_sandbox_still_recognises():
-    # Two assertions on one line of YAML, and the order matters. A quoted-only
-    # regex would simply not FIND an unquoted PAN, so the scenario check would
-    # go green on exactly the file it was meant to catch -- and an unquoted PAN
-    # with a leading zero is YAML octal, which is the hazard M10 was about. So:
-    # find every `pan:` line first, then insist it is quoted, then check it.
-    live = {"0000", "0002", "9995", "0119", "3220", "3063", "0051"}  # sandbox PANs
+    live = {"0000", "0002", "9995", "0119", "3220", "3063", "0051"}
     for path in sorted(D2.glob("*.yaml")):
         for line in path.read_text(encoding="utf-8").splitlines():
             found = re.match(r"\s*pan:\s*(\S+)\s*$", line)
@@ -106,15 +75,6 @@ def test_every_pan_is_quoted_and_is_one_the_sandbox_still_recognises():
 
 @pytest.mark.parametrize("platform", ["android", "ios"])
 def test_the_discovery_cells_say_so(platform):
-    # `<any>` is a licence to record rather than assert, and every cell that
-    # holds one must explain in its own comment what is being discovered --
-    # otherwise a pinned expectation quietly becomes an unpinned one.
-    #
-    # Asked of the PARSED expectation rather than of the file's text: a
-    # `<any>` reachable only through an `expected.ios` override is still a
-    # discovery cell, and grepping for the quoted literal would also be
-    # satisfied by the string appearing in a comment. Per platform, because
-    # an override can make one platform a discovery cell and not the other.
     for cell in cells.load_cells(D2, platform):
         if cell.expected_for(platform).label == cells.ANY_LABEL:
             text = cell.path.read_text(encoding="utf-8")

@@ -1,20 +1,5 @@
-# An expired card, reached through the ACS page rather than through a PAN.
-#
-# `declined_expired.json` (PAN ...0069) no longer declines: the sandbox
-# 66db130 removed its magic entry, so it falls through DefaultOutcome and
-# APPROVES. That is filed as a template/sandbox issue; the coverage stays
-# here, on the challenge card, where card_expired is one of the ISSUER
-# DECLINES buttons. The button's text is the outcome token verbatim
-# (the challenge page's issuer-declines group -- the sandbox has no separate
-# ACS component), which is what `acs:<outcome>` taps.
-#
-# Retryable -- change_method -- so the sheet re-arms rather than resolving,
-# the same shape as the two PAN-driven change_method cells beside it.
-#
-# No threeds assertion: this is an authorization decline that follows a
-# successful authentication, and what the sandbox records in threeds_result
-# for that pairing has never been measured. The run records it; Phase 3 pins
-# it if it proves stable.
+# The ACS button is the only route to this decline: the PAN-driven card approves in the sandbox.
+# threeds is not asserted: the sandbox's threeds_result for this pairing is unverified.
 id: acs_card_expired
 platforms: [android, ios]
 card:

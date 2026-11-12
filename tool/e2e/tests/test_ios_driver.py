@@ -1,12 +1,3 @@
-"""The iOS driver, exercised against a fake ssh transport.
-
-Nothing here touches the Mac. `FakeSsh` records the remote command line and
-replays canned stdout with `ios._ssh`'s exact signature, so what a test asserts
-on is the command line and the JSON body that would really go on the wire.
-Every wait is recorded rather than taken, and the rig's real durations stay
-pinned by asserting on what was recorded.
-"""
-
 import base64
 import importlib
 import json
@@ -24,21 +15,13 @@ from tool.e2e.drivers.base import DriverError
 FIXTURES = Path(__file__).parent / "fixtures"
 SOURCE_XML = (FIXTURES / "ios-source.xml").read_text()
 
-#: What `xcrun simctl list devices | grep <udid>` answers on the rig, trailing
-#: space included.
 DEVICE_LINE = "    iPhone 17 (C311AFDC-25FA-44A2-A800-10EB5A1039E3) (Booted) \n"
 
-#: Shaped like the real thing -- base64url segments joined by dots -- because
-#: the driver refuses anything that is not.
 TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJzZXNzaW9uX2lkIjoiMDFhMCJ9.c2lnbmF0dXJlLWJ5dGVz"
 
-#: `wc -c` then the backgrounded pid, which is what `_start_console` parses.
-#: Non-zero on purpose: a log that already holds a previous cell's output is
-#: the only shape in which reading from the mark differs from reading the file.
 CONSOLE_MARK = 4096
 CONSOLE_STARTED = f"    {CONSOLE_MARK}\n12345\n"
 
-#: The same page after one swipe: fraud_suspected has come up into the window.
 SCROLLED_XML = SOURCE_XML.replace(
     'name="fraud_suspected" label="fraud_suspected" value="" enabled="true" '
     'visible="false" x="16" y="1402"',
@@ -47,9 +30,6 @@ SCROLLED_XML = SOURCE_XML.replace(
 )
 assert SCROLLED_XML != SOURCE_XML, "the fixture's fraud_suspected node changed shape"
 
-#: The same page with the CVV field's numeric pad still up, covering the bottom
-#: ~35% -- which is where the ISSUER DECLINES buttons and scroll_to's drag
-#: origin both live.
 KEYBOARD_XML = SOURCE_XML.replace(
     "</XCUIElementTypeOther>",
     '<XCUIElementTypeKeyboard type="XCUIElementTypeKeyboard" name="" label="" '
@@ -59,9 +39,6 @@ KEYBOARD_XML = SOURCE_XML.replace(
 )
 assert "XCUIElementTypeKeyboard" in KEYBOARD_XML
 
-#: A source in which WebDriverAgent reports nothing as visible at all. The
-#: on-screen preference is inert against it, which is a rig fault rather than
-#: a licence to tap off-screen coordinates.
 BLIND_XML = SOURCE_XML.replace('visible="true"', 'visible="false"')
 assert 'visible="true"' not in BLIND_XML
 
@@ -70,7 +47,6 @@ TRUNCATED = json.dumps({"value": "<XCUIElementTypeApplication"})
 
 
 def payloads_for(ssh, path):
-    """The JSON bodies actually put on the wire for `path`."""
     bodies = []
     for command in ssh.calls:
         if path in command and "printf %s " in command:
@@ -80,7 +56,6 @@ def payloads_for(ssh, path):
 
 
 def typed_strings(ssh):
-    """`_keys` sends {"value": [...]} one character at a time, as wda.py does."""
     return ["".join(b["value"]) for b in payloads_for(ssh, "/wda/keys")]
 
 
@@ -89,16 +64,6 @@ def source_response(xml=None):
 
 
 class FakeSsh:
-    """Records the remote command line and replays canned stdout.
-
-    Mirrors `ios._ssh`'s signature exactly, so nothing here can pass while the
-    real transport is called differently. Explicit outputs are consumed in
-    order; after they run out it answers any `/source` request with the
-    fixture, a window-size request with the simulator's 402x874, and everything
-    else with an empty WDA envelope. That fallback is what lets a multi-step
-    action be exercised without hand-counting how many round trips it makes.
-    """
-
     def __init__(self, *outputs, xml=None):
         self.outputs = list(outputs)
         self.xml = xml
@@ -121,8 +86,6 @@ class FakeSsh:
 
 
 class ScrollingFakeSsh(FakeSsh):
-    """Serves the unscrolled ACS page until a drag arrives, then the scrolled one."""
-
     def __init__(self):
         super().__init__()
         self.scrolled = False
@@ -141,12 +104,6 @@ class ScrollingFakeSsh(FakeSsh):
 
 
 class KeyboardFakeSsh(FakeSsh):
-    """The CVV pad, which WDA cannot dismiss because it has no Done key.
-
-    `clears_on_tap` is the difference between a pad that goes away when a
-    neutral node is tapped and one that does not.
-    """
-
     def __init__(self, clears_on_tap=True):
         super().__init__()
         self.clears_on_tap = clears_on_tap
@@ -156,7 +113,6 @@ class KeyboardFakeSsh(FakeSsh):
         if "keyboard/dismiss" in command:
             self.calls.append(command)
             self.stdins.append(stdin)
-            # The real envelope shape: HTTP 4xx with JSON in the body.
             return json.dumps(
                 {
                     "value": {
@@ -186,33 +142,22 @@ def token_file(tmp_path, text=TOKEN):
 
 
 def driver(ssh, naps=None, session_id="sess-1"):
-    """The driver under test, with every wait recorded instead of taken."""
     d = ios.IosDriver(ssh=ssh, sleep=(naps if naps is not None else []).append)
     d._session_id = session_id
     return d
 
 
 def unlaunched(ssh, naps=None):
-    """The same driver before `launch()`, so it has no session yet."""
     return driver(ssh, naps, session_id=None)
 
 
 def launched(ssh, naps=None):
-    """A driver that has really been through `launch()`.
-
-    The console mark only exists on the far side of one, so anything reading
-    the console log has to go through it rather than have it set by hand. The
-    launch's own traffic is dropped so a test can index from its first call.
-    """
     ssh.outputs = list(launch_outputs()) + ssh.outputs
     d = ios.IosDriver(ssh=ssh, sleep=(naps if naps is not None else []).append)
     d.launch()
     ssh.calls.clear()
     ssh.stdins.clear()
     return d
-
-
-# -- _ssh, the one place the transport is real --------------------------------
 
 
 def _stub_subprocess(monkeypatch, stdout=b"", stderr=b"", returncode=0):
@@ -237,15 +182,11 @@ def test_ssh_runs_the_command_on_the_configured_host_under_a_timeout(monkeypatch
 
     assert ios._ssh("echo hi") == "hi\n"
     assert seen["argv"] == ["ssh", ios.SSH_HOST, "echo hi"]
-    # Every call is bounded: a hung ssh would otherwise hold the whole matrix.
     assert seen["kwargs"]["timeout"] == ios.SSH_TIMEOUT_SECONDS
     assert seen["kwargs"]["capture_output"] is True
 
 
 def test_ssh_turns_a_timeout_into_a_driver_error(monkeypatch):
-    # A Mac that has gone to sleep raises TimeoutExpired out of subprocess,
-    # which is not a DriverError -- so it escapes every polling loop and takes
-    # the whole matrix down instead of failing one cell.
     def explode(argv, **kwargs):
         raise ios.subprocess.TimeoutExpired(argv, ios.SSH_TIMEOUT_SECONDS)
 
@@ -281,16 +222,12 @@ def test_ssh_hands_stdin_to_the_process_rather_than_the_command_line(monkeypatch
 
 
 def test_ssh_normalises_the_crlf_that_a_pty_console_produces(monkeypatch):
-    # `simctl launch --console-pty` copies the app's output through a pty,
-    # which turns every LF into CRLF on the way to the log.
     _stub_subprocess(monkeypatch, stdout=b"one\r\ntwo\r\nthree")
 
     assert ios._ssh("cat log") == "one\ntwo\nthree"
 
 
 def test_ssh_surfaces_the_stderr_of_a_failed_remote_command(monkeypatch):
-    # Discarding it is how "no route to host" reads as an empty log, and an
-    # empty log is how criterion 3 passes on nothing.
     _stub_subprocess(
         monkeypatch,
         stdout=b"",
@@ -313,9 +250,6 @@ def test_every_remote_command_carries_the_env_exports_and_no_sudo():
     assert "sudo" not in command
 
 
-# -- _wda ---------------------------------------------------------------------
-
-
 def test_wda_calls_go_through_curl_on_the_mac_not_from_wsl():
     ssh = FakeSsh(json.dumps({"value": {"ready": True}}))
 
@@ -324,12 +258,8 @@ def test_wda_calls_go_through_curl_on_the_mac_not_from_wsl():
     command = ssh.calls[0]
     assert "curl" in command
     assert "http://127.0.0.1:8100/status" in command
-    # A /source that has not answered in 30 s is not going to. The ceiling
-    # matters because a look's own transport time is spent on top of the
-    # poll's deadline, not inside it.
     assert ios.WDA_TIMEOUT_SECONDS == 30
     assert "-m 30" in command
-    # WDA is bound to the Mac's loopback; there is nothing to reach from WSL.
     assert command.count("http://") == 1
 
 
@@ -344,9 +274,6 @@ def test_wda_puts_the_body_on_stdin_rather_than_the_command_line():
 
 
 def test_wda_raises_on_the_error_envelope_rather_than_returning_it():
-    # WDA reports a failure as HTTP 4xx with a JSON body, which curl -s prints
-    # and json.loads accepts -- so an unchecked call is completely silent and
-    # the damage surfaces one caller later as a KeyError or an AttributeError.
     ssh = FakeSsh(
         json.dumps(
             {
@@ -365,13 +292,10 @@ def test_wda_raises_on_the_error_envelope_rather_than_returning_it():
     text = str(excinfo.value)
     assert "invalid session id" in text
     assert "Session does not exist" in text
-    # The ~10 KB traceback must not reach problems or result.json.
     assert len(text) < 400
 
 
 def test_wda_raises_when_the_answer_is_not_json():
-    # curl's own failures arrive as a sentence, which json.loads answers with a
-    # JSONDecodeError -- not a DriverError, so it escapes every polling loop.
     ssh = FakeSsh("curl: (7) Failed to connect to 127.0.0.1 port 8100\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -389,11 +313,6 @@ def test_wda_raises_when_the_answer_is_empty():
     assert "/status" in str(excinfo.value)
 
 
-# -- launch -------------------------------------------------------------------
-
-
-#: WebDriverAgent reports whatever session is currently open at the top level
-#: of /status, and null when there is none.
 NO_OPEN_SESSION = json.dumps({"value": {"ready": True}, "sessionId": None})
 
 
@@ -406,33 +325,21 @@ def launch_outputs(
     mark=CONSOLE_MARK,
     orientation=None,
 ):
-    """One launch's worth of remote answers, in the order launch() asks.
-
-    `stopping` is for a second launch on the same driver: the first one left a
-    capture behind, so `_stop_console` has a round trip of its own. `mark` is
-    what `wc -c` reports -- a relaunch measures a log that has grown.
-
-    There is no locale answer any more: `launch` stopped reading one when the
-    sheet stopped being matched by English copy.
-    """
     stale = json.loads(status).get("sessionId")
     return (
         DEVICE_LINE,
         *(["gone\n"] if stopping else []),
         status,
-        # Only asked for when /status named one.
         *([json.dumps({"value": None})] if stale else []),
         "",
         f"    {mark}\n12345\n",
         session or json.dumps({"value": {"sessionId": "sess-9"}}),
         alive,
-        # Asked last, because /orientation needs the session.
         orientation or json.dumps({"value": "PORTRAIT"}),
     )
 
 
 def test_a_hostile_udid_cannot_break_out_of_a_command():
-    # Constructor arguments, not constants, once the runner takes --udid.
     ssh = FakeSsh("", "")
     hostile = "x; rm -rf ~"
 
@@ -464,10 +371,6 @@ def test_launch_accepts_the_older_top_level_session_id_shape():
 
 
 def test_launch_captures_the_app_console_because_the_sdk_emits_no_os_log():
-    # criterion 3's iOS markers -- Swift's `Fatal error:`, ObjC's `***
-    # Terminating app`, Dart's `Unhandled Exception:` -- reach stdout and
-    # stderr, not the unified log. Without this capture `log show` alone
-    # answers with nothing and "nothing crashed" passes on an empty window.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
 
@@ -475,20 +378,14 @@ def test_launch_captures_the_app_console_because_the_sdk_emits_no_os_log():
 
     started = next(c for c in ssh.calls if "--console-pty" in c)
     assert ios.CONSOLE_LOG in started
-    # Backgrounded: --console-pty blocks for the app's whole lifetime.
     assert "nohup" in started and "echo $!" in started
-    # And the byte offset the log had beforehand is what logs_since reads from.
     assert d._console_from == CONSOLE_MARK
 
 
 def test_launch_kills_the_previous_capture_before_starting_another():
-    # Two of them interleave into one log, and the older one still owns the app
-    # it launched. Killed before the terminate, so the app it holds goes too.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
-    # The device and locale checks come first, then the kill, then the
-    # terminate.
     ssh.outputs = list(launch_outputs(stopping=True))
     ssh.calls.clear()
 
@@ -514,9 +411,6 @@ def test_launch_reports_a_previous_capture_that_will_not_die():
 
 
 def test_close_kills_the_capture_the_run_started():
-    # launch() clears the *previous* cell's capture, so without this the last
-    # one of a run outlives the run: a simctl still holding the app, and a log
-    # still being written to.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
@@ -530,9 +424,6 @@ def test_close_kills_the_capture_the_run_started():
 
 
 def test_close_before_launch_does_nothing():
-    # Task 9 calls it in a finally, which runs whether or not launch() got far
-    # enough to start anything -- so with no capture and no session there is
-    # nothing to say to the Mac at all.
     ssh = FakeSsh()
 
     unlaunched(ssh).close()
@@ -554,8 +445,6 @@ def test_close_is_safe_to_call_twice():
 
 
 def test_close_surfaces_a_capture_that_will_not_die():
-    # Documented on the ABC, because a caller running close() in a finally has
-    # to decide whether to let this stand in for the failure it was reporting.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
@@ -568,8 +457,6 @@ def test_close_surfaces_a_capture_that_will_not_die():
 
 
 def test_launch_truncates_the_console_log_so_it_cannot_grow_unbounded():
-    # The runner reads a cell's logs before the next launch, so the previous
-    # cell's console has already been collected by the time this happens.
     ssh = FakeSsh(*launch_outputs())
 
     ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
@@ -579,16 +466,6 @@ def test_launch_truncates_the_console_log_so_it_cannot_grow_unbounded():
 
 
 def test_launch_does_not_let_the_session_relaunch_the_app_out_from_under_it():
-    # POST /session with a bundleId launches -- which for XCUIApplication means
-    # terminate-then-launch -- and that kills the console capture started one
-    # step earlier. `forceAppLaunch: false` was meant to activate the running
-    # instance instead; it is a literal in the 16.2.2 binary but it does not
-    # stop the relaunch, measured on the rig 2026-08-29 where it failed every
-    # cell in _check_console. So the session names no bundle at all: it then
-    # launches nothing and attaches to whatever is foreground. Everything asked
-    # of a session here is coordinate- or device-level (tap, drag, keys,
-    # keyboard/dismiss, window/size) and /source is unscoped, so nothing needs
-    # the binding.
     ssh = FakeSsh(*launch_outputs())
 
     ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
@@ -596,17 +473,10 @@ def test_launch_does_not_let_the_session_relaunch_the_app_out_from_under_it():
     capabilities = payloads_for(ssh, "/session")[0]["capabilities"]["alwaysMatch"]
     assert "bundleId" not in capabilities
     assert "forceAppLaunch" not in capabilities
-    # The Flutter engine never quiesces, so waiting for it times the request out.
     assert capabilities["shouldWaitForQuiescence"] is False
 
 
 def test_launch_closes_a_session_left_open_before_it_starts_the_capture():
-    # Measured on the rig 2026-08-29, and the second failure of the live run:
-    # an existing session bound to a bundleId terminates its app under test
-    # when a new session displaces it. The app it terminates is the instance
-    # this driver just launched, so the --console-pty capture goes with it and
-    # _check_console fails the cell. Closing the stale session first spends
-    # that termination on an app nobody is capturing yet.
     ssh = FakeSsh(*launch_outputs(status=json.dumps({"sessionId": "stale-1"})))
 
     ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
@@ -626,8 +496,6 @@ def test_launch_closes_a_session_left_open_before_it_starts_the_capture():
     ids=["one was open", "none was open"],
 )
 def test_closing_the_open_session_leaves_no_id_behind(status, answers):
-    # No session is open once this returns, whichever branch it took, so an id
-    # kept from the previous cell would name one that no longer exists.
     ssh = FakeSsh(status, *answers)
     d = driver(ssh, session_id="sess-old")
 
@@ -645,7 +513,6 @@ def test_launch_does_not_delete_a_session_when_none_is_open():
 
 
 def test_close_deletes_the_session_it_opened():
-    # Otherwise the run leaves one open, and the next run's launch pays for it.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
@@ -658,8 +525,6 @@ def test_close_deletes_the_session_it_opened():
 
 
 def test_close_deletes_the_session_even_when_the_capture_will_not_die():
-    # close() runs in the runner's finally; a capture that will not die must
-    # not also strand the session.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
@@ -680,11 +545,7 @@ def test_launch_checks_the_console_capture_after_the_session_not_before():
 
     message = str(excinfo.value)
     assert "console" in message
-    # The log is named, never quoted: the app's own output is redacted on its
-    # way into evidence, and a DriverError is not on that path.
     assert ios.CONSOLE_LOG in message
-    # The liveness question is asked once the session has had its chance to
-    # relaunch the app, which is the only thing that could kill the capture.
     asked = next(i for i, c in enumerate(ssh.calls) if "kill -0" in c)
     session = next(i for i, c in enumerate(ssh.calls) if "/session" in c)
     assert asked > session
@@ -710,9 +571,6 @@ def test_launch_refuses_a_simulator_that_is_not_booted():
 
 
 def test_launch_says_the_udid_is_unknown_rather_than_that_it_is_not_booted():
-    # grep finds nothing and exits 1, so the "answer" is empty. Reading that as
-    # a state would report a simulator part-way through booting when the truth
-    # is that there is no such simulator -- the emulator lesson, transposed.
     ssh = FakeSsh("")
 
     with pytest.raises(DriverError) as excinfo:
@@ -721,7 +579,6 @@ def test_launch_says_the_udid_is_unknown_rather_than_that_it_is_not_booted():
     message = str(excinfo.value)
     assert "names no simulator" in message
     assert "C311AFDC-25FA-44A2-A800-10EB5A1039E3" in message
-    # And not dressed up as a state simctl never reported.
     assert "Booted" not in message
 
 
@@ -733,9 +590,6 @@ def test_launch_settles_before_it_asks_wda_for_a_session():
 
     assert ios.LAUNCH_SETTLE_SECONDS == 6
     assert naps == [6]
-
-
-# -- install ------------------------------------------------------------------
 
 
 def test_install_replaces_any_existing_build():
@@ -759,9 +613,6 @@ def test_install_reports_what_simctl_actually_said():
     assert "Invalid device" in str(excinfo.value)
 
 
-# -- dump_tree ----------------------------------------------------------------
-
-
 def test_dump_tree_unwraps_the_json_envelope():
     ssh = FakeSsh(source_response())
 
@@ -769,9 +620,6 @@ def test_dump_tree_unwraps_the_json_envelope():
 
 
 def test_dump_tree_retries_a_source_that_came_back_unparsable():
-    # A truncated body raises ParseError out of _nodes, which is not a
-    # DriverError, so it escapes every polling loop and aborts the cell for one
-    # transient read.
     ssh = FakeSsh(TRUNCATED, source_response())
 
     assert driver(ssh).dump_tree(interval=0) == SOURCE_XML.encode()
@@ -785,7 +633,6 @@ def test_dump_tree_gives_up_as_a_driver_error_carrying_what_it_saw():
 
     message = str(excinfo.value)
     assert "XCUIElementTypeApplication" in message
-    # An excerpt, not the tree: a real dump holds the example's token field.
     assert len(message) < 600
 
 
@@ -796,9 +643,6 @@ def test_dump_tree_refuses_an_envelope_whose_value_is_not_the_source():
         driver(ssh).dump_tree(attempts=3, interval=0)
 
     assert "dict" in str(excinfo.value)
-
-
-# -- the polling waits --------------------------------------------------------
 
 
 def test_wait_label_reads_the_contract_label_off_the_source():
@@ -819,8 +663,6 @@ def test_wait_label_timing_out_raises():
 
 
 def test_a_wait_rides_out_a_source_that_will_not_parse():
-    # WDA answers mid-transition with a body that stops halfway. Three of those
-    # must not end a cell that still has 10 s of its own deadline left.
     refused = [TRUNCATED] * ios._DUMP_ATTEMPTS
     ssh = FakeSsh(*refused, source_response())
 
@@ -830,8 +672,6 @@ def test_a_wait_rides_out_a_source_that_will_not_parse():
 
 
 def test_a_wait_past_its_deadline_blames_the_dump_not_the_missing_node():
-    # Once the deadline is gone the tolerance goes with it, so the error names
-    # the source rather than reporting a label that was never looked for.
     ssh = FakeSsh(*([TRUNCATED] * 3))
 
     with pytest.raises(DriverError) as excinfo:
@@ -843,8 +683,6 @@ def test_a_wait_past_its_deadline_blames_the_dump_not_the_missing_node():
 def test_wait_rearmed_is_true_when_the_banner_is_in_the_tree_but_offscreen():
     ssh = FakeSsh(source_response())
 
-    # The fixture's payButton is labelled "Pay €10.00", and sheet_rearmed now
-    # asks that the amount be this cell's rather than any sheet's at all.
     assert driver(ssh).wait_rearmed("€10.00", timeout=10, interval=0) is True
 
 
@@ -858,9 +696,6 @@ def test_wait_rearmed_gives_up_and_says_so():
     ssh = FakeSsh(*([json.dumps({"value": "<XCUIElementTypeApplication/>"})] * 3))
 
     assert driver(ssh).wait_rearmed("€10.00", timeout=0, interval=0) is False
-
-
-# -- finding and tapping ------------------------------------------------------
 
 
 def test_tap_identifier_uses_the_node_centre():
@@ -881,8 +716,6 @@ def test_tap_identifier_that_is_not_there_says_what_it_looked_for():
 
 
 def test_tap_pay_ignores_the_amount_it_is_given():
-    # The parameter survives only because the base class and the runner pass it
-    # on both platforms; Android taps the same identifier now.
     ssh = FakeSsh()
 
     driver(ssh).tap_pay("EUR 10.00")
@@ -891,14 +724,6 @@ def test_tap_pay_ignores_the_amount_it_is_given():
 
 
 def test_tap_pay_falls_back_to_the_button_wearing_the_sheets_name():
-    """SDK 0.7.0 does not publish `paycross.payButton` at all.
-
-    `.payCrossIdentifier(.sheet)` on the group wrapping the form overrides the
-    one set on the pinned footer, so the Pay button answers to
-    `paycross.sheet` -- which the sheet's own container, a ScrollView, also
-    does. The fallback is what separates them, and without it `paste_token`,
-    `tap_pay` and `dismiss_cancel` all time out.
-    """
     ssh = FakeSsh()
 
     assert driver(ssh)._pay_button().identifier == "paycross.sheet"
@@ -906,18 +731,6 @@ def test_tap_pay_falls_back_to_the_button_wearing_the_sheets_name():
 
 
 def test_the_pay_button_fallback_is_the_branch_being_taken():
-    """The removal marker for `_is_pay_button`, with teeth.
-
-    This asserts the WRONG thing on purpose: that the Pay button in a freshly
-    recorded tree answers to the sheet's identifier rather than its own. It is
-    true of PayCross 0.7.0 and it is a defect -- payment-ios-sdk#47.
-
-    When that lands and someone re-records `ios-source.xml`, this test goes red
-    and names the code to delete. The two tests either side of it prove the
-    fallback works and that the preferred branch wins; neither of them would
-    ever fail once the SDK is fixed, so neither of them forces the workaround
-    out. This one does.
-    """
     taken = driver(FakeSsh())._pay_button()
 
     assert taken.identifier == ios.SHEET, (
@@ -927,8 +740,6 @@ def test_the_pay_button_fallback_is_the_branch_being_taken():
 
 
 def test_tap_pay_prefers_the_contract_the_moment_the_sdk_honours_it():
-    # The fallback deletes itself: a tree carrying the right name never
-    # reaches the second branch.
     fixed = SOURCE_XML.replace(
         'name="paycross.sheet" label="Pay €10.00"',
         'name="paycross.payButton" label="Pay €10.00"',
@@ -943,16 +754,12 @@ def test_find_prefers_a_node_that_is_actually_on_screen():
     ssh = FakeSsh()
     d = driver(ssh)
 
-    # In the tree at y=1402 on an 874pt sheet: addressable, not tappable.
     assert d._find("fraud_suspected", timeout=0).bounds[1] == 1402
     with pytest.raises(DriverError):
         d._find("fraud_suspected", timeout=0, require_on_screen=True)
 
 
 def test_find_calls_a_source_that_reports_no_visibility_at_all_a_rig_fault():
-    # Falling back to an off-screen node is only defensible while WDA is
-    # reporting visibility. If nothing in the whole source carries it, the
-    # on-screen preference is inert and every tap lands at raw coordinates.
     ssh = FakeSsh(xml=BLIND_XML)
 
     with pytest.raises(DriverError) as excinfo:
@@ -965,9 +772,6 @@ def test_find_identifier_only_does_not_match_a_label():
     ssh = FakeSsh()
     d = driver(ssh)
 
-    # Both cancels are *labelled* "Cancel" and both are on screen, so which
-    # one a tap reaches is decided purely by whether the label half of the
-    # matcher is on. That is why every cancel path passes identifier_only.
     assert d._find("paycross.threeDSCancel").identifier == "paycross.threeDSCancel"
     assert [n.identifier for n in d._matches("Cancel")] == [
         "paycross.cancel",
@@ -977,8 +781,6 @@ def test_find_identifier_only_does_not_match_a_label():
 
 
 def test_find_refuses_an_empty_name_rather_than_matching_the_whole_tree():
-    # Every untagged element carries name="" and label="", which is most of a
-    # real source, so the tap would land on an arbitrary one.
     ssh = FakeSsh()
 
     with pytest.raises(DriverError):
@@ -996,9 +798,6 @@ def test_a_call_before_launch_says_there_is_no_session():
     assert "launch()" in str(excinfo.value)
 
 
-# -- scrolling and the ACS page -----------------------------------------------
-
-
 def test_scroll_to_does_not_swipe_when_the_target_is_already_on_screen():
     ssh = ScrollingFakeSsh()
 
@@ -1009,33 +808,27 @@ def test_scroll_to_does_not_swipe_when_the_target_is_already_on_screen():
 
 
 def test_acs_scrolls_until_the_outcome_is_on_screen_then_taps():
-    # fraud_suspected lives in ISSUER DECLINES, below the fold on a 402x874
-    # sheet. Without a scroll the tap lands on whatever is at y=1402.
     ssh = ScrollingFakeSsh()
 
     driver(ssh).acs("fraud_suspected", timeout=0, settle=0)
 
     assert any("dragfromtoforduration" in c for c in ssh.calls)
     tap = payloads_for(ssh, "/wda/tap")[-1]
-    assert tap["y"] == 424.0  # 402 + 44/2, i.e. on screen
+    assert tap["y"] == 424.0
     assert 0 <= tap["y"] <= 874
 
 
 def test_acs_gives_up_with_a_named_error_if_scrolling_never_reveals_it():
-    ssh = FakeSsh()  # always the unscrolled page
+    ssh = FakeSsh()
 
     with pytest.raises(DriverError) as excinfo:
         driver(ssh).acs("fraud_suspected", timeout=0, max_swipes=2, settle=0)
 
     assert "fraud_suspected" in str(excinfo.value)
-    # N swipes means N drags, with a look before the first and after the last.
     assert len([c for c in ssh.calls if "dragfromtoforduration" in c]) == 2
 
 
 def test_acs_puts_the_keyboard_away_before_it_tries_to_scroll():
-    # scroll_to drags from height * 0.75 = y~655, which is inside a keyboard
-    # whose top is y~564: a pad left up swallows every swipe AND hides the
-    # decline outcomes, so the cell burns all twelve and fails anyway.
     ssh = KeyboardFakeSsh(clears_on_tap=True)
 
     with pytest.raises(DriverError):
@@ -1047,9 +840,6 @@ def test_acs_puts_the_keyboard_away_before_it_tries_to_scroll():
 
 
 def test_scroll_to_calls_a_blind_source_a_rig_fault_rather_than_swiping():
-    # require_on_screen can never be satisfied by a source that marks nothing
-    # visible, so without the check the cell burns every swipe and then reports
-    # a button that "never came on screen" -- a plausible wrong diagnosis.
     ssh = FakeSsh(xml=BLIND_XML)
 
     with pytest.raises(DriverError) as excinfo:
@@ -1070,26 +860,16 @@ def test_scroll_to_drags_within_the_window_it_asked_wda_for():
     assert 0 <= drag["toY"] <= 874 and 0 <= drag["fromY"] <= 874
 
 
-# -- the keyboard -------------------------------------------------------------
-
-
 def test_dismiss_keyboard_taps_a_neutral_node_when_the_pad_will_not_go():
-    # The CVV pad is numeric: no Done, no Return, so dismissKeyboard has
-    # nothing to press and answers with an error envelope. `amount` is
-    # SDK-tagged and never interactive.
     ssh = KeyboardFakeSsh(clears_on_tap=True)
 
     driver(ssh).dismiss_keyboard(settle=0)
 
     assert any("keyboard/dismiss" in c for c in ssh.calls)
-    # The centre of `paycross.amount`, which is a left-aligned label rather
-    # than a full-width one: x=20 w=118.
     assert payloads_for(ssh, "/wda/tap") == [{"x": 79.0, "y": 212.0}]
 
 
 def test_dismiss_keyboard_raises_if_the_pad_survives_even_that():
-    # Failing here beats burning every swipe: scroll_to drags from y=655,
-    # which is inside a keyboard whose top is around y=564.
     ssh = KeyboardFakeSsh(clears_on_tap=False)
 
     with pytest.raises(DriverError) as excinfo:
@@ -1099,8 +879,6 @@ def test_dismiss_keyboard_raises_if_the_pad_survives_even_that():
 
 
 def test_dismiss_keyboard_reports_rather_than_raises_when_it_is_not_required():
-    # type_card's call is a tidy-up: on the card form the pad covers nothing
-    # that matters, because payButton sits above it. Only acs() needs it gone.
     ssh = KeyboardFakeSsh(clears_on_tap=False)
 
     assert driver(ssh).dismiss_keyboard(settle=0, required=False) is False
@@ -1113,16 +891,8 @@ def test_dismiss_keyboard_says_so_when_the_pad_did_go():
 
 
 def test_type_card_does_not_fail_a_cell_over_a_pad_that_will_not_go():
-    # Measured on the rig 2026-08-29: nothing dismisses this pad. It is
-    # numeric, so it has no Done or Return key; XCUIApplication.dismissKeyboard
-    # answers "invalid element state"; and taps on 'amount', on TOTAL, on the
-    # navigation bar and a drag down the form all leave it up -- the SwiftUI
-    # form offers no affordance at all. Every cell failed here, including
-    # control, which never sees an ACS page.
     ssh = KeyboardFakeSsh(clears_on_tap=False)
     d = driver(ssh)
-    # Both the tap and the read-back are stubbed: this test is about the pad,
-    # and `_fill` would otherwise raise on a fixture whose fields never change.
     d._focus_field = lambda name: None
     d._fill = lambda name, value: None
 
@@ -1132,9 +902,6 @@ def test_type_card_does_not_fail_a_cell_over_a_pad_that_will_not_go():
 
 
 def test_dismiss_keyboard_does_nothing_at_all_when_no_pad_is_up():
-    # acs() calls this on a page that has no keyboard, where dismissKeyboard
-    # would answer with an error envelope and cost two round trips to learn
-    # nothing.
     ssh = FakeSsh()
 
     driver(ssh).dismiss_keyboard(settle=0)
@@ -1144,9 +911,6 @@ def test_dismiss_keyboard_does_nothing_at_all_when_no_pad_is_up():
 
 
 def test_dismiss_keyboard_refuses_a_fallback_target_behind_the_pad():
-    # Tapping a node the keyboard covers types into the keyboard. `amount` sits
-    # above it on the card form, but a scrolled sheet -- or another screen --
-    # can put it underneath.
     covered = KEYBOARD_XML.replace(
         'name="paycross.amount" label="Total, \u20ac10.00" '
         'value="Total, \u20ac10.00" enabled="true" visible="true" x="20" y="192"',
@@ -1172,16 +936,10 @@ def test_dismiss_keyboard_refuses_a_fallback_target_behind_the_pad():
     assert payloads_for(ssh, "/wda/tap") == []
 
 
-# -- typing -------------------------------------------------------------------
-
-
 def test_type_card_fills_the_fields_by_identifier_in_form_order():
     ssh = FakeSsh()
     d = driver(ssh)
     tapped = []
-    # `_focus_field` and the read-back both need a tree that answers with the
-    # card fields, which this composite has none of. Stubbing the focus keeps
-    # the test about the ORDER and the keystrokes.
     d._focus_field = lambda name: tapped.append(name)
     d._value_of = lambda name: None if len(tapped) % 2 else "changed"
 
@@ -1193,14 +951,10 @@ def test_type_card_fills_the_fields_by_identifier_in_form_order():
         "paycross.expiry",
         "paycross.cvv",
     ]
-    # One request per character now, not one per field: the SDK's formatter
-    # reflows the field after each one and a bulk send loses characters.
     assert typed_strings(ssh) == list("John Doe41111111111700001228123")
 
 
 def test_type_card_dismisses_the_keyboard_the_cvv_field_raised():
-    # It covers the bottom ~35% of the sheet, which is where the ACS page's
-    # decline outcomes land. Android drops the IME for the same reason.
     ssh = KeyboardFakeSsh(clears_on_tap=True)
     d = driver(ssh)
     d._focus_field = lambda name: None
@@ -1214,14 +968,6 @@ def test_type_card_dismisses_the_keyboard_the_cvv_field_raised():
 
 
 def test_type_card_paces_the_keystrokes_rather_than_sending_them_at_once():
-    """The pacing is measured, not decorative.
-
-    `/wda/keys` takes the whole string in one request and it arrives faster
-    than the SDK reflows the field: the expiry came back reading `12/2` from
-    `1228`, one character delivered into a field being rewritten underneath it
-    as the formatter inserted the `/`. The Android driver paces its digits for
-    the same reason.
-    """
     ssh = FakeSsh()
     naps = []
     d = driver(ssh, naps)
@@ -1229,29 +975,14 @@ def test_type_card_paces_the_keystrokes_rather_than_sending_them_at_once():
     d._value_of = lambda name: None
 
     with pytest.raises(DriverError):
-        # The read-back cannot see a value change on a tree with no card
-        # fields, which is the honest answer for this fixture.
         d.type_card(Card(pan="4111111111170000", expiry="12/28", cvv="123"))
 
     assert ios.KEY_PACING_SECONDS == 0.15
-    # One nap per character of the holder name, twice over: `_fill` retries
-    # once before it gives up.
     assert naps[:3] == [0.15, 0.15, 0.15]
 
 
-# -- save_card ----------------------------------------------------------------
-
-#: The real store form, dumped from the simulator on 2026-08-31. Taken after
-#: `paste_token` and BEFORE `type_card`, which is the state the cell now uses:
-#: with no keyboard up, and with the toggle at y=840 on an 874-tall screen --
-#: below the pinned Pay bar and reported `visible="false"`, which is why iOS
-#: needs a scroll where Android does not.
 SAVE_FORM_IOS = (FIXTURES / "ios-save-card-form.xml").read_text()
 
-#: The same form after one swipe has brought the toggle up into the window.
-#: BOTH switches move: SwiftUI renders the labelled row and the control inside
-#: it as separate `XCUIElementTypeSwitch` nodes, and which of the two is
-#: tappable is the whole point of the test below.
 SAVE_FORM_IOS_ONSCREEN = SAVE_FORM_IOS.replace(
     'visible="false" accessible="true" x="20" y="929"',
     'visible="true" accessible="true" x="20" y="440"',
@@ -1261,15 +992,11 @@ SAVE_FORM_IOS_ONSCREEN = SAVE_FORM_IOS.replace(
 )
 assert SAVE_FORM_IOS_ONSCREEN.count('y="440"') == 2, "both switches must move"
 
-#: And after the tap took.
 SAVE_FORM_IOS_TICKED = SAVE_FORM_IOS_ONSCREEN.replace(
     'value="0" name="paycross.saveCard"', 'value="1" name="paycross.saveCard"'
 )
 assert SAVE_FORM_IOS_TICKED != SAVE_FORM_IOS_ONSCREEN
 
-#: The ticked form with the sheet still scrolled -- `amount` at y=37, tucked
-#: under a navigation bar whose bottom is y=132. Exactly what the live run left
-#: behind, and what made `dismiss_keyboard`'s fallback tap dead space.
 SAVE_FORM_IOS_SCROLLED = SAVE_FORM_IOS_TICKED.replace(
     'name="paycross.amount" label="Total, \u20ac10.00" enabled="true" '
     'visible="true" accessible="true" x="20" y="171"',
@@ -1280,14 +1007,6 @@ assert SAVE_FORM_IOS_SCROLLED != SAVE_FORM_IOS_TICKED, "amount did not move"
 
 
 class SaveCardFakeSsh(FakeSsh):
-    """Serves the toggle off-screen until a drag arrives, then on-screen.
-
-    Shaped like `ScrollingFakeSsh`, because the situation is the same one: the
-    control is in the tree from the moment the sheet renders and off-screen for
-    just as long. `ticks` makes the tap flip it, so the verification has
-    something real to read rather than a fixture that was ticked all along.
-    """
-
     def __init__(self, ticks=True):
         super().__init__()
         self.scrolled = False
@@ -1299,8 +1018,6 @@ class SaveCardFakeSsh(FakeSsh):
         if "dragfromtoforduration" in command:
             raw = command.split("printf %s ", 1)[1].split(" | curl", 1)[0]
             body = json.loads(shlex.split(raw)[0])
-            # Which way the drag went is the whole difference between reaching
-            # the toggle and putting the sheet back.
             if body["fromY"] > body["toY"]:
                 self.scrolled = True
             else:
@@ -1321,10 +1038,6 @@ class SaveCardFakeSsh(FakeSsh):
 
 
 def test_save_card_scrolls_to_the_toggle_before_tapping_it():
-    # Measured: with no keyboard up the toggle is still at y=840 on an
-    # 874-tall screen and WDA reports it not visible, so a name match alone
-    # finds a node that cannot be tapped. Android needs none of this -- its
-    # checkbox sits at y=1125 of 2400.
     ssh = SaveCardFakeSsh()
 
     driver(ssh).save_card()
@@ -1334,44 +1047,23 @@ def test_save_card_scrolls_to_the_toggle_before_tapping_it():
 
 
 def test_save_card_taps_the_control_and_not_the_labelled_row():
-    """Measured on the simulator 2026-08-31, and it failed first.
-
-    SwiftUI exposes `Toggle` as TWO switch nodes: the labelled row
-    (x=20 w=362, name "Save this card") and the control inside it (x=321 w=63,
-    no name at all). Tapping the row's centre is what a label match gives you,
-    and on the device it did nothing -- the probe came back with "the tap at
-    (201, 715) did not turn on 'Save this card'". Only the control toggles.
-
-    So this is the iOS twin of the Android hazard: the node you can name is not
-    the node you can tap. Both platforms need the same trick and neither can
-    use its visible label as the target.
-    """
     ssh = SaveCardFakeSsh()
 
     driver(ssh).save_card()
 
-    # The control's centre (321 + 63/2, 440 + 28/2), not the row's (201, 454).
     assert payloads_for(ssh, "/wda/tap") == [{"x": 352.0, "y": 454.0}]
 
 
 def test_save_card_verifies_the_toggle_took():
-    # The same guarantee as Android's, read off a different attribute: WDA
-    # gives a switch's state as value "0"/"1", which `tree.parse_wda`
-    # normalises into `checked`.
     ssh = SaveCardFakeSsh(ticks=False)
 
     with pytest.raises(DriverError) as excinfo:
-        # `_poll`'s deadline is real time while the injected sleep is not, so
-        # a test that means to reach it says zero rather than spending thirty
-        # seconds of the suite getting there.
         driver(ssh).save_card(timeout=0)
 
     assert "did not turn on" in str(excinfo.value)
 
 
 def test_save_card_leaves_an_already_on_toggle_alone():
-    # Tapping it again turns it OFF, and the cell would then assert a save
-    # that its own action had just undone.
     class AlreadyOn(FakeSsh):
         def __call__(self, command, *, stdin=None):
             if "/source" in command:
@@ -1388,9 +1080,7 @@ def test_save_card_leaves_an_already_on_toggle_alone():
 
 
 def test_save_card_says_so_when_the_session_never_rendered_a_toggle():
-    # `allowsSaving` is false without `save_card_config` on the session, and
-    # the Toggle is not built at all. A cell-authoring mistake, named as one.
-    ssh = FakeSsh()  # the ordinary ACS fixture: no switch anywhere
+    ssh = FakeSsh()
 
     with pytest.raises(DriverError) as excinfo:
         driver(ssh).save_card()
@@ -1399,30 +1089,13 @@ def test_save_card_says_so_when_the_session_never_rendered_a_toggle():
     assert "save_card_config" in str(excinfo.value)
 
 
-# -- select_saved_card --------------------------------------------------------
-
-#: The saved-card sheet, dumped from the simulator on 2026-08-31. The first one
-#: taken in this campaign, on either platform.
-#:
-#: What it settles: on SDK 0.7.0 the picker publishes NONE of its own
-#: identifiers. `.payCrossIdentifier(.savedCards)` on the VStack holding the
-#: rows overrides the one set on each row and each bin, so three buttons come
-#: back named `paycross.savedCards` -- the stored card at x=20 w=318, its bin
-#: inset at x=338 w=44 in the same band, and `Use a new card` at x=20 w=362,
-#: composed last. That geometry is what `IosDriver._picker_rows` reads, and
-#: this fixture is the measurement behind it.
 SAVED_SHEET_IOS = (FIXTURES / "ios-saved-card-sheet.xml").read_text()
 
-#: The same sheet once the stored card is chosen: the fresh-card field is gone
-#: and the CVV box stays, which together are what `select_saved_card` verifies.
 SAVED_SHEET_IOS_CHOSEN = SAVED_SHEET_IOS.replace(
     'name="paycross.cardNumber"', 'name="gone"'
 )
 assert SAVED_SHEET_IOS_CHOSEN != SAVED_SHEET_IOS
 
-#: And the same sheet after the card really went: one row fewer, which is how
-#: `remove_saved_card` sees a removal land while the SDK gives it no uuid to
-#: name. The bin goes with the row it belonged to.
 SAVED_SHEET_IOS_REMOVED = SAVED_SHEET_IOS.replace(
     'name="paycross.savedCards" label="Visa •••• 3063, 12/28"', 'name="gone"'
 ).replace(
@@ -1432,8 +1105,6 @@ assert SAVED_SHEET_IOS_REMOVED.count("gone") == 2
 
 
 class SelectFakeSsh(FakeSsh):
-    """Serves the unselected sheet until a tap arrives, then the selected one."""
-
     def __init__(self, switches=True):
         super().__init__()
         self.tapped = False
@@ -1452,21 +1123,14 @@ class SelectFakeSsh(FakeSsh):
 
 
 def test_select_saved_card_taps_the_stored_row_and_not_the_new_card_row():
-    # All three buttons answer to `paycross.savedCards` on this SDK, so the
-    # stored row is told from `Use a new card` by composition order and from
-    # its own bin by the picker's left edge.
     ssh = SelectFakeSsh()
 
     driver(ssh).select_saved_card()
 
-    # The stored row is at (20, 336, 338, 381); its bin is inset at x=338 and
-    # `Use a new card` is 52pt below.
     assert payloads_for(ssh, "/wda/tap") == [{"x": 179.0, "y": 358.0}]
 
 
 def test_the_picker_fallback_tells_a_row_from_its_bin_and_from_the_new_card_row():
-    # The measurement `_picker_rows` rests on, stated as an assertion: left
-    # edge is a row, inset is a bin, and the last row is `Use a new card`.
     d = driver(FakeSsh(xml=SAVED_SHEET_IOS))
     nodes = tree.parse_wda(SAVED_SHEET_IOS)
 
@@ -1479,15 +1143,6 @@ def test_the_picker_fallback_tells_a_row_from_its_bin_and_from_the_new_card_row(
 
 
 def test_the_picker_fallback_is_the_branch_being_taken():
-    """The same removal marker, for the same defect, on the picker.
-
-    `SavedCardPicker` sets an identifier on every row and every bin, and
-    `.payCrossIdentifier(.savedCards)` on the VStack above them overrides all
-    of it -- payment-ios-sdk#47. So a freshly recorded picker has no row
-    answering to `paycross.savedCard.<uuid>`, which is what this asserts.
-
-    Red when the SDK is fixed and the fixture re-recorded, which is the point.
-    """
     nodes = tree.parse_wda(SAVED_SHEET_IOS)
 
     assert not [n for n in nodes if n.identifier.startswith(ios.SAVED_CARD_PREFIX)], (
@@ -1502,8 +1157,6 @@ def test_the_picker_fallback_is_the_branch_being_taken():
 
 
 def test_the_picker_fallback_gives_way_the_moment_the_sdk_names_a_row():
-    # Like `_pay_button`, it deletes itself: a tree carrying the contract's
-    # own identifiers never reaches the geometry.
     named = SAVED_SHEET_IOS.replace(
         'name="paycross.savedCards" label="Visa •••• 3063, 12/28"',
         'name="paycross.savedCard.abc-123" label="Visa •••• 3063, 12/28"',
@@ -1517,14 +1170,7 @@ def test_the_picker_fallback_gives_way_the_moment_the_sdk_names_a_row():
 
 
 def test_select_saved_card_raises_rather_than_paying_with_a_fresh_card():
-    """The failure mode worth spending code on.
-
-    A `select_saved_card` that cannot verify the switch must raise. If it
-    returned quietly the cell would type a CVV into the FRESH form, submit a
-    blank card, and report a saved-card payment -- and `saved_card_used` is the
-    only assertion that would notice, an hour into a matrix run.
-    """
-    ssh = SelectFakeSsh(switches=False)  # the tap lands, nothing changes
+    ssh = SelectFakeSsh(switches=False)
 
     with pytest.raises(DriverError) as excinfo:
         driver(ssh).select_saved_card(timeout=0)
@@ -1532,9 +1178,6 @@ def test_select_saved_card_raises_rather_than_paying_with_a_fresh_card():
     assert "still showing the new-card form" in str(excinfo.value)
 
 
-#: The confirmation the bin raises. Drawn IN the sheet rather than as an alert,
-#: which is what lets it carry identifiers at all -- SwiftUI does not forward a
-#: button's identifier onto the `UIAlertAction` an `.alert` builds.
 REMOVE_DIALOG_NODES = (
     '<XCUIElementTypeOther type="XCUIElementTypeOther" '
     'name="paycross.removeDialog" label="Remove this card?" enabled="true" '
@@ -1556,10 +1199,6 @@ def with_remove_dialog(source):
     return added
 
 
-#: The picker with every row reported not visible, which is what WDA says of
-#: the rows while the confirmation is dismissing over them. An on-screen count
-#: reads zero rows here, so a `remove_saved_card` that compared counts in this
-#: state would report a removal nothing had made.
 def _hide(source, *labels):
     for label in labels:
         source = source.replace(
@@ -1579,13 +1218,6 @@ assert HIDDEN_PICKER != SAVED_SHEET_IOS
 
 
 class RemoveFakeSsh(FakeSsh):
-    """Picker, then picker plus the confirmation, then one row fewer.
-
-    The tap count is the state machine: the first lands on the bin and raises
-    the dialog, the second confirms. Nothing here swaps windows, because on iOS
-    the confirmation is drawn inside the sheet.
-    """
-
     def __init__(self, removes=True, obscured=False):
         super().__init__()
         self.removes = removes
@@ -1602,10 +1234,6 @@ class RemoveFakeSsh(FakeSsh):
                 return source_response(SAVED_SHEET_IOS)
             if len(self.taps) == 1:
                 return source_response(with_remove_dialog(SAVED_SHEET_IOS))
-            # One look with the dialog still up and the picker behind it
-            # reported invisible, then the settled sheet. `obscured` is what
-            # the confirmation dismissing over the rows looks like, and the
-            # rows drop out of an on-screen count while it lasts.
             if self.obscured and len(self.taps) == 2:
                 self.taps.append("settled")
                 return source_response(with_remove_dialog(HIDDEN_PICKER))
@@ -1616,9 +1244,6 @@ class RemoveFakeSsh(FakeSsh):
 
 
 def test_remove_saved_card_taps_the_bin_beside_the_row_then_confirms():
-    # The bin is the button inset from the picker's left edge in the row's own
-    # band -- (338, 336, 382, 380) -- and never the row, whose centre is 159pt
-    # to its left. Tapping the row would choose the card instead of deleting it.
     ssh = RemoveFakeSsh()
 
     driver(ssh).remove_saved_card()
@@ -1628,14 +1253,6 @@ def test_remove_saved_card_taps_the_bin_beside_the_row_then_confirms():
 
 
 def test_remove_saved_card_raises_when_the_row_survives_the_confirmation():
-    """The defect this action exists to catch, measured on TEST 2026-09-06.
-
-    Confirming the removal left the row in place with `Could not remove the
-    card. Try again.` in the banner, because the web API could not write the
-    session blob back. A driver that tapped Confirm and moved on would have
-    reported a removal that never happened, and no merchant assertion in the
-    cell grammar would have noticed -- there is no saved-card count to assert.
-    """
     ssh = RemoveFakeSsh(removes=False)
 
     with pytest.raises(DriverError) as excinfo:
@@ -1645,47 +1262,25 @@ def test_remove_saved_card_raises_when_the_row_survives_the_confirmation():
 
 
 def test_remove_saved_card_counts_the_picker_before_it_taps_anything():
-    # It has no uuid to wait out on this SDK, so it counts rows -- and a
-    # removal that lands promptly would be compared against its own result if
-    # the count were taken after the confirmation.
     ssh = RemoveFakeSsh()
 
     driver(ssh).remove_saved_card()
 
-    # The count it compares against has to predate the removal it measures, so
-    # the first thing the action does is look. The fake serves the untouched
-    # picker only while no tap has landed, which is what makes this an
-    # assertion rather than a coincidence.
     assert "/source" in ssh.calls[0]
 
 
 def test_remove_saved_card_does_not_read_an_obscured_picker_as_a_removal():
-    """The counted branch's own version of the Android window trap.
-
-    With no uuid to wait out, this branch compares row counts -- and
-    `_saved_card_rows` keeps only what is ON SCREEN. While the confirmation is
-    dismissing over the picker WDA reports the rows behind it not visible, so
-    the count drops to zero and a removal the backend never made would read as
-    one that landed: the Train 2 defect this verb exists to catch, satisfying
-    itself.
-
-    Requiring the dialog gone before either half is read is what stops it. The
-    fake serves exactly that state for one look, then the sheet with the row
-    still on it, and the action has to fail.
-    """
     ssh = RemoveFakeSsh(removes=False, obscured=True)
 
     with pytest.raises(DriverError) as excinfo:
         driver(ssh).remove_saved_card(timeout=0)
 
     assert "still on the sheet" in str(excinfo.value)
-    # And the obscured state really did reach the poll, so the assertion above
-    # is about the guard rather than about the fake running out of trees.
     assert HIDDEN_PICKER != SAVED_SHEET_IOS
 
 
 def test_remove_saved_card_says_so_when_there_is_nothing_to_remove():
-    ssh = FakeSsh()  # the ordinary composite: no picker at all
+    ssh = FakeSsh()
 
     with pytest.raises(DriverError) as excinfo:
         driver(ssh).remove_saved_card(timeout=0)
@@ -1694,10 +1289,7 @@ def test_remove_saved_card_says_so_when_there_is_nothing_to_remove():
 
 
 def test_select_saved_card_says_so_when_no_stored_card_is_offered():
-    # `saved_cards: {show: all}` missing from the session, or the customer has
-    # no cards. A cell-authoring or setup fault, named as one rather than
-    # timing out against a row that was never going to be there.
-    ssh = FakeSsh()  # the ordinary ACS fixture: no picker at all
+    ssh = FakeSsh()
 
     with pytest.raises(DriverError) as excinfo:
         driver(ssh).select_saved_card(timeout=0)
@@ -1706,47 +1298,21 @@ def test_select_saved_card_says_so_when_no_stored_card_is_offered():
 
 
 def test_save_card_puts_the_scroll_back_where_it_found_it():
-    """Measured, and it cost a live cell.
-
-    `save_card` has to scroll to reach the toggle. Leaving the sheet scrolled
-    poisons everything after it: on the live run `amount` ended up at y=37,
-    tucked under the navigation bar, and `dismiss_keyboard`'s fallback -- which
-    taps `amount` -- hit dead space. The CVV pad then survived all the way onto
-    the ACS page and `acs()` refused, failing `saved_card_3_challenge_save`
-    while its interleaved control passed.
-
-    So the scroll is restored before returning. The anchor is `amount`, which
-    the SDK tags and never moves within the form.
-    """
     ssh = SaveCardFakeSsh()
 
     driver(ssh).save_card()
 
     drags = payloads_for(ssh, "/wda/dragfromtoforduration")
     assert drags, "it has to scroll down to reach the toggle"
-    # The last drag goes the other way: down the screen, not up it.
     assert drags[-1]["fromY"] < drags[-1]["toY"], drags[-1]
-    # And the first one went up, which is what reached the toggle.
     assert drags[0]["fromY"] > drags[0]["toY"], drags[0]
 
 
-# -- wait_saved_card ----------------------------------------------------------
-
-
 def test_wait_saved_card_answers_false_rather_than_raising_when_none_is_offered():
-    # Same contract as Android's: "no stored card was offered" is a cell
-    # verdict, and a DriverError would spend an interleaved control check on a
-    # rig that was never in doubt.
     assert driver(FakeSsh()).wait_saved_card(timeout=0) is False
 
 
-# -- type_cvv -----------------------------------------------------------------
-
-
 def test_type_cvv_fills_the_cvv_field_and_touches_nothing_else():
-    # Literally the same view as the fresh form's: `cvvField` is declared once
-    # in CardFormView and rendered by both branches, identifier and all. So
-    # there is one matcher here, not a saved-card variant of one.
     ssh = FakeSsh()
     d = driver(ssh)
     tapped = []
@@ -1755,14 +1321,10 @@ def test_type_cvv_fills_the_cvv_field_and_touches_nothing_else():
     d.type_cvv("123")
 
     assert tapped == ["paycross.cvv"]
-    # One request per character, as every card field takes them now.
     assert typed_strings(ssh) == ["1", "2", "3"]
 
 
 def test_type_cvv_tries_the_keyboard_away_without_failing_the_cell_over_it():
-    # Same bargain `type_card` strikes, and for the same measured reason: the
-    # numeric pad has no Done key and nothing on this build dismisses it, but
-    # on the form it covers nothing that matters. A cell must not die here.
     ssh = KeyboardFakeSsh(clears_on_tap=False)
     d = driver(ssh)
     d._focus_field = lambda name: None
@@ -1775,10 +1337,6 @@ def test_type_cvv_tries_the_keyboard_away_without_failing_the_cell_over_it():
 
 
 def test_type_cvv_does_not_read_the_digits_back():
-    # A SecureField (CardFormView.swift:112), so WDA reports its value masked
-    # or empty whatever was typed. A read-back here would either always fail or
-    # -- worse -- pass on the bullets and prove nothing. The Pay button's own
-    # enablement is what says the field validated, and `tap_pay` finds out.
     ssh = FakeSsh()
     d = driver(ssh)
     d._focus_field = lambda name: None
@@ -1789,9 +1347,6 @@ def test_type_cvv_does_not_read_the_digits_back():
 
 
 def test_type_card_leaves_the_cvv_out_of_the_read_back():
-    # The other three fields are verified and retried; this one cannot be,
-    # because WDA reports a SecureField's value as bullets whether three
-    # digits went in or none did. A check there would pass on the bullets.
     ssh = FakeSsh()
     d = driver(ssh)
     filled = []
@@ -1807,9 +1362,6 @@ def test_type_card_leaves_the_cvv_out_of_the_read_back():
     ]
 
 
-# -- paste_token --------------------------------------------------------------
-
-
 def test_paste_token_refuses_an_empty_token_file(tmp_path):
     ssh = FakeSsh()
 
@@ -1817,13 +1369,10 @@ def test_paste_token_refuses_an_empty_token_file(tmp_path):
         driver(ssh).paste_token(token_file(tmp_path, "   \n"))
 
     assert "empty" in str(excinfo.value)
-    # Before any transport at all.
     assert ssh.calls == []
 
 
 def test_paste_token_refuses_something_that_is_not_shaped_like_a_token(tmp_path):
-    # A mint that answered with an error document would otherwise be pasted as
-    # though it were a credential and come back as an instant 401.
     ssh = FakeSsh()
 
     with pytest.raises(DriverError) as excinfo:
@@ -1831,10 +1380,7 @@ def test_paste_token_refuses_something_that_is_not_shaped_like_a_token(tmp_path)
 
     message = str(excinfo.value)
     assert "JWT" in message
-    # The shape check is shared with Android; the verb is this transport's own
-    # word, so the message still says what was about to happen.
     assert "Refusing to paste it" in message
-    # The value is never echoed, whatever it turned out to be.
     assert "unauthorized" not in message
     assert ssh.calls == []
 
@@ -1846,8 +1392,6 @@ def test_paste_token_never_puts_the_token_on_a_command_line(tmp_path):
 
     d.paste_token(token_file(tmp_path))
 
-    # A command line is world-readable for as long as the process lives, on
-    # either machine, and this one never lands on the Mac's disk at all.
     assert TOKEN not in ssh.joined()
     assert "eyJhbGciOiJSUzI1NiJ9" not in ssh.joined()
     carried = [
@@ -1858,8 +1402,6 @@ def test_paste_token_never_puts_the_token_on_a_command_line(tmp_path):
     assert len(carried) == 2
     assert "pbcopy" in carried[0][0]
     assert carried[0][1] == TOKEN.encode()
-    # And the pasteboard does not keep it: left alone it outlives the cell and
-    # anything on the simulator can read it.
     assert "pbcopy" in carried[1][0]
     assert TOKEN.encode() not in carried[1][1]
 
@@ -1882,8 +1424,6 @@ def test_paste_token_clears_the_pasteboard_even_when_the_paste_fails(tmp_path):
 
 
 def test_paste_token_reports_a_field_that_never_took_the_paste(tmp_path, monkeypatch):
-    # An empty pasteboard or a long-press that missed leaves the field as it
-    # was, and the run would only find out as a 401 that reads as an SDK bug.
     monkeypatch.setattr(ios, "TOKEN_READBACK_SECONDS", 0)
     blank = SOURCE_XML.replace('value="[REDACTED-SESSION-TOKEN]"', 'value=""')
     assert "[REDACTED-SESSION-TOKEN]" not in blank
@@ -1899,8 +1439,6 @@ def test_paste_token_reports_a_field_that_never_took_the_paste(tmp_path, monkeyp
     assert TOKEN not in message
 
 
-#: The token field one tap later. Tapping it raises the keyboard, which on a
-#: short screen scrolls the field up from under the coordinates it had.
 MOVED_XML = SOURCE_XML.replace(
     'name="Session token" label="Session token" value="[REDACTED-SESSION-TOKEN]" '
     'enabled="true" visible="true" x="20" y="190"',
@@ -1911,8 +1449,6 @@ assert MOVED_XML != SOURCE_XML, "the fixture's token field changed shape"
 
 
 class MovingFieldFakeSsh(FakeSsh):
-    """Serves the token field where it starts, then where the tap left it."""
-
     def __init__(self):
         super().__init__()
         self.tapped = False
@@ -1931,9 +1467,6 @@ class MovingFieldFakeSsh(FakeSsh):
 
 
 def test_paste_token_long_presses_where_the_field_is_now(tmp_path):
-    # The tap that precedes the long press raises the keyboard, and the field
-    # moves. Held at its old centre, the long press lands on whatever took its
-    # place and there is no Paste menu at all.
     ssh = MovingFieldFakeSsh()
     d = driver(ssh)
     d.tap_identifier = lambda name, **kw: None
@@ -1946,15 +1479,6 @@ def test_paste_token_long_presses_where_the_field_is_now(tmp_path):
     ]
 
 
-#: The token field while it is focused and still empty -- the one state whose
-#: accessible name is not "Session token". Flutter merges a focused, empty
-#: field's hint into its semantics label, and the example's hint is a sample
-#: JWT prefix (example/lib/main.dart:124), so the name reads
-#: "Session token\neyJhbGciOi…". Measured on the rig 2026-08-29 against
-#: Flutter 3.47.0 / iOS 26.5, where it failed the live run's first paste.
-#: Moved as well as renamed, exactly as MOVED_XML is: the tap raises the
-#: keyboard and the field scrolls, so the coordinates say which node the long
-#: press was aimed from rather than merely that one was found.
 HINTED_XML = SOURCE_XML.replace(
     'name="Session token" label="Session token" value="[REDACTED-SESSION-TOKEN]" '
     'enabled="true" visible="true" x="20" y="190"',
@@ -1965,8 +1489,6 @@ assert HINTED_XML != SOURCE_XML, "the fixture's token field changed shape"
 
 
 class HintedFieldFakeSsh(FakeSsh):
-    """Serves the field plain, then hinted once the tap has focused it."""
-
     def __init__(self):
         super().__init__()
         self.tapped = False
@@ -1986,9 +1508,6 @@ class HintedFieldFakeSsh(FakeSsh):
 
 
 def test_paste_token_re_resolves_the_field_while_its_hint_is_in_its_name(tmp_path):
-    # The tap focuses the field, and a focused empty field carries the hint in
-    # its accessibility label. An exact match on "Session token" finds nothing
-    # in exactly the state the long press has to be aimed from.
     ssh = HintedFieldFakeSsh()
     d = driver(ssh)
     d.tap_identifier = lambda name, **kw: None
@@ -2008,17 +1527,12 @@ def test_paste_token_hands_off_to_the_sheet_once_the_field_has_taken_it(tmp_path
 
     d.paste_token(token_file(tmp_path))
 
-    # Paste out of the long-press menu, then the example's own Pay button --
-    # which is untagged, so it matches on the name WDA falls back to.
     assert tapped == [ios.PASTE_ITEM, "Pay"]
 
 
 def test_paste_token_waits_for_the_sheet_that_the_example_pay_opens(
     tmp_path, monkeypatch
 ):
-    # Failing here names the sheet. Carrying on would fail at type_card instead
-    # and name a card field, which reads as an SDK bug rather than a sheet that
-    # never opened.
     monkeypatch.setattr(ios, "SCREEN_TIMEOUT_SECONDS", 0)
     no_sheet = SOURCE_XML.replace(
         'name="paycross.sheet" label="Pay €10.00"', 'name="notTheSheet"'
@@ -2032,9 +1546,6 @@ def test_paste_token_waits_for_the_sheet_that_the_example_pay_opens(
         d.paste_token(token_file(tmp_path))
 
     assert ios.PAY_BUTTON in str(excinfo.value)
-
-
-# -- cancelling ---------------------------------------------------------------
 
 
 def test_cancel_challenge_taps_the_bar_button_then_confirms():
@@ -2057,17 +1568,9 @@ def test_cancel_form_taps_the_toolbar_cancel_then_confirms():
     d.cancel_form()
 
     assert [name for name, _ in taps] == [ios.SHEET_CANCEL, ios.CANCEL_CONFIRM]
-    # Identifier-only throughout: the label half could reach the challenge
-    # bar's item, which is labelled "Cancel" too, and the confirmation's own
-    # buttons are drawn in whatever language the session asked for.
     assert all(kw["identifier_only"] is True for _, kw in taps)
 
 
-#: The cancel confirmation. Drawn INSIDE the sheet on iOS rather than raised as
-#: an alert, which is what lets it carry identifiers at all -- and which means
-#: the Pay button never leaves the source while it is up. That is why
-#: `dismiss_cancel` asks for the dialog to be gone rather than for the button
-#: to be back: on this platform only the first half means anything.
 CANCEL_DIALOG_NODES = (
     '<XCUIElementTypeOther type="XCUIElementTypeOther" '
     'name="paycross.cancelDialog" label="Cancel Payment?" enabled="true" '
@@ -2087,12 +1590,6 @@ assert WITH_CANCEL_DIALOG != SOURCE_XML
 
 
 class DismissFakeSsh(FakeSsh):
-    """The dialog up until Continue Payment is tapped, then the plain sheet.
-
-    `stays` keeps it up, which is the failure `dismiss_cancel` has to notice:
-    a dialog that did not close leaves a cell tapping Pay through an overlay.
-    """
-
     def __init__(self, stays=False):
         super().__init__()
         self.stays = stays
@@ -2110,8 +1607,6 @@ class DismissFakeSsh(FakeSsh):
 
 
 def test_dismiss_cancel_presses_the_button_no_cell_ever_pressed():
-    # `cancel_form` and `cancel_challenge` both confirm, so `cancelDismiss`
-    # shipped untested from this side.
     ssh = DismissFakeSsh()
     d = driver(ssh)
     tapped = []
@@ -2125,29 +1620,18 @@ def test_dismiss_cancel_presses_the_button_no_cell_ever_pressed():
 
 
 def test_dismiss_cancel_waits_for_the_dialog_to_go_not_for_the_pay_button():
-    """The Pay button is in the source the whole time the dialog is up.
-
-    SwiftUI draws this confirmation as an overlay inside the sheet, so asking
-    only that the button is back would answer yes before anything closed. This
-    fake keeps the dialog up, and the action has to notice.
-    """
     ssh = DismissFakeSsh(stays=True)
     d = driver(ssh)
     d.tap_identifier = lambda name, **kw: setattr(ssh, "taps", ssh.taps + 1)
 
     with pytest.raises(DriverError) as excinfo:
-        # Zero rather than the default: `_poll`'s deadline is real time while
-        # the injected sleep is not, so a test that means to reach it says so.
         d.dismiss_cancel(timeout=0)
 
     assert "did not come back" in str(excinfo.value)
-    # And the Pay button really was there throughout, which is what makes the
-    # assertion above about the dialog rather than about the button.
     assert any(ios._is_pay_button(n) for n in tree.parse_wda(WITH_CANCEL_DIALOG))
 
 
 def test_cancel_form_reaches_the_toolbar_item_and_not_the_challenge_bar():
-    # The end-to-end version of the assertion above, through the real finder.
     ssh = FakeSsh()
 
     node = driver(ssh)._find(ios.SHEET_CANCEL, identifier_only=True)
@@ -2156,21 +1640,14 @@ def test_cancel_form_reaches_the_toolbar_item_and_not_the_challenge_bar():
     assert node.bounds == (20, 76, 97, 112)
 
 
-# -- evidence -----------------------------------------------------------------
-
-
-#: simctl says this on *stderr* even when it works, which is why the frame and
-#: the complaint have to arrive separated rather than merged.
 SIMCTL_NOTE = "Note: No display specified. Defaulting to display: LCD\n"
 
 
 def console_response(size="9000", body="flutter: up\n"):
-    """What the console round trip puts on stdout: size, marker, the window."""
     return f"{size}\n{ios.CONSOLE_SIZE}\n{body}"
 
 
 def shot_response(frame="", said=SIMCTL_NOTE):
-    """What the screenshot round trip puts on stdout: frame, marker, stderr."""
     return f"{frame}\n{ios.SHOT_STDERR}\n{said}"
 
 
@@ -2191,10 +1668,6 @@ def test_screenshot_accepts_the_line_wrapping_base64_adds():
 
 
 def test_screenshot_names_what_simctl_said_when_it_took_no_frame():
-    # The failure that started this: simctl's stderr went to /dev/null, `&&`
-    # skipped base64, and `rm -f` made the exit status 0 -- so the answer was
-    # an empty string, b64decode("") is b"", and evidence.write() would file a
-    # 0-byte PNG as though it were a frame of the sheet.
     ssh = FakeSsh(shot_response(said="Invalid device: NO-SUCH-UDID\n"))
 
     with pytest.raises(DriverError) as excinfo:
@@ -2206,7 +1679,6 @@ def test_screenshot_names_what_simctl_said_when_it_took_no_frame():
 
 
 def test_screenshot_refuses_an_answer_that_never_arrived():
-    # No marker either: the round trip itself failed.
     ssh = FakeSsh("")
 
     with pytest.raises(DriverError):
@@ -2214,11 +1686,6 @@ def test_screenshot_refuses_an_answer_that_never_arrived():
 
 
 def test_screenshot_refuses_to_hand_back_an_error_message_as_a_png():
-    # b64decode without validation discards every character outside the
-    # alphabet, so simctl's complaint decodes to a few bytes of garbage and is
-    # written into evidence as though it were a frame. This particular
-    # complaint really does survive that: 41 alphabet characters, which is a
-    # legal length once the spaces and the colon are thrown away.
     said = "Unable to boot device in current state: Shutdown\n"
     assert base64.b64decode("".join(said.split())), "the string stopped being a trap"
 
@@ -2231,8 +1698,6 @@ def test_screenshot_refuses_to_hand_back_an_error_message_as_a_png():
 
 
 def test_logs_since_before_launch_refuses_to_read_the_whole_console_log():
-    # Byte 0 is a previous cell's output, and crash_lines would count it: one
-    # cell's crash would fail every later cell in the matrix.
     ssh = FakeSsh()
 
     with pytest.raises(DriverError) as excinfo:
@@ -2243,10 +1708,6 @@ def test_logs_since_before_launch_refuses_to_read_the_whole_console_log():
 
 
 def test_a_launch_that_fails_early_drops_the_previous_cells_console_mark():
-    # The console log is truncated by _start_console and by nothing else, so a
-    # launch that fails before it leaves the previous cell's window in place
-    # and readable. Handing that back would fail this cell for the last one's
-    # crash -- and then fail the interleaved control the same way.
     ssh = FakeSsh()
     d = launched(ssh)
     assert d._console_from == CONSOLE_MARK
@@ -2267,8 +1728,6 @@ def test_logs_since_reads_the_console_appended_since_this_launch():
     text = d.logs_since(datetime.now(timezone.utc) - timedelta(seconds=90))
 
     console = ssh.calls[0]
-    # From the offset the log stood at when this cell launched, so a previous
-    # cell's crash cannot fail this one. `tail -c +N` counts from one.
     assert f"tail -c +{CONSOLE_MARK + 1} {ios.CONSOLE_LOG}" in console
     assert "flutter: hello" in text
 
@@ -2281,14 +1740,12 @@ def test_logs_since_also_asks_the_unified_log_for_a_window_in_seconds():
 
     command = ssh.calls[1]
     assert "log show" in command
-    assert "--last 9" in command  # 90 s plus the 5 s of slack
+    assert "--last 9" in command
     assert 'process == "Runner"' in command
     assert "log output" in text
 
 
 def test_logs_since_lets_the_tools_own_complaints_into_the_evidence():
-    # Discarded, a `log show` that refused and a `tail` that found no file both
-    # read as a quiet run.
     ssh = FakeSsh(console_response(), "log output\n")
 
     launched(ssh).logs_since(datetime.now(timezone.utc))
@@ -2299,8 +1756,6 @@ def test_logs_since_lets_the_tools_own_complaints_into_the_evidence():
 
 
 def test_logs_since_refuses_a_console_that_never_grew_past_the_mark():
-    # A Flutter app prints on every launch, so an empty window means the
-    # capture never attached -- and criterion 3 would pass on nothing.
     ssh = FakeSsh(console_response(size=str(CONSOLE_MARK), body=""), "alive\n")
 
     with pytest.raises(DriverError) as excinfo:
@@ -2310,9 +1765,6 @@ def test_logs_since_refuses_a_console_that_never_grew_past_the_mark():
 
 
 def test_logs_since_calls_a_console_log_that_vanished_a_rig_fault():
-    # `tail` reports its own failure into the section now, so an emptiness test
-    # on the text alone would read "No such file or directory" as app output.
-    # The size is asked for separately and is what decides.
     gone = "wc: /Users/mikz/work/e2e/ios/run/console.log: No such file"
     ssh = FakeSsh(console_response(size=gone, body="tail: No such file\n"), "alive\n")
 
@@ -2334,9 +1786,6 @@ def test_logs_since_names_a_dead_capture_when_the_console_is_empty():
 
 
 def test_logs_since_still_returns_a_console_that_outlived_its_capture():
-    # The capture exits when the app does, and an app that died is exactly what
-    # criterion 3 is looking for. Checking liveness first would report the one
-    # cell that really crashed as a rig fault and lose the evidence.
     crash = "Fatal error: Unexpectedly found nil\n"
     ssh = FakeSsh(console_response(body=crash), "log output\n")
 
@@ -2346,14 +1795,7 @@ def test_logs_since_still_returns_a_console_that_outlived_its_capture():
     assert not any("kill -0" in c for c in ssh.calls)
 
 
-# -- D3 -----------------------------------------------------------------------
-
-
 def test_the_two_actions_this_platform_cannot_have_still_refuse():
-    # D3 implements background, rotate and kill_activity here. These two are
-    # not "not yet": the simulator shares the host's network (R6) and iOS has
-    # no activity to not keep, so both refusals are permanent and each says
-    # which platform the cell using it belongs on.
     d = driver(FakeSsh())
 
     for call in (lambda: d.airplane(True), lambda: d.dont_keep_activities(True)):
@@ -2361,8 +1803,6 @@ def test_the_two_actions_this_platform_cannot_have_still_refuse():
             call()
 
 
-#: The example app's result screen as a build WITHOUT the define renders it:
-#: the human-readable outcome, which is what `LEGACY_LABEL_PREFIXES` names.
 LEGACY_XML = (
     '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Runner" '
     'label="Runner" enabled="true" visible="true" x="0" y="0" width="402" '
@@ -2375,9 +1815,6 @@ LEGACY_XML = (
 
 
 def test_a_wait_that_times_out_on_a_legacy_label_names_the_missing_define():
-    # Same failure as on Android: without --dart-define=PAYCROSS_E2E=true the
-    # app shows its human-readable outcome, and "no contract label" after
-    # 180 s reads as a hang rather than as the wrong build.
     ssh = FakeSsh(xml=LEGACY_XML)
 
     with pytest.raises(DriverError) as excinfo:
@@ -2396,8 +1833,6 @@ def test_a_wait_that_times_out_on_nothing_at_all_does_not_blame_the_build():
 
 
 def test_the_rig_host_and_remote_env_are_overridable_from_the_environment(monkeypatch):
-    # `mac` is one ssh config's alias and MAC_ENV hardcodes this Mac's Xcode
-    # and Homebrew paths. A second rig must not need a fork of this file.
     monkeypatch.setenv("PAYCROSS_E2E_SSH_HOST", "buildbox")
     monkeypatch.setenv("PAYCROSS_E2E_MAC_ENV", "export PATH=/usr/local/bin:$PATH; ")
     try:
@@ -2414,12 +1849,7 @@ def test_the_rig_host_and_remote_env_fall_back_to_this_workstation():
     assert "DEVELOPER_DIR=/Applications/Xcode.app" in ios.MAC_ENV
 
 
-# --- Plan B: the Driver contract is enforced at construction --------------
-
-
 def test_the_ios_driver_scopes_its_crash_markers_to_the_bundle_it_was_given():
-    # `bundle`, not BUNDLE: a driver constructed against another build must
-    # not match `ANR in`/`Fatal error:` lines belonging to the default one.
     made = ios.IosDriver(ssh=FakeSsh(), bundle="com.example.other")
 
     assert made.package == "com.example.other"
@@ -2434,12 +1864,7 @@ def test_the_ios_driver_waits_through_the_sleep_it_was_given():
     assert slept == [0.25]
 
 
-# --- Plan B: relaunching without losing the log window --------------------
-
-
 def test_relaunch_does_not_truncate_the_console_log():
-    # A cell that relaunches halfway through would otherwise throw away the
-    # first half of its own criterion-3 evidence.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
@@ -2457,8 +1882,6 @@ def test_relaunch_leaves_the_console_mark_where_the_launch_put_it():
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
     was = d._console_from
-    # A second, larger mark: the log has grown since the launch, and honouring
-    # it would start this cell's window halfway through itself.
     ssh.outputs.extend(launch_outputs(stopping=True, mark=CONSOLE_MARK + 4096))
 
     d.relaunch()
@@ -2467,7 +1890,6 @@ def test_relaunch_leaves_the_console_mark_where_the_launch_put_it():
 
 
 def test_relaunch_still_replaces_the_capture_and_the_session():
-    # The old --console-pty is bound to the app instance being replaced.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.launch()
@@ -2480,22 +1902,7 @@ def test_relaunch_still_replaces_the_capture_and_the_session():
     assert any("terminate" in c for c in ssh.calls)
 
 
-# --- the locale guard, and its absence ------------------------------------
-
-
 def test_launch_no_longer_reads_or_refuses_a_locale():
-    """The guard the identifier switch removed, asserted by its absence.
-
-    It refused any simulator not in English, because the sheet's Pay button and
-    the re-arm banner were matched as English strings. Both are identifiers
-    now, and a simulator drawing French is a case the rig has to be able to
-    MEASURE rather than refuse -- D6 exists to do exactly that.
-
-    What the guard was really protecting is the amount half of `sheet_rearmed`,
-    which is still written in one region's spelling. That is diagnosed in
-    `wait_rearmed` instead, where it can name the amount the sheet was showing
-    and blame the rig rather than the SDK.
-    """
     ssh = FakeSsh(*launch_outputs())
 
     ios.IosDriver(ssh=ssh, sleep=lambda _: None).launch()
@@ -2504,7 +1911,6 @@ def test_launch_no_longer_reads_or_refuses_a_locale():
 
 
 def menu_item(name: str) -> tree.Node:
-    """One edit-menu item as WebDriverAgent describes it."""
     return tree.parse_wda(
         f'<XCUIElementTypeMenuItem type="XCUIElementTypeMenuItem" name="{name}" '
         f'label="{name}" x="0" y="0" width="80" height="40" visible="true"/>'
@@ -2512,40 +1918,18 @@ def menu_item(name: str) -> tree.Node:
 
 
 def test_the_paste_item_is_matched_in_every_language_the_app_can_run_in():
-    # UIKit's edit menu is localized by the APP's language. Matched in English
-    # alone it took the driver with it: a demo launched with
-    # `-AppleLanguages "(fr)"` offers `Coller`, and `paste_token` failed there
-    # with "no element named 'Paste'" before any cell reached the sheet.
-    # Measured on the simulator 2026-09-08.
     assert ios._is_paste_item(menu_item("Paste"))
     assert ios._is_paste_item(menu_item("Coller"))
-    # The item beside it in the French menu, which is not a paste.
     assert not ios._is_paste_item(menu_item("Scanner du texte"))
-    # And a failure names both, because "no element named 'Paste'" on a French
-    # simulator is a true sentence that sends the reader the wrong way.
     assert ios.PASTE_ITEM == "Paste/Coller"
 
 
 def test_the_demos_own_strings_do_not_move_with_the_device_language():
-    # The rule is which side of the app boundary drew the string. The demo
-    # ships no localizations, so its token field and its Pay button stay
-    # English on a French device -- confirmed by the same probe that found
-    # `Coller`. Pinned here because the obvious over-correction after that
-    # finding is to start matching these in French too, and then nothing
-    # matches at all.
     assert ios.TOKEN_FIELD == "Session token"
     assert ios.EXAMPLE_PAY == "Pay"
 
 
-# -- the device language, which on iOS is a launch argument -------------------
-
-
 def test_device_language_touches_the_simulator_at_all_before_the_next_launch():
-    # Nothing is written. `AppleLanguages` is a GLOBAL-domain key: through any
-    # UserDefaults, a private suite included, it lands in the simulator's own
-    # .GlobalPreferences.plist and relocalizes every later process on that
-    # device -- and `removePersistentDomain` does not undo it. Measured
-    # 2026-09-07; the repair was a `defaults write -g` by hand.
     ssh = FakeSsh()
     d = driver(ssh)
 
@@ -2555,9 +1939,6 @@ def test_device_language_touches_the_simulator_at_all_before_the_next_launch():
 
 
 def test_the_next_launch_hands_the_app_its_language_as_argv():
-    # `simctl launch` passes everything after the bundle id to the app, and
-    # `-AppleLanguages "(fr)"` there lands in UserDefaults' ARGUMENT domain --
-    # which is what the SDK reads since PayCross 0.7.1.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.device_language("fr")
@@ -2569,11 +1950,6 @@ def test_the_next_launch_hands_the_app_its_language_as_argv():
 
 
 def test_the_language_reaches_the_app_as_one_argument():
-    # The parentheses are old-style plist syntax, which is how UserDefaults
-    # parses an array out of argv -- they are not a shell construct. Unquoted,
-    # the remote shell would read them as a subshell and the app would be
-    # handed nothing. Split the way that shell would split it, so the
-    # assertion is what the app receives rather than what was typed.
     ssh = FakeSsh(*launch_outputs())
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
     d.device_language("fr-FR")
@@ -2595,7 +1971,6 @@ def test_device_language_default_drops_the_argument_again():
 
     started = next(c for c in ssh.calls if "--console-pty" in c)
     assert "AppleLanguages" not in started
-    # And nothing is left where the bundle id used to end the line.
     assert f"{ios.BUNDLE} >>" in started
 
 
@@ -2608,12 +1983,7 @@ def test_a_driver_that_was_never_told_a_language_launches_as_it_always_did():
     assert "AppleLanguages" not in started
 
 
-# -- the French sheet ---------------------------------------------------------
-
-
 def test_the_sheet_is_french_when_the_pay_button_says_payer():
-    # iOS writes the whole caption on the button's own label, so the geometry
-    # rule in `tree.caption` finds it on the node it started from.
     french = SOURCE_XML.replace("Pay \u20ac10.00", "Payer 10,00 \u20ac")
     assert french != SOURCE_XML
     ssh = FakeSsh(xml=french)
@@ -2628,9 +1998,6 @@ def test_the_sheet_is_not_french_on_the_english_fixture():
 
 
 def test_wait_rearmed_blames_the_rig_for_an_amount_it_cannot_spell():
-    # The replacement for the guard. A French sheet reads `10,00 €` where the
-    # runner computes `€10.00`, and answering False there would report "the
-    # sheet never re-armed" about a sheet that plainly had.
     french = SOURCE_XML.replace("Total, \u20ac10.00", "Total, 10,00 \u20ac")
     assert french != SOURCE_XML
     ssh = FakeSsh(xml=french)
@@ -2641,15 +2008,11 @@ def test_wait_rearmed_blames_the_rig_for_an_amount_it_cannot_spell():
     message = str(excinfo.value)
     assert "10,00" in message
     assert "the rig, not the SDK" in message
-    # The rule lives on the base driver now; the noun is what each platform
-    # contributes, and it is the half a shared helper can silently lose.
     assert "the simulator is not drawing" in message
     assert ios.IosDriver.device_noun == "simulator"
 
 
 def test_wait_rearmed_still_answers_false_for_a_sheet_that_did_not_re_arm():
-    # The distinction the message above rests on: a cell that really measured
-    # "no re-arm" has a verdict to report, and must not be handed a rig fault.
     no_banner = SOURCE_XML.replace('name="paycross.errorBanner"', 'name="gone"')
     assert no_banner != SOURCE_XML
 
@@ -2661,17 +2024,9 @@ def test_wait_rearmed_still_answers_false_for_a_sheet_that_did_not_re_arm():
     )
 
 
-# -- present_token, tap_example_pay, enter_token -------------------------------
-
-
 def test_present_token_does_not_wait_for_a_sheet_that_will_never_open(
     tmp_path, monkeypatch
 ):
-    # R9: on iOS a malformed or expired token is refused at
-    # PaymentSheet.swift:42-51, before `present` on line 65, so no sheet ever
-    # appears. `paste_token`'s wait for one would spend a minute and then
-    # report "payButton never appeared" instead of the label the app has been
-    # showing the whole time.
     monkeypatch.setattr(ios, "SCREEN_TIMEOUT_SECONDS", 0)
     no_sheet = SOURCE_XML.replace(
         'name="paycross.sheet" label="Pay €10.00"', 'name="notTheSheet"'
@@ -2684,7 +2039,6 @@ def test_present_token_does_not_wait_for_a_sheet_that_will_never_open(
     d.present_token(token_file(tmp_path))
 
     assert tapped == [ios.PASTE_ITEM, "Pay"]
-    # And the same screen still fails `paste_token`, which is the difference.
     other = driver(FakeSsh(xml=no_sheet))
     other.tap_identifier = lambda name, **kw: None
     with pytest.raises(DriverError, match="paycross.payButton"):
@@ -2698,11 +2052,8 @@ def test_present_token_pastes_exactly_as_paste_token_does(tmp_path):
 
     d.present_token(token_file(tmp_path))
 
-    # The token travels on stdin and never reaches either command line.
     assert not any(TOKEN in command for command in ssh.calls)
     carried = [s for s in ssh.stdins if s]
-    # Copied in, then cleared: left alone the pasteboard outlives the cell and
-    # anything on the simulator can read it.
     assert carried == [TOKEN.encode("utf-8"), b" "]
 
 
@@ -2735,8 +2086,6 @@ def test_enter_token_types_the_literal_verbatim():
 
 
 def test_enter_token_never_reads_a_file(tmp_path):
-    # Deliberately not through `read_token`: what the SDK does with something
-    # that is *not* a credential is the whole point of the cells that use it.
     missing = str(tmp_path / "absent.token")
     ssh = FakeSsh()
 
@@ -2753,8 +2102,6 @@ def test_enter_token_takes_a_literal_that_paste_token_would_refuse(tmp_path):
 
 
 def test_enter_token_taps_the_field_before_it_types():
-    # The field only takes keys once it is focused, and it is the one element
-    # whose accessible name is not stable -- see `_is_token_field`.
     ssh = FakeSsh()
     naps = []
 
@@ -2764,15 +2111,7 @@ def test_enter_token_taps_the_field_before_it_types():
     assert naps == [ios.SETTLE_SECONDS, ios.SETTLE_SECONDS]
 
 
-# -- airplane and wait_acs ----------------------------------------------------
-
-
 def test_airplane_refuses_and_says_why(tmp_path):
-    # R6: the simulator shares the host's network, and every route to cutting
-    # it -- Network Link Conditioner, pfctl -- needs sudo or the GUI. The
-    # runner reads NotImplementedError as an authoring fault and spends no
-    # control check on it, which is right: every network-cut cell is
-    # `platforms: [android]`.
     with pytest.raises(NotImplementedError) as excinfo:
         driver(FakeSsh()).airplane(True)
 
@@ -2780,10 +2119,6 @@ def test_airplane_refuses_and_says_why(tmp_path):
 
 
 def test_wait_acs_waits_for_the_challenge_bar_without_answering_it():
-    # R12: during a challenge `ThreeDSWebViewController` sets
-    # accessibilityViewIsModal, so the rest of the tree is gone; the nav bar's
-    # title is "Payment", which says nothing. `threeDSCancel` exists for a
-    # challenge and only for a challenge.
     ssh = FakeSsh()
     d = driver(ssh)
     d.tap_identifier = lambda name, **kw: pytest.fail("wait_acs must not tap")
@@ -2804,9 +2139,6 @@ def test_wait_acs_says_which_page_never_came():
     assert ios.THREE_DS_CANCEL in str(excinfo.value)
 
 
-# -- D4: the wallet this platform does not have -------------------------------
-
-
 @pytest.mark.parametrize(
     "name, args",
     [
@@ -2816,22 +2148,13 @@ def test_wait_acs_says_which_page_never_came():
     ],
 )
 def test_the_google_pay_vocabulary_refuses_and_says_it_is_android_only(name, args):
-    # Overridden here rather than left to `Driver`'s declaration for the same
-    # reason `airplane` is: the refusal names the platform's own reason. The
-    # iOS SDK has no wallet at all, and Apple Pay is an explicit campaign
-    # non-goal -- so a D4 cell must be `platforms: [android]`, and a cell that
-    # forgets is an authoring fault that spends no control check.
     with pytest.raises(NotImplementedError) as excinfo:
         getattr(driver(FakeSsh()), name)(*args)
 
     assert "Android-only" in str(excinfo.value)
 
 
-# -- D3: lifecycle ------------------------------------------------------------
-
-
 def active_app(bundle):
-    """What `GET /wda/activeAppInfo` answers with, envelope and all."""
     return json.dumps({"value": {"name": "", "pid": 8580, "bundleId": bundle}})
 
 
@@ -2840,12 +2163,6 @@ OUR_APP = active_app("com.paycross.flutterdemo")
 
 
 def test_the_foreground_bundle_is_asked_of_wda_directly():
-    # NOT read off `/source`'s root element. Measured on the rig 2026-08-31:
-    # WebDriverAgent roots the source at an XCUIElementTypeApplication whose
-    # `name` is the app's DISPLAY name ("PayCross Demo"), not its bundle id --
-    # so a comparison against the bundle would never match, `_wait_foreground`
-    # would time out on every resume, and `background` would fail every time.
-    # `activeAppInfo` answers the question this method is named for.
     ssh = FakeSsh(OUR_APP)
 
     assert driver(ssh)._foreground_bundle() == "com.paycross.flutterdemo"
@@ -2853,8 +2170,6 @@ def test_the_foreground_bundle_is_asked_of_wda_directly():
 
 
 def test_the_foreground_bundle_needs_no_session():
-    # It is unsessioned on WDA's side, and `background`'s first half asks it
-    # about a moment when the app under test is not even frontmost.
     assert unlaunched(FakeSsh(SPRINGBOARD))._foreground_bundle() == (
         "com.apple.springboard"
     )
@@ -2888,9 +2203,6 @@ def test_wait_foreground_keeps_looking_until_the_app_is_back():
 
 
 def test_background_goes_home_waits_and_re_activates():
-    # `activate` attaches to the running process. Anything named "launch" here
-    # means terminate-then-launch for XCUIApplication, which would take the
-    # --console-pty capture with it and leave criterion 3 reading an empty log.
     ssh = FakeSsh(
         json.dumps({"value": None}), SPRINGBOARD, json.dumps({"value": None}), OUR_APP
     )
@@ -2898,8 +2210,6 @@ def test_background_goes_home_waits_and_re_activates():
 
     driver(ssh, naps).background(60)
 
-    # Unsessioned, and `apps/activate` sessioned: this WDA answers `unknown
-    # command` to either one written the other way round.
     assert "http://127.0.0.1:8100/wda/homescreen" in ssh.calls[0]
     assert "/session/" not in ssh.calls[0]
     assert "/wda/activeAppInfo" in ssh.calls[1]
@@ -2912,7 +2222,6 @@ def test_background_goes_home_waits_and_re_activates():
         60,
         ios.BACKGROUND_SETTLE_SECONDS,
     ]
-    # Nothing that would restart the app and take the console capture with it.
     assert "apps/launch" not in ssh.joined()
     assert "simctl terminate" not in ssh.joined()
 
@@ -2946,8 +2255,6 @@ def test_rotate_turns_back_from_landscape():
 
 
 def test_the_settle_waits_are_this_rigs_own():
-    # The Android values are that driver's; the two rigs settle at different
-    # speeds and copying one onto the other hides which was measured.
     assert (ios.BACKGROUND_SETTLE_SECONDS, ios.ROTATE_SETTLE_SECONDS) == (2, 2)
 
 
@@ -2963,7 +2270,6 @@ def test_kill_activity_terminates_the_app():
 
 
 def test_dont_keep_activities_refuses_and_says_why():
-    # An Android developer option. There is no activity to not keep.
     with pytest.raises(NotImplementedError) as excinfo:
         driver(FakeSsh()).dont_keep_activities(True)
 
@@ -2973,12 +2279,6 @@ def test_dont_keep_activities_refuses_and_says_why():
 
 
 def test_the_unified_log_window_is_capped():
-    # Measured in D2: a cell whose run straddled a host sleep asked simctl for
-    # `--last 35354s` -- 9.8 hours. The window is anchored to `launch()`, so
-    # it tracks the cell's own duration and normally that is fine; what it has
-    # no bound on is the host clock jumping. The harm is asking simctl for a
-    # 9.8-hour window at all, which is slow and fragile, not the volume that
-    # comes back -- a sleeping simulator logs almost nothing.
     ssh = FakeSsh(console_response(), "log output\n")
     slept = datetime.now(timezone.utc) - timedelta(seconds=35354)
 
@@ -2988,14 +2288,10 @@ def test_the_unified_log_window_is_capped():
 
 
 def test_the_cap_clears_the_longest_cell_the_matrix_can_run():
-    # It must never truncate a cell that really ran that long. The widest
-    # per-cell budget in the matrix is session_expired_server's ~3026 s.
     assert ios.LOG_WINDOW_CAP_SECONDS > 3026
 
 
 def test_a_capped_window_says_so_in_the_evidence_header():
-    # The header names the number actually asked for, so nobody reading the
-    # log later measures the cell's duration from it.
     ssh = FakeSsh(console_response(), "log output\n")
     slept = datetime.now(timezone.utc) - timedelta(seconds=35354)
 
@@ -3016,10 +2312,6 @@ def test_an_ordinary_cell_is_not_capped_and_says_nothing_about_it():
 
 
 def test_the_console_half_is_never_capped():
-    # The cap is on the unified log alone. The console window is a byte offset
-    # from this launch, and `relaunch()` deliberately keeps that mark so a cell
-    # that relaunches halfway keeps its own criterion-3 evidence. Bounding the
-    # unified window must not undo that.
     ssh = FakeSsh(console_response(), "log output\n")
     slept = datetime.now(timezone.utc) - timedelta(seconds=35354)
 
@@ -3029,9 +2321,6 @@ def test_the_console_half_is_never_capped():
 
 
 def test_launch_refuses_a_simulator_a_previous_cell_left_turned():
-    # Measured on the D3 probe: a cell rotated once and did not rotate back,
-    # and the interleaved control after it failed with "no element named
-    # 'payButton' within 60s" -- a rig fault wearing an SDK finding's clothes.
     ssh = FakeSsh(*launch_outputs(orientation=json.dumps({"value": "LANDSCAPE"})))
     d = ios.IosDriver(ssh=ssh, sleep=lambda _: None)
 
