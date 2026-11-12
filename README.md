@@ -10,15 +10,18 @@ Cards on both platforms, Google Pay on Android, and Apple Pay on iOS.
 
 ```yaml
 dependencies:
-  paycross_flutter: ^0.7.5
+  paycross_flutter: ^0.8.0
 ```
 
 Then raise both platform minimums: `minSdk = 24` in your app's
-`android/app/build.gradle.kts`, and `platform :ios, '16.0'` at the top of your
-`ios/Podfile` with the Xcode deployment target to match. Neither default is high
-enough, and both fail late — at the manifest merge and at pod resolution —
-rather than at `pub get`. The Flutter guide linked below covers both, and the
-Swift Package Manager route.
+`android/app/build.gradle.kts`, and an iOS deployment target of at least 16.0.
+Neither default is high enough, and both fail late — at the manifest merge and
+at package resolution — rather than at `pub get`. iOS resolves the native SDK
+through Swift Package Manager only, the default from Flutter 3.44. An app that
+turned Swift Package Manager off must turn it on again: remove
+`enable-swift-package-manager: false` from the `flutter: config:` block of its
+`pubspec.yaml`, or run `flutter config --enable-swift-package-manager`. The
+Flutter guide linked below covers both platforms.
 
 ## Quickstart
 

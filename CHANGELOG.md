@@ -8,6 +8,14 @@
   asking for before it is opened. Every demo before it ran the sheet from
   paycross-android 0.8.4 and PayCross 0.7.3.
 
+## 0.8.0
+
+**Breaking:** iOS uses Swift Package Manager only; the plugin no longer ships a
+CocoaPods podspec. Flutter 3.44 and later use Swift Package Manager by default.
+An app that turned it off must turn it on again: remove
+`enable-swift-package-manager: false` from the `flutter: config:` block of its
+`pubspec.yaml`, or run `flutter config --enable-swift-package-manager`.
+
 ## 0.7.5
 
 Pins the native releases paycross-android 0.8.6 and PayCross 0.8.1. No API

@@ -107,7 +107,7 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
 
     private static let state = PluginState()
 
-    private static let pluginVersion = "0.7.5"
+    private static let pluginVersion = "0.8.0"
 
     private static let errorNotConfigured = "paycross_not_configured"
     private static let errorBusy = "paycross_busy"

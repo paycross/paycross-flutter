@@ -25,11 +25,6 @@ void main() {
     );
 
     final sites = <String, String>{
-      'ios/paycross_flutter.podspec': _the(
-        'podspec',
-        'ios/paycross_flutter.podspec',
-        RegExp(r"^\s*s\.version\s*=\s*'(\S+)'", multiLine: true),
-      ),
       'ios/paycross_flutter/Sources/paycross_flutter/PayCrossPlugin.swift': _the(
         'the Swift constant',
         'ios/paycross_flutter/Sources/paycross_flutter/PayCrossPlugin.swift',
