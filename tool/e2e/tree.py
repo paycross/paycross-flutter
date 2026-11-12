@@ -67,7 +67,7 @@ def parse_uiautomator(xml: str | bytes) -> list[Node]:
                 bounds=(x1, y1, x2, y2),
                 # uiautomator has no `visible` attribute.
                 visible=x2 > x1 and y2 > y1,
-                # WHY: uiautomator writes checked on every node; only checkable ones
+                # Uiautomator writes checked on every node; only checkable ones
                 # have a state.
                 checked=(
                     element.get("checked") == "true"

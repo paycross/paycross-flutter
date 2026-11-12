@@ -16,7 +16,7 @@ PLATFORMS = ("android", "ios")
 BARE_ACTIONS = frozenset(
     {
         "paste_token",
-        # WHY: on iOS a malformed or expired token is refused before the sheet
+        # On iOS a malformed or expired token is refused before the sheet
         # appears, so waiting for a sheet would time out instead.
         "present_token",
         "tap_example_pay",
@@ -26,7 +26,7 @@ BARE_ACTIONS = frozenset(
         "tap_pay",
         "tap_google_pay",
         "select_saved_card",
-        # WHY: a confirmed removal can leave the row in place behind an error
+        # A confirmed removal can leave the row in place behind an error
         # banner, so the verb checks the row is gone.
         "remove_saved_card",
         "save_card",
@@ -46,20 +46,20 @@ EXPECTATIONS = frozenset(
         "google_pay",
         "no_google_pay",
         "saved_card",
-        # WHY: only the Pay button's verb is matched; the amount beside it is
+        # Only the Pay button's verb is matched; the amount beside it is
         # formatted by a different rule and is not translated.
         "french_sheet",
     }
 )
 
-# WHY: the 200-character cap is far below a real session token, so a live
+# The 200-character cap is far below a real session token, so a live
 # credential cannot be committed in a cell file. The character class is
 # limited because the device shell re-splits and expands what `input text`
 # is given: any other character would be typed mangled.
 _LITERAL_TOKEN = re.compile(r"[A-Za-z0-9._~-]{1,200}")
 
 
-# WHY: kept as a literal because the runner cannot read the sandbox's outcome
+# Kept as a literal because the runner cannot read the sandbox's outcome
 # constants. A typo is rejected at load time by membership, not a shape check.
 ACS_OUTCOMES = frozenset(
     {
@@ -103,7 +103,7 @@ def _is_positive_seconds(arg: str) -> bool:
         seconds = float(arg)
     except ValueError:
         return False
-    # WHY: `inf` parses as a float and would hang the run rather than time it out.
+    # `inf` parses as a float and would hang the run rather than time it out.
     return math.isfinite(seconds) and seconds > 0
 
 
@@ -113,7 +113,7 @@ def _is_on_off(arg: str) -> bool:
 
 DEVICE_LANGUAGE_DEFAULT = "default"
 
-# WHY: the Android SDK applies this shape rule before it formats an amount with a
+# The Android SDK applies this shape rule before it formats an amount with a
 # language tag, so a shape check is used rather than a list of languages.
 _DEVICE_LANGUAGE = re.compile(r"[A-Za-z]{2,3}(-[A-Za-z0-9]+)*")
 
@@ -135,7 +135,7 @@ ARG_ACTIONS = MappingProxyType(
         "acs": (_is_acs_outcome, f"one of {sorted(ACS_OUTCOMES)}"),
         "airplane": (_is_on_off, "'on' or 'off'"),
         "background": (_is_positive_seconds, "a positive number of seconds"),
-        # WHY: neither the Android locale list nor the iOS launch argument takes
+        # Neither the Android locale list nor the iOS launch argument takes
         # effect on a running app, so the cell relaunches before it reads the sheet.
         "device_language": (
             _is_device_language,
@@ -147,7 +147,7 @@ ARG_ACTIONS = MappingProxyType(
             "at most 200 characters of A-Z a-z 0-9 . _ ~ -",
         ),
         "expect": (_is_expectation, f"one of {sorted(EXPECTATIONS)}"),
-        # WHY: a session token's JWT `exp` falls before its session's
+        # A session token's JWT `exp` falls before its session's
         # `expires_at`, so an expired token in an open session needs that gap
         # waited out.
         "wait": (_is_positive_seconds, "a positive number of seconds"),
@@ -157,19 +157,19 @@ ARG_ACTIONS = MappingProxyType(
 )
 
 
-# WHY: these settings change the device, not the app, and a failed cell must
+# These settings change the device, not the app, and a failed cell must
 # still restore them or every later cell fails.
 TEARDOWN = frozenset(
     {
         ("airplane", "off"),
         ("dont_keep_activities", "off"),
-        # WHY: a per-app locale outlives the cell and draws every later sheet in
+        # A per-app locale outlives the cell and draws every later sheet in
         # its language.
         ("device_language", DEVICE_LANGUAGE_DEFAULT),
     }
 )
 
-# WHY: a cell that could mute a real crash marker could pass through a crash, so
+# A cell that could mute a real crash marker could pass through a crash, so
 # this set holds only the marker the developer option produces on purpose.
 TOLERABLE_CRASH_MARKERS = frozenset({"Force finishing activity"})
 
@@ -213,7 +213,7 @@ _MERCHANT_VALUES = {
 
 MERCHANT_KEYS = frozenset(_MERCHANT_VALUES)
 
-# WHY: `eci` and `version` are left out so that a sandbox upgrade cannot show
+# `eci` and `version` are left out so that a sandbox upgrade cannot show
 # up as a finding.
 _THREEDS_VALUES = {
     "outcome": (_is_non_empty_str, "a non-empty string"),
@@ -230,7 +230,7 @@ _EXPIRY = re.compile(r"^(0[1-9]|1[0-2])/\d{2}$")
 _CVV = re.compile(r"^\d{3,4}$")
 _CURRENCY = re.compile(r"^[A-Z]{3}$")
 
-# WHY: labels are matched whole and never split on ':', because an
+# Labels are matched whole and never split on ':', because an
 # `unrecognized(<raw>)` token may itself contain colons.
 LABEL_RE = re.compile(
     r"^(?:"
@@ -248,11 +248,11 @@ LABEL_RE = re.compile(
 )
 
 ANY_LABEL = "<any>"
-# WHY: on Android the process-kill cell delivers no result, so silence is its pass.
+# On Android the process-kill cell delivers no result, so silence is its pass.
 NO_LABEL = "<none>"
 LABEL_SENTINELS = frozenset({ANY_LABEL, NO_LABEL})
 
-# WHY: only ever last in a label, so `.*` cannot swallow a later field.
+# Only ever last in a label, so `.*` cannot swallow a later field.
 TXN_PLACEHOLDER = "<txn>"
 
 
@@ -301,7 +301,7 @@ class Cell:
     card: Card
     session: Session
     actions: tuple[Action, ...]
-    # WHY: ignores the per-platform overrides; read a run's expectation through
+    # Ignores the per-platform overrides; read a run's expectation through
     # expected_for.
     expected: Expected
     overrides: dict[str, dict[str, Any]]
@@ -356,7 +356,7 @@ def _check_label(label: Any, where: str) -> None:
         return
     if not LABEL_RE.fullmatch(label):
         raise CellError(f"{where}: label {label!r} is not in the frozen vocabulary")
-    # WHY: checked here, not on the constructed Expected, so override labels are
+    # Checked here, not on the constructed Expected, so override labels are
     # held to it too.
     if label.count(TXN_PLACEHOLDER) > 1:
         raise CellError(
@@ -411,7 +411,7 @@ def _check_expectation(raw: Any, where: str, what: str) -> dict[str, Any]:
 
 
 def _expected(raw: Any, where: str) -> Expected:
-    # WHY: label is checked before the unknown-key sweep, so a misspelled
+    # Label is checked before the unknown-key sweep, so a misspelled
     # `lable:` is reported as missing.
     label = _require(raw, "label", where)
     _check_expectation(raw, where, "expected")
@@ -424,7 +424,7 @@ def _expected(raw: Any, where: str) -> Expected:
 
 def _check_cross_fields(cell: Cell, where: str) -> None:
     """Check each platform's merged expectation against the cell's actions."""
-    # WHY: one action list serves every platform, so the presence rules need
+    # One action list serves every platform, so the presence rules need
     # each platform to agree.
     verbs = [(a.verb, a.arg) for a in cell.actions]
     seen = [(p, cell.expected_for(p)) for p in cell.platforms]
@@ -466,7 +466,7 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
             "wait_result, which raises rather than answering None. Such a "
             "cell cannot pass either way"
         )
-    # WHY: gated on looks_for_silence; ungated, it would reject cells several
+    # Gated on looks_for_silence; ungated, it would reject cells several
     # tests use as doubles.
     speaking = [p for p, e in seen if e.label != NO_LABEL]
     if looks_for_silence and speaking and not waits:
@@ -531,7 +531,7 @@ def load_cell(path: Path) -> Cell:
 
     expected = _expected(_require(raw, "expected", where), where)
 
-    # WHY: refused at load, before a device is touched, so no cell can be
+    # Refused at load, before a device is touched, so no cell can be
     # excused a crash it must not pass.
     tolerated = raw.get("tolerated_crash_markers") or []
     if not isinstance(tolerated, list):
@@ -549,7 +549,7 @@ def load_cell(path: Path) -> Cell:
         if override is None:
             continue
         if platform not in platforms:
-            # WHY: expected_for is only asked about declared platforms, so this
+            # expected_for is only asked about declared platforms, so this
             # override would never be read.
             raise CellError(
                 f"{where}: expected.{platform} but the cell does not run on "
@@ -570,7 +570,7 @@ def load_cell(path: Path) -> Cell:
         overrides=overrides,
         tolerated_crash_markers=tuple(map(str, tolerated)),
     )
-    # WHY: the cross-field rules read expected_for, which needs the whole cell.
+    # The cross-field rules read expected_for, which needs the whole cell.
     _check_cross_fields(cell, where)
     return cell
 

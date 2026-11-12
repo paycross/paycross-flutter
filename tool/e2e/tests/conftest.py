@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-# WHY: cell_rules is not a test file, so pytest would not rewrite its asserts
+# cell_rules is not a test file, so pytest would not rewrite its asserts
 # without this.
 pytest.register_assert_rewrite("cell_rules")
 

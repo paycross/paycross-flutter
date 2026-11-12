@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterable
 from typing import Any, NamedTuple
 
-# WHY: cells owns TXN_PLACEHOLDER because load_cell refuses a template with two;
+# Cells owns TXN_PLACEHOLDER because load_cell refuses a template with two;
 # importing the other way round would be a cycle.
 from .cells import (
     ANY_LABEL,
@@ -16,27 +16,27 @@ from .cells import (
     TXN_PLACEHOLDER,
 )
 
-# WHY: these log for every app on the device, so they fail a cell only when
+# These log for every app on the device, so they fail a cell only when
 # they name the app under test.
 _SCOPED_FAULTS = ("ANR in", "Force finishing activity")
 
-# WHY: the header names no package, so _attribute_fatal scopes it through the
+# The header names no package, so _attribute_fatal scopes it through the
 # Process: line.
 # A bare AndroidRuntime line is no fault: uiautomator and monkey log those on
 # healthy runs.
 _FATAL = "FATAL EXCEPTION"
 _PROCESS = "Process:"
 
-# WHY: two lines, not one, so a logcat that interleaves another buffer's line
+# Two lines, not one, so a logcat that interleaves another buffer's line
 # still finds Process:.
 _PROCESS_LOOKAHEAD = 2
 
-# WHY: logcat writes this tag as `E/AndroidRuntime(19931):` on a device and
+# Logcat writes this tag as `E/AndroidRuntime(19931):` on a device and
 # `E AndroidRuntime:` in other captures.
 _CRASH_TAG = "AndroidRuntime"
 _TAG_RE = re.compile(rf"\b{_CRASH_TAG}(?:\(\s*\d+\))?\s*:\s*")
 
-# WHY: bounded, so a capture truncated mid-crash does not read the rest of the
+# Bounded, so a capture truncated mid-crash does not read the rest of the
 # log as one stack.
 _STACK_LOOKAHEAD = 80
 
@@ -61,7 +61,7 @@ DRIVER_CRASH_REASON = (
 
 _IOS_FAULTS = ("Fatal error:", "*** Terminating app due to uncaught exception")
 
-# WHY: Dart faults read the same on Android (E/flutter) and iOS, so they are
+# Dart faults read the same on Android (E/flutter) and iOS, so they are
 # not per-platform.
 _DART_FAULTS = ("Unhandled Exception:",)
 
@@ -73,7 +73,7 @@ _FAULTS = _IOS_FAULTS + _DART_FAULTS
 MONEY_MOVED = frozenset({"succeeded", "authorized", "captured"})
 
 
-# WHY: kept equal to cells.MERCHANT_KEYS by a test; a declared key nothing
+# Kept equal to cells.MERCHANT_KEYS by a test; a declared key nothing
 # checks here would pass vacuously.
 MERCHANT_CHECKS = frozenset(
     {
@@ -93,7 +93,7 @@ MERCHANT_CHECKS = frozenset(
 
 def match_label(template: str, actual: str | None) -> tuple[bool, str | None]:
     """Compares a label to a cell's expectation; returns (matched, captured txn id)."""
-    # WHY: `<any>` captures too, so verify_label_transaction can catch a phantom id.
+    # `<any>` captures too, so verify_label_transaction can catch a phantom id.
     if template == NO_LABEL:
         return actual is None, None
     if actual is None:
@@ -119,7 +119,7 @@ def _latest(resource: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _failure(latest: dict[str, Any] | None) -> dict[str, Any]:
-    # WHY: "failure" can be an explicit null on a succeeded transaction, not
+    # "failure" can be an explicit null on a succeeded transaction, not
     # only absent.
     return (latest or {}).get("failure") or {}
 
@@ -144,7 +144,7 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
     latest = _latest(resource)
 
     if "session_status" in expected:
-        # WHY: a resource without a status key is malformed, not a session with
+        # A resource without a status key is malformed, not a session with
         # no status.
         if "status" not in resource:
             problems.append("session_status: the session resource has no 'status' key")
@@ -197,11 +197,11 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
         ("saved_card_used", "used_token"),
     ):
         if key in expected:
-            # WHY: presence only; scrub_resource leaves a redaction marker or null,
+            # Presence only; scrub_resource leaves a redaction marker or null,
             # never the token.
             stored = (latest or {}).get("stored_credentials") or {}
             if not isinstance(stored, dict):
-                # WHY: without this guard .get raises AttributeError instead of
+                # Without this guard .get raises AttributeError instead of
                 # returning a problem.
                 problems.append(
                     f"{key}: stored_credentials is a "
@@ -225,7 +225,7 @@ def verify_label_transaction(resource: dict[str, Any], txn_id: str | None) -> li
     """A non-empty `<txn>` in the label must name a real transaction."""
     if not txn_id:
         return []
-    # WHY: a None id is dropped, because sorting a set holding None and a string raises.
+    # A None id is dropped, because sorting a set holding None and a string raises.
     known = {t.get("id") for t in _transactions(resource) if t.get("id") is not None}
     if txn_id in known:
         return []
@@ -253,10 +253,10 @@ def _fatal_thread(line: str) -> str:
 
 def _crash_block(lines: list[str], index: int) -> list[str]:
     """The lines of the crash the header at `index` opened, tags stripped."""
-    # WHY: the block ends at the first crash-tagged line outside it. The
+    # The block ends at the first crash-tagged line outside it. The
     # runtime's follow-on "Error reporting crash" block runs through
     # RuntimeInit and would look like a framework crash.
-    # WHY: lines from other buffers interleave, so they are skipped, not treated
+    # Lines from other buffers interleave, so they are skipped, not treated
     # as the end.
     block: list[str] = []
     throwable_seen = False
@@ -278,8 +278,8 @@ def _crash_block(lines: list[str], index: int) -> list[str]:
 
 def _attribute_fatal(lines: list[str], index: int, package: str) -> str:
     """Whose crash the header at `index` is: the app, driver or a foreign package."""
-    # WHY: the Process: line names the package, and it decides whenever it is present.
-    # WHY: the driver is reclassified only on the narrow signature below; a
+    # The Process: line names the package, and it decides whenever it is present.
+    # The driver is reclassified only on the narrow signature below; a
     # missed crash costs more.
     for line in lines[index + 1 : index + 1 + _PROCESS_LOOKAHEAD]:
         if _PROCESS in line:
@@ -304,7 +304,7 @@ def _attribute_fatal(lines: list[str], index: int, package: str) -> str:
 
 def crash_lines(log: str, package: str, tolerated: Iterable[str] = ()) -> CrashScan:
     """Pass criterion 3: sorts crash lines into faults, excused and driver crashes."""
-    # WHY: only the closed allow-list is honoured, so a caller cannot mute a
+    # Only the closed allow-list is honoured, so a caller cannot mute a
     # FATAL EXCEPTION.
     allowed = set(tolerated) & TOLERABLE_CRASH_MARKERS
     lines = log.splitlines()

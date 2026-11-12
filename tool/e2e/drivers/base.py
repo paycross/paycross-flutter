@@ -23,7 +23,7 @@ class DriverError(RuntimeError):
     """The device did not do what was asked. Names what was being looked for."""
 
 
-# WHY: the token reaches an Android device shell that re-splits it, so its
+# The token reaches an Android device shell that re-splits it, so its
 # shape is checked first.
 JWT_SHAPE = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
 
@@ -44,7 +44,7 @@ def read_token(token_path: Path, *, verb: str) -> str:
 
 def device_text(raw: bytes) -> str:
     """Decodes device output as UTF-8 with CRLF line endings normalised."""
-    # WHY: iOS console capture arrives through a pty, which puts a CR before every LF.
+    # iOS console capture arrives through a pty, which puts a CR before every LF.
     return raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
 
 

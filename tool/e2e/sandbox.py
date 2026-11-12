@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-# WHY: the TEST API's Cloudflare refuses urllib's default User-Agent outright.
+# The TEST API's Cloudflare refuses urllib's default User-Agent outright.
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/140.0 Safari/537.36"
@@ -34,20 +34,20 @@ RETRY_BACKOFF_SECONDS = 2.0
 
 DEFAULT_TOKEN_LIFETIME_SECONDS = 3600.0
 
-# WHY: the TEST gateway caches a 3600 s token for 3300 s; the refresh margin
+# The TEST gateway caches a 3600 s token for 3300 s; the refresh margin
 # depends on both.
 OBSERVED_TOKEN_LIFETIME_SECONDS = 3600.0
 OBSERVED_TOKEN_CACHE_TTL_SECONDS = 3300.0
 
-# WHY: a margin of 300 s or more refreshes inside the gateway cache window and
+# A margin of 300 s or more refreshes inside the gateway cache window and
 # busy-loops on one token.
 TOKEN_REFRESH_MARGIN_SECONDS = 240.0
 
-# WHY: an exp older than one lifetime is this machine's clock (WSL suspend),
+# An exp older than one lifetime is this machine's clock (WSL suspend),
 # not a dead token.
 IMPLAUSIBLE_EXP_AGE_SECONDS = OBSERVED_TOKEN_LIFETIME_SECONDS
 
-# WHY: HTTPException covers short reads after the status line; those are not URLErrors.
+# HTTPException covers short reads after the status line; those are not URLErrors.
 TRANSIENT = (urllib.error.URLError, TimeoutError, http.client.HTTPException)
 
 _JWT = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
@@ -63,9 +63,9 @@ class SandboxError(RuntimeError):
 
 def read_env_file(path: Path | str) -> dict[str, str]:
     """Parses the five keys the campaign needs out of a shell-style env file."""
-    # WHY: not `set -a; . file`, so nothing else in the file reaches a
+    # Not `set -a; . file`, so nothing else in the file reaches a
     # subprocess environment.
-    # WHY: the parsing is shallow: no unescaping, no variable expansion, no
+    # The parsing is shallow: no unescaping, no variable expansion, no
     # inline comments.
     values: dict[str, str] = {}
     for line in Path(path).read_text(encoding="utf-8").splitlines():
@@ -82,7 +82,7 @@ def read_env_file(path: Path | str) -> dict[str, str]:
 
     missing = [k for k in REQUIRED_KEYS if k not in values]
     if missing:
-        # WHY: names the keys only, never a value.
+        # Names the keys only, never a value.
         raise SandboxError(f"{path}: missing {', '.join(missing)}")
     return values
 
@@ -97,7 +97,7 @@ def _urllib_transport(
         ) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
-        # WHY: urlopen raises on any 4xx/5xx; the status and body are returned so
+        # Urlopen raises on any 4xx/5xx; the status and body are returned so
         # the API's reason is reported.
         return error.code, error.read()
 
@@ -124,7 +124,7 @@ def _safe_to_echo(payload: Any) -> str:
 
 def _jwt_exp(token: Any) -> tuple[float | None, str | None]:
     """The `exp` claim of a JWT, and why there is none to read."""
-    # WHY: the signature is not verified: this is scheduling, not authentication.
+    # The signature is not verified: this is scheduling, not authentication.
     if not isinstance(token, str):
         return None, None
     parts = token.split(".")
@@ -132,7 +132,7 @@ def _jwt_exp(token: Any) -> tuple[float | None, str | None]:
         return None, None
     padded = parts[1] + "=" * (-len(parts[1]) % 4)
     try:
-        # WHY: binascii.Error is a ValueError, so a payload that is not base64
+        # binascii.Error is a ValueError, so a payload that is not base64
         # lands here too.
         claims = json.loads(base64.urlsafe_b64decode(padded))
     except (ValueError, TypeError):
@@ -331,7 +331,7 @@ class Sandbox:
                     return status, payload
             self._sleep(RETRY_BACKOFF_SECONDS)
 
-    # WHY: the locals of _bearer and mint hold the client secret and a token;
+    # The locals of _bearer and mint hold the client secret and a token;
     # --showlocals would log them.
     def _bearer(self) -> str:
         if (
