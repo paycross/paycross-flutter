@@ -21,10 +21,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       # The Flutter SDK's dart below shadows this one; both read the same token store.
-      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d
 
       # The Flutter SDK's dart is the one that can resolve this package.
-      - uses: flutter-actions/setup-flutter@6e2468fd827c4a7337cd4b835a6049b78bc0bd1f
+      - uses: flutter-actions/setup-flutter@80479eab6de1d7909df79ed6aea93aa7f7e8e859
 
       - name: Unregister the token while resolving
         run: dart pub token remove https://pub.dev
