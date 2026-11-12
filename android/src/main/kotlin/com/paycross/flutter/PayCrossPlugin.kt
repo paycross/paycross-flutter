@@ -167,7 +167,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
     // MARK: - Result plumbing
 
     private fun deliver(resultCode: Int, data: Intent?) {
-        // ParseResult reads a lost payload as Cancelled, so the payload is checked first.
+        // parseResult reads a lost payload as Cancelled, so the payload is checked first.
         val lost = resultCode == Activity.RESULT_OK && data?.hasExtra(EXTRA_RESULT) != true
         if (lost) {
             // A lost result is a success, not an error: the payment may have been authorized.
@@ -200,7 +200,7 @@ class PayCrossPlugin : FlutterPlugin, ActivityAware, PayCrossHostApi {
     private fun applyConfiguration(configuration: PcConfiguration) {
         PayCross.init(
             environment = configuration.environment.toNative(),
-            // ToInt() keeps the low 32 bits, which is the signed @ColorInt the SDK expects.
+            // toInt() keeps the low 32 bits, which is the signed @ColorInt the SDK expects.
             brandColor = configuration.brandColorArgb?.toInt(),
             testCardPrefill = configuration.testCardPrefill?.toNative(),
             // Google rejects a production request without a merchant ID, so it is passed through as is.
