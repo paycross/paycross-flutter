@@ -1,8 +1,4 @@
-# The shopper changes their mind before paying anything. The one cancel path
-# D0 does not cover -- it cancels mid-challenge, after a transaction exists.
-# Here nothing was ever submitted, so txn_count is 0 and that is the
-# assertion: a session that grew a transaction from an abandoned form would
-# be a real finding.
+# txn_count is asserted to be 0: an abandoned form must never create a transaction.
 id: cancel_on_form
 platforms: [android, ios]
 card:

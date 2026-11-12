@@ -1,15 +1,5 @@
-# do_not_honor again, reached AFTER a successful authentication rather than
-# before 3DS ever starts. It is the pair to `decline_do_not_honor`: same
-# outcome, two routes to it, and a difference between them is a finding --
-# the same decline should not become a different failure_code, a different
-# recovery or a different sheet behaviour because a challenge preceded it.
-#
-# Retryable -- change_method -- so the sheet re-arms rather than resolving.
-#
-# No threeds assertion: this is an authorization decline that follows a
-# successful authentication, and what the sandbox records in threeds_result
-# for that pairing has never been measured. The run records it; Phase 3 pins
-# it if it proves stable.
+# Same decline as decline_do_not_honor, reached after authentication: the failure fields must match.
+# threeds is not asserted: the sandbox's threeds_result for this pairing is unverified.
 id: acs_do_not_honor
 platforms: [android, ios]
 card:

@@ -1,17 +1,8 @@
-# The wallet is offered. Two gates have to pass for the button to render:
-# GooglePayRequests.isSessionEligible -- `wallets.google_pay != false &&
-# account_funding != true` -- and an asynchronous isReadyToPay against Play
-# services. This cell proves both do, on the default session, which is the
-# precondition for every other D4 cell.
-#
-# The button is matched on `Pay with GPay`, which is Play services' own
-# content-desc and not the SDK's: the SDK tags its button with
-# Modifier.testTag, and testTagsAsResourceId is set nowhere in either repo, so
-# that tag is invisible to uiautomator. Filed upstream; until it lands the
-# handle belongs to Google and moves with the GMS version and the locale.
-#
-# It leaves by cancelling: a wallet payment is a separate cell, and this one
-# must not spend one.
+# The wallet is offered on the default session. The button needs both the eligibility check and an asynchronous
+# isReadyToPay against Play services to pass.
+# The button is matched on Play services' content-desc "Pay with GPay". The SDK's test tag is invisible to
+# uiautomator, because testTagsAsResourceId is not set, so the handle moves with the GMS version and locale.
+# Cancels rather than paying: a wallet payment is a separate cell.
 id: google_pay_offered
 platforms: [android]
 card:

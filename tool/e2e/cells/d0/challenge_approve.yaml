@@ -1,6 +1,4 @@
-# The full challenge flow. On the sandbox ACS page the outcome is chosen by
-# which button is tapped, not by the PAN -- so every challenge cell in the
-# matrix uses this same card and differs only in the acs: action.
+# The sandbox ACS page picks the outcome by the button tapped, not by the PAN.
 id: challenge_approve
 platforms: [android, ios]
 card:
