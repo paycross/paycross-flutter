@@ -99,7 +99,7 @@ class SecretStore {
       // A failed write can leave a new id beside the old secret; forget clears both, so the state reads as not configured.
       try {
         await forget();
-      // Best effort: a failed forget must not hide the original error, which rethrow passes on.
+        // Best effort: a failed forget must not hide the original error, which rethrow passes on.
       } catch (_) {}
       rethrow;
     }
