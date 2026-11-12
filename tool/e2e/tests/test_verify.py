@@ -257,7 +257,7 @@ def test_every_scoped_fault_marker_fires_for_this_app(line):
 
 
 def test_an_anr_in_another_package_is_not_this_apps_crash():
-    log ="08-28 12:00:03.000 E ActivityManager: ANR in com.other.app\n"
+    log = "08-28 12:00:03.000 E ActivityManager: ANR in com.other.app\n"
 
     assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [], [])
 
@@ -296,7 +296,7 @@ def test_a_fatal_exception_in_our_process_is_ours():
 
 
 def test_a_fatal_exception_with_no_process_line_is_kept():
-    log ="08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
+    log = "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
 
     assert verify.crash_lines(log, "com.paycross.x") == ([log.strip()], [], [])
 

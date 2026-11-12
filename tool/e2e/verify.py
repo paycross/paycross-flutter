@@ -199,7 +199,7 @@ def verify_merchant(resource: dict[str, Any], expected: dict[str, Any]) -> list[
         if key in expected:
             # WHY: presence only; scrub_resource leaves a redaction marker or null,
             # never the token.
-            stored =(latest or {}).get("stored_credentials") or {}
+            stored = (latest or {}).get("stored_credentials") or {}
             if not isinstance(stored, dict):
                 # WHY: without this guard .get raises AttributeError instead of
                 # returning a problem.

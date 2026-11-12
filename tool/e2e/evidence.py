@@ -152,7 +152,7 @@ class Run:
         """Append one line to progress.jsonl and fsync it."""
         # WHY: platform is written last, so a record cannot file its results
         # under another platform's ledger.
-        line =json.dumps({**record, "at": _now(), "platform": self.platform})
+        line = json.dumps({**record, "at": _now(), "platform": self.platform})
         with self.progress_path.open("ab") as handle:
             handle.write(redact(line.encode(), secrets) + b"\n")
             handle.flush()

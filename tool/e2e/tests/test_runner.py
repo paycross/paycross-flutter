@@ -2481,7 +2481,7 @@ UIAUTOMATION_CRASH = (
     Path(__file__).parent / "fixtures" / "android-uiautomation-crash.log"
 ).read_text()
 
-PAYS =["paste_token", "tap_pay", "wait_result 60"]
+PAYS = ["paste_token", "tap_pay", "wait_result 60"]
 
 
 def test_the_drivers_own_crash_does_not_fail_a_cell_that_worked(tmp_path):

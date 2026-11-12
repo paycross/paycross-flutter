@@ -132,7 +132,7 @@ def _is_literal_token(arg: str) -> bool:
 
 ARG_ACTIONS = MappingProxyType(
     {
-        "acs":(_is_acs_outcome, f"one of {sorted(ACS_OUTCOMES)}"),
+        "acs": (_is_acs_outcome, f"one of {sorted(ACS_OUTCOMES)}"),
         "airplane": (_is_on_off, "'on' or 'off'"),
         "background": (_is_positive_seconds, "a positive number of seconds"),
         # WHY: neither the Android locale list nor the iOS launch argument takes
@@ -150,7 +150,7 @@ ARG_ACTIONS = MappingProxyType(
         # WHY: a session token's JWT `exp` falls before its session's
         # `expires_at`, so an expired token in an open session needs that gap
         # waited out.
-        "wait":(_is_positive_seconds, "a positive number of seconds"),
+        "wait": (_is_positive_seconds, "a positive number of seconds"),
         "wait_expired": (_is_positive_seconds, "a positive number of seconds"),
         "wait_result": (_is_positive_seconds, "a positive number of seconds"),
     }
@@ -426,7 +426,7 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
     """Check each platform's merged expectation against the cell's actions."""
     # WHY: one action list serves every platform, so the presence rules need
     # each platform to agree.
-    verbs =[(a.verb, a.arg) for a in cell.actions]
+    verbs = [(a.verb, a.arg) for a in cell.actions]
     seen = [(p, cell.expected_for(p)) for p in cell.platforms]
 
     for action, holds, describe in (
@@ -468,7 +468,7 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
         )
     # WHY: gated on looks_for_silence; ungated, it would reject cells several
     # tests use as doubles.
-    speaking =[p for p, e in seen if e.label != NO_LABEL]
+    speaking = [p for p, e in seen if e.label != NO_LABEL]
     if looks_for_silence and speaking and not waits:
         raise CellError(
             f"{where}: {speaking} expects a label, but the cell has no "

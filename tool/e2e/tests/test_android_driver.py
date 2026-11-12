@@ -28,7 +28,6 @@ def screen(token: str = "") -> str:
 
 
 class FakeShell:
-
     def __init__(self, *outputs, tree=None, trees=None):
         self.outputs = list(outputs)
         self.tree = tree

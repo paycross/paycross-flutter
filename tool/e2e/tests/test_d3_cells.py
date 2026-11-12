@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from cell_rules import check_cell_dir
 
 from tool.e2e import cells

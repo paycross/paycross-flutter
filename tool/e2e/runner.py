@@ -796,7 +796,7 @@ def run_cells(
 
     # WHY: the control cell comes from every cell, so --only cannot drop the
     # check that vouches for the run.
-    control =next((c for c in everything if c.id == CONTROL_CELL_ID), None)
+    control = next((c for c in everything if c.id == CONTROL_CELL_ID), None)
     consecutive_control_failures = 0
     checks = 0
 
@@ -859,7 +859,7 @@ def run_cells(
         except Exception as error:  # noqa: BLE001
             # WHY: the cells have already reached their verdicts, so a failing close
             # is recorded, not raised.
-            problem =f"close: {_redacted(str(error))}"
+            problem = f"close: {_redacted(str(error))}"
             report.problems.append(problem)
             run.append_progress(
                 {"cell": "-", "status": "run-problem", "problems": [problem]}
