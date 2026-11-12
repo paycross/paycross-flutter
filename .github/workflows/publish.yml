@@ -1,24 +1,8 @@
 name: Publish to pub.dev
 
-# One `vX.Y.Z` tag is one release on pub.dev. pub.dev trusts this repository's
-# GitHub Actions identity (Admin → Automated publishing: repository
-# paycross/paycross-flutter, tag pattern v{{version}}, environment pub.dev),
-# so no account, token or secret is involved. The `pub.dev` environment's
-# required reviewer is the approval gate: the run waits until an admin
-# approves it in the Actions UI.
-#
-# The tag must equal `version:` in pubspec.yaml — pub.dev rejects the upload
-# otherwise. demo-v* tags belong to demo-release.yml and do not match this
-# pattern, so the two never fire together.
-#
-# Written out rather than calling dart-lang/setup-dart's reusable publish.yml,
-# which this copies step for step at the same pinned SHAs. The one change is
-# where the token is registered: pub sends it on the plain version-listing
-# request as well as on the upload, so a token pub.dev will not accept fails
-# resolution with `depends on <package> <version> which doesn't match any
-# versions` — an error naming an innocent dependency and never mentioning auth.
-# So the token is removed for the resolution and the dry run, which need no
-# credentials, and added back immediately before the upload, which does.
+# The tag must equal `version:` in pubspec.yaml, or pub.dev rejects the upload.
+# Publishing authenticates with GitHub OIDC, so no token secret is stored.
+# pub sends the token on version listing too, so it is added only before the upload.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
@@ -28,18 +12,15 @@ jobs:
     name: Publish to pub.dev
     environment: pub.dev
     permissions:
-      id-token: write # pub.dev authenticates the run through GitHub's OIDC token
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      # Exchanges the OIDC token for PUB_TOKEN and registers it with pub. Its
-      # `dart` is shadowed by the Flutter SDK's below; both read the same token
-      # store, so removing and re-adding works whichever one is on PATH.
+      # The Flutter SDK's dart below shadows this one; both read the same token store.
       - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1
 
-      # The dart binary from a Flutter SDK publishes Flutter and pure-Dart
-      # packages alike, and is the one that can resolve this package at all.
+      # The Flutter SDK's dart is the one that can resolve this package.
       - uses: flutter-actions/setup-flutter@6e2468fd827c4a7337cd4b835a6049b78bc0bd1f
 
       - name: Unregister the token while resolving
