@@ -9,7 +9,7 @@ import XCTest
 /// Unit tests of the one thing the iOS half of the plugin decides: how a
 /// native `PaymentResult` becomes the Pigeon type Dart receives.
 ///
-/// No CI job compiles or runs this target. The iOS job builds the example
+/// NOTE: no CI job compiles or runs this target. The iOS job builds the example
 /// app for the simulator, which compiles the plugin but not its tests. These
 /// run from Xcode. They replace the untouched Flutter template test that shipped
 /// here, which called `PaycrossFlutterPlugin().handle(...)` for a
