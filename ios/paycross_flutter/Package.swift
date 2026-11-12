@@ -11,7 +11,7 @@ let package = Package(
         // Flutter symlinks this path in at build time: `swift build` alone cannot resolve it, and `import Flutter` compiles only under a Podfile build.
         .package(name: "FlutterFramework", path: "../FlutterFramework"),
         // upToNextMinor: the SDK is pre-1.0, where breaking changes ship in minor releases; the podspec pins the same release.
-        .package(url: "https://github.com/paycross/payment-ios-sdk.git", .upToNextMinor(from: "0.8.0")),
+        .package(url: "https://github.com/paycross/payment-ios-sdk.git", .upToNextMinor(from: "0.8.1")),
     ],
     targets: [
         .target(
