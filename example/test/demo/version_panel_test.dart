@@ -56,8 +56,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Demo unknown'), findsOneWidget);
-    // A read that has not come back yet renders '…', so 'unknown' on screen
-    // can only have come from the catch inside the panel.
     expect(find.text('Demo …'), findsNothing);
     expect(tester.takeException(), isNull);
   });

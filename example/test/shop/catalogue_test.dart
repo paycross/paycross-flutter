@@ -39,8 +39,6 @@ void main() {
     expect(catalogue.first.semanticsId, 'shop.product.canvas-tote');
   });
 
-  /// The whole point of the storefront: a reviewer must see a shop, not the
-  /// harness. Every one of these words belongs to the developer screens.
   test('no shop copy leaks the harness vocabulary', () {
     const forbidden = <String>[
       'sandbox',

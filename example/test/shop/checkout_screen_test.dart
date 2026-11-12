@@ -41,8 +41,6 @@ PayCrossPending _pending() => const PayCrossPending(
   reasonRaw: 'poll_timeout',
 );
 
-/// A secret store holding sandbox credentials, which is the ordinary state
-/// of a phone somebody has already set the demo up on.
 SecretStore _configured() {
   final backend = InMemorySecretBackend()
     ..entries['paycross_demo_client_id'] = 'client'
@@ -135,8 +133,6 @@ void main() {
       await tester.tap(find.text('Pay €24.00'));
       await tester.pump();
 
-      // Dead while the sheet is open, which is what stops a second tap
-      // minting a second session and stacking a second sheet on the first.
       expect(
         tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
         isNull,
@@ -238,8 +234,6 @@ void main() {
       await tester.tap(find.text('Pay €24.00'));
       await tester.pumpAndSettle();
 
-      // Nobody knows whether that payment took the money, so a second one
-      // can charge the same card twice for the same basket.
       expect(
         tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
         isNull,
@@ -267,9 +261,6 @@ void main() {
     testWidgets('a paid order cannot be paid again by pressing back', (
       tester,
     ) async {
-      // The real stack, not a checkout mounted on its own: what the success
-      // path removes is everything above the shop, so a test that starts at
-      // the checkout would be asserting about a stack the app never has.
       await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
       final navigator = tester.state<NavigatorState>(find.byType(Navigator));
       unawaited(navigator.push(shopRoute()));
@@ -299,8 +290,6 @@ void main() {
       navigator.pop();
       await tester.pumpAndSettle();
 
-      // The checkout went with the push. Back from a paid order lands on the
-      // shop, and there is no live Pay button anywhere behind it.
       expect(find.byType(ShopCheckoutScreen), findsNothing);
       expect(find.byType(ShopScreen), findsOneWidget);
     });
@@ -372,8 +361,6 @@ void main() {
       await tester.tap(find.text('Pay €24.00'));
       await tester.pumpAndSettle();
 
-      // The shopper reads a sentence; whoever reports the run still gets the
-      // recovery token and the transaction id.
       final rows = await HistoryStore(backend: backend).read();
       expect(rows.single.outcome, contains('change_method'));
       expect(rows.single.outcome, contains('txn-2'));
@@ -421,9 +408,6 @@ void main() {
   });
 
   group('what a reviewer must not see', () {
-    /// Every state the checkout can be left in, because the note is where
-    /// the harness words would actually appear and the initial render never
-    /// has one.
     for (final state in <(String, Future<PayCrossResult> Function(String))>[
       ('a refusal', (_) async => _refused()),
       ('an unresolved payment', (_) async => _pending()),

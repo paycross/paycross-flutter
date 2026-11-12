@@ -22,10 +22,6 @@ void main() {
   });
 
   test('the Live tile label is this formatter, over the tile body', () {
-    // The figure a Live tile quotes is read off the body it will mint, not
-    // off a constant -- that is what lets the amount be edited and still be
-    // quoted correctly. It is still this one formatter underneath, so the
-    // figure agreed to and the figure reported are written by one hand.
     for (final currency in ['EUR', 'USD', 'GBP', 'CHF']) {
       expect(
         liveBodyAmountLabel('{"amount":4250,"currency":"$currency"}'),

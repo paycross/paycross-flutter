@@ -9,8 +9,6 @@ PresentedRun _run(PayCrossResult? result) =>
 PresentedRun _refused(PayCrossRecovery recovery) =>
     _run(PayCrossFailure(transactionId: 'txn-2', recovery: recovery));
 
-/// Everything a shopper must never be shown, gathered once so every message
-/// below is checked against all of it.
 const List<String> _wireVocabulary = <String>[
   'recovery',
   'change_method',

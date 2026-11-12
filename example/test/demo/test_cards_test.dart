@@ -37,9 +37,6 @@ void main() {
   });
 
   test('a PAN is shown in the groups of four a card form takes', () {
-    // What the cheat sheet renders is what somebody types. A grouping that
-    // dropped or doubled a digit would be a wrong PAN on screen, and the
-    // run that followed would look like an SDK bug.
     expect(
       usableTestCards.map((c) => c.grouped).toList(),
       everyElement(matches(RegExp(r'^(\d{4} ){3}\d{4}$'))),

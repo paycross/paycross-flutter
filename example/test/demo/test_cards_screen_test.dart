@@ -17,9 +17,6 @@ void main() {
       expect(find.text(card.grouped), findsOneWidget, reason: card.pan);
     }
 
-    // The heading and the reason are the point of the section: without them
-    // a colleague tries a "decline" card, watches it approve, and files an
-    // SDK bug that is really a backend gap.
     expect(find.text('Do not use'), findsOneWidget);
     expect(find.textContaining('sandbox routing gap'), findsNWidgets(3));
   });
@@ -34,8 +31,6 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text(usableTestCards.first.grouped), findsOneWidget);
 
-    // The do-not-use section is below ten cards' worth of text, and it is
-    // the half of this screen that stops a false SDK bug being filed.
     await tester.scrollUntilVisible(find.text('Do not use'), 200);
 
     expect(find.text('Do not use'), findsOneWidget);

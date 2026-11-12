@@ -14,10 +14,6 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
-            <!-- Specifies an Android theme to apply to this Activity as soon as
-                 the Android process has started. This theme is visible to the user
-                 while the Flutter UI initializes. After that, this theme continues
-                 to determine the Window background behind the Flutter UI. -->
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
@@ -32,36 +28,20 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="paycross-flutter-demo" android:host="run" />
             </intent-filter>
-            <!-- app_links owns the link, not Flutter's own router. With this
-                 on, the engine consumes the URL and uriLinkStream stays
-                 silent. -->
             <meta-data
                 android:name="flutter_deeplinking_enabled"
                 android:value="false" />
         </activity>
-        <!-- Don't delete the meta-data below.
-             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
-    <!-- Required to query activities that can process text, see:
-         https://developer.android.com/training/package-visibility and
-         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
-
-         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
 
-        <!-- The Web checkout surface hands a checkout URL to the phone's own
-             browser. On API 30 and up a package the manifest does not declare
-             here is invisible to the app, so `canLaunchUrl` answers false and
-             `launchUrl` fails, on a phone where a browser is plainly
-             installed. `https` only: this app never opens any other scheme,
-             and a wildcard would let it query every app on the device. -->
         <intent>
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="https"/>
