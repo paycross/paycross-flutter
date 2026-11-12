@@ -4,6 +4,7 @@
 # kill_activity ends the process: am force-stop on Android, since am kill skips a foreground process.
 # On iOS the app comes back with no result and the session still open at threeds_challenge_requested. A merchant
 # that is killed mid-challenge never learns the outcome; reconciliation is server-side.
+# Discovery cell: records what the platform does; no fixed label.
 id: kill_process_during_challenge
 platforms: [android, ios]
 card:

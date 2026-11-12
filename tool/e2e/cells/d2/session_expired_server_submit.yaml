@@ -5,6 +5,7 @@
 # A clean result:failure:restart: or a re-arm with a banner is correct. A hang, a crash or result:failure:retry: is a finding.
 # result:success: is a serious finding.
 # txn_count is not asserted: whether a submit on a dead session creates a transaction is what is measured.
+# Discovery cell: records what the platform does; no fixed label.
 id: session_expired_server_submit
 platforms: [android, ios]
 card:
