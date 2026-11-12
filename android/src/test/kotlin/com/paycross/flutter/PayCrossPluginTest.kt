@@ -45,7 +45,7 @@ internal class PayCrossPluginTest {
     fun versionInfo_reportsPluginVersionAndNoNativeVersion() {
         val info = PayCrossPlugin().versionInfo()
 
-        assertEquals("0.7.4", info.pluginVersion)
+        assertEquals("0.7.5", info.pluginVersion)
         assertNull(info.nativeSdkVersion)
     }
 
