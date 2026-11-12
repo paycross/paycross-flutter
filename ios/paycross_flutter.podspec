@@ -21,7 +21,7 @@ Pod::Spec.new do |s|
   }
 
   s.dependency 'Flutter'
-  s.dependency 'PayCross', '0.8.0'
+  s.dependency 'PayCross', '0.8.1'
 
   # Matches the wrapped SDK's iOS 16 minimum; CocoaPods reports a mismatch only as a resolution failure.
   s.platform = :ios, '16.0'
