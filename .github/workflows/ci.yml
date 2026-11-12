@@ -147,7 +147,7 @@ jobs:
 
       - run: flutter pub get
 
-      # Resolves the SDK from CocoaPods trunk, as merchants do.
+      # Resolves the SDK through Swift Package Manager, as merchants do.
       - name: Build example for simulator
         run: flutter build ios --simulator --no-codesign
         working-directory: example
