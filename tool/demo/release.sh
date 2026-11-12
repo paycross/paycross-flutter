@@ -1,22 +1,12 @@
 #!/usr/bin/env bash
-# Builds and verifies the PayCross Demo release APK.
-#
-# The local fallback for demo-release.yml, and the only way to produce the
-# E2E variant -- a release-mode build that carries the automation define and
-# is signed with the same keystore. That variant proves release compilation
-# and signing do not break the app; it is never what a colleague installs.
 set -euo pipefail
 
 TAG=""
 BUILD_NUMBER=""
 E2E=0
 DRY_RUN=0
-# Set this to a Linux apksigner if the discovery below finds none. A Windows
-# SDK mounted under /mnt/c ships only apksigner.bat, which WSL cannot execute.
+# WSL cannot run the apksigner.bat that a Windows SDK ships; set APKSIGNER to a Linux one.
 APKSIGNER="${APKSIGNER:-}"
-# Anywhere that path does not exist -- CI, anyone else's machine -- take the
-# newest apksigner the installed SDK actually has, rather than failing on a
-# path that only ever meant something on one box.
 if [ ! -x "$APKSIGNER" ] && [ -n "${ANDROID_HOME:-}" ]; then
   discovered="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f 2>/dev/null | sort | tail -1)"
   [ -n "$discovered" ] && APKSIGNER="$discovered"
@@ -68,17 +58,11 @@ else
       --build-number "$BUILD_NUMBER"
 fi
 
-# Before anything is published, and after nothing else. A debug-signed APK
-# installs, runs and passes every other check -- and then refuses to upgrade
-# in place when a correctly signed one arrives, which is discovered on other
-# people's phones.
+# A debug-signed APK installs, but cannot upgrade in place over a correctly signed one.
 run "$APKSIGNER" verify --print-certs "$APK"
 
 if [ "$DRY_RUN" -eq 0 ] && [ -n "${DEMO_KEYSTORE_SHA256:-}" ]; then
-  # 64 lowercase hex, exactly as apksigner prints it (B11). The length check
-  # is not decoration: an unset variable expands to "" and `grep -qF ""`
-  # matches any non-empty file, which would turn the one gate between a
-  # debug-signed APK and a colleague's phone into a no-op.
+  # An empty value would make `grep -qF ""` match any file, so the length is checked.
   if [ "${#DEMO_KEYSTORE_SHA256}" -ne 64 ]; then
     echo "release.sh: DEMO_KEYSTORE_SHA256 must be 64 hex characters" >&2
     exit 1
