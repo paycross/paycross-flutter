@@ -703,7 +703,7 @@ def run_cell(
 
 
 def check_cells(cell_dir: Path, platform: str) -> list[Cell]:
-    """Loads a cell directory and refuses anything wrong with it before a device is touched."""
+    """Loads a cell directory and refuses anything wrong before a device is touched."""
     everything = load_cells(Path(cell_dir), platform)
     if not everything:
         raise CellError(f"{cell_dir}: no cell in it runs on {platform}")

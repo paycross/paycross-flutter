@@ -61,7 +61,7 @@ class Driver(ABC):
         """Turns one accessibility dump into nodes."""
 
     def no_label_error(self, timeout: float) -> DriverError:
-        """Explains a missing contract label, naming the missing build define if that is the cause."""
+        """Explains a missing label, naming the build define if that is the cause."""
         if tree.label_from_tree(self._nodes(tolerate=True), tree.LEGACY_LABEL_PREFIXES):
             return DriverError(
                 f"no contract label within {timeout}s, but the app is showing "
@@ -71,7 +71,7 @@ class Driver(ABC):
         return DriverError(f"no contract label within {timeout}s")
 
     def _nodes(self, tolerate: bool = False) -> list[tree.Node]:
-        """Returns the current tree; with `tolerate`, `[]` when the device will not dump."""
+        """Returns the current tree; `[]` with `tolerate` if the device won't dump."""
         try:
             return self._parse_dump(self.dump_tree())
         except DriverError:

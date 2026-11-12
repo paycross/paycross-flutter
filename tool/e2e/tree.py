@@ -106,7 +106,7 @@ def parse_wda(xml: str | bytes) -> list[Node]:
 
 
 def find_text_exact(nodes: list[Node], text: str) -> list[Node]:
-    """Exact match on `text`, not a substring: `timeout` is inside `authentication_timeout`."""
+    """Exact match on `text`: `timeout` is not inside `authentication_timeout`."""
     return [n for n in nodes if n.text == text]
 
 
@@ -138,7 +138,7 @@ def caption(nodes: list[Node], control: Node) -> str:
 
 
 def _position_of(nodes: list[Node], control: Node) -> int:
-    """Index of `control` in `nodes`, by identity, then by value; len(nodes) if absent."""
+    """Index of `control` in `nodes`, by identity then value; len(nodes) if absent."""
     for index, node in enumerate(nodes):
         if node is control:
             return index
@@ -160,7 +160,7 @@ def label_from_tree(
 
 
 def format_amount_en_us(minor_units: int, currency: str) -> str:
-    """en-US NumberFormat spelling with two minor digits; a French sheet does not match it."""
+    """en-US NumberFormat spelling, two minor digits; French sheets do not match."""
     body = f"{Decimal(minor_units) / 100:,.2f}"
     symbol = _CURRENCY_SYMBOLS.get(currency)
     return f"{symbol}{body}" if symbol else f"{currency} {body}"
@@ -187,7 +187,7 @@ def _carries_amount(text: str, amount_text: str) -> bool:
 
 
 def _separator_variants(amount_text: str) -> tuple[str, ...]:
-    """`amount_text` and its `.`/`,` swap; stripping separators would match longer numbers."""
+    """`amount_text`, its `.`/`,` swap; stripping separators matches longer numbers."""
     swapped = amount_text.translate(str.maketrans(".,", ",."))
     return (amount_text,) if swapped == amount_text else (amount_text, swapped)
 
@@ -207,7 +207,7 @@ def sheet_rearmed(nodes: list[Node], amount_text: str) -> bool:
 
 
 def rearm_amount_mismatch(nodes: list[Node], amount_text: str) -> str | None:
-    """The sheet's amount text when it is the same value spelled differently, else None."""
+    """The sheet's amount text when it spells the same value differently, else None."""
     if not amount_text:
         raise ValueError("rearm_amount_mismatch needs the cell's amount text")
     if not find_identifier(nodes, ERROR_BANNER):

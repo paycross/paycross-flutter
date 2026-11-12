@@ -92,7 +92,7 @@ MERCHANT_CHECKS = frozenset(
 
 
 def match_label(template: str, actual: str | None) -> tuple[bool, str | None]:
-    """Compares a label against a cell's expectation; returns (matched, captured txn id)."""
+    """Compares a label to a cell's expectation; returns (matched, captured txn id)."""
     # WHY: `<any>` captures too, so verify_label_transaction can catch a phantom id.
     if template == NO_LABEL:
         return actual is None, None
@@ -277,7 +277,7 @@ def _crash_block(lines: list[str], index: int) -> list[str]:
 
 
 def _attribute_fatal(lines: list[str], index: int, package: str) -> str:
-    """Whose crash the header at `index` is: the app, the driver or a foreign package."""
+    """Whose crash the header at `index` is: the app, driver or a foreign package."""
     # WHY: the Process: line names the package, and it decides whenever it is present.
     # WHY: the driver is reclassified only on the narrow signature below; a
     # missed crash costs more.
@@ -303,7 +303,7 @@ def _attribute_fatal(lines: list[str], index: int, package: str) -> str:
 
 
 def crash_lines(log: str, package: str, tolerated: Iterable[str] = ()) -> CrashScan:
-    """Pass criterion 3: sorts a log's crash lines into faults, excused lines and driver crashes."""
+    """Pass criterion 3: sorts crash lines into faults, excused and driver crashes."""
     # WHY: only the closed allow-list is honoured, so a caller cannot mute a
     # FATAL EXCEPTION.
     allowed = set(tolerated) & TOLERABLE_CRASH_MARKERS

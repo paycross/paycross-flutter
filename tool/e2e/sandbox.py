@@ -151,7 +151,7 @@ def _jwt_exp(token: Any) -> tuple[float | None, str | None]:
 
 
 def _refresh_after(raw: dict[str, Any], now: float) -> tuple[float, list[str]]:
-    """Seconds a fresh token may be reused: the JWT `exp` beats the cached `expires_in`."""
+    """Seconds a fresh token may be reused: the JWT `exp` beats cached `expires_in`."""
     exp, unusable = _jwt_exp(raw.get("access_token"))
     warnings = []
     if unusable:

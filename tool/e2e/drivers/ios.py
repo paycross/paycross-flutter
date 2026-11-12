@@ -859,7 +859,7 @@ class IosDriver(Driver):
         return None
 
     def _fill(self, name: str, value: str) -> None:
-        """Focuses a field and types into it, retrying once if its value does not change."""
+        """Focuses a field and types into it, retrying once if its value stays put."""
         before = self._value_of(name)
         for _ in range(2):
             self._focus_field(name)
@@ -916,7 +916,7 @@ class IosDriver(Driver):
         return label
 
     def _switch(self, identifier: str) -> tree.Node | None:
-        """Returns the two-state control with that identifier, or None if it is absent."""
+        """Returns the two-state control with that identifier, or None if absent."""
         for node in self._nodes(tolerate=True):
             if node.checked is not None and node.identifier == identifier:
                 return node

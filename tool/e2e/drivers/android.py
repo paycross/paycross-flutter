@@ -381,7 +381,7 @@ class AndroidDriver(Driver):
         self._find(tree.find_identifier, CARD_NUMBER, "the card form", timeout=60)
 
     def present_token(self, token_path: Path) -> None:
-        """Enters the token and taps the example's Pay, without waiting for a card form."""
+        """Enters the token and taps the example's Pay, not waiting for a card form."""
         # WHY: a token the SDK refuses never shows a card form, so waiting for
         # one only delays the report.
         self._enter_token_text(read_token(Path(token_path), verb="type"))
@@ -869,11 +869,11 @@ class AndroidDriver(Driver):
         ) from problem
 
     def screenshot(self) -> bytes:
-        """Returns a screenshot, which is black on the sheet because it is FLAG_SECURE."""
+        """Returns a screenshot, black on the sheet because it is FLAG_SECURE."""
         return self._shell(["exec-out", "screencap", "-p"], binary=True)
 
     def logs_since(self, since: datetime) -> str:
-        """Returns logcat lines from `since` to now, with the cutoff computed on the device."""
+        """Returns logcat lines from `since` to now; the device computes the cutoff."""
         # WHY: logcat stamps are in the device's zone, so the cutoff is
         # computed on the device.
         seconds = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)

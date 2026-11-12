@@ -59,7 +59,7 @@ def _replace_prefixes(data: bytes, secret: bytes) -> bytes:
 
 
 def scrub_resource(value: Any) -> tuple[Any, list[str]]:
-    """Return a copy of the resource with its tokens replaced, and the tokens it held."""
+    """Return a copy of the resource with tokens replaced, and the tokens it held."""
     # WHY: a scrubbed token is replaced, not removed, so saved_card_saved and
     # saved_card_used still read presence.
     found: list[str] = []
