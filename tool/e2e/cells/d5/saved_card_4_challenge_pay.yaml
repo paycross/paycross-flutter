@@ -1,7 +1,7 @@
 # Pays again with the stored challenge card, re-entering the CVV. A saved-card submit carries card.saved_uuid rather
 # than a PAN, and the sandbox routes on the PAN's last four digits, so the SDK must drive a 3DS round trip on re-use.
 # acs:approve and the threeds block assert rather than discover: a stored credential that stops challenging fails the ACS wait,
-# since a silent frictionless re-use would be a liability-shift regression.
+# otherwise a frictionless re-use would pass silently, hiding a liability shift.
 id: saved_card_4_challenge_pay
 platforms: [android, ios]
 card:

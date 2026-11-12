@@ -2,5 +2,7 @@ line-length = 88
 target-version = "py310"
 
 [lint]
-# Each broad `except` carries a `noqa: BLE001` with its reason beside it.
+# Broad `except` clauses are intentional in a few places, each
+# one carrying a `noqa: BLE001` and a comment beside it saying why that
+# breadth is the right answer there.
 select = ["E", "F", "W", "I", "B", "BLE"]
