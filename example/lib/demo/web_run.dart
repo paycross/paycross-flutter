@@ -56,17 +56,7 @@ class WebCheckoutRunScreen extends StatefulWidget {
   State<WebCheckoutRunScreen> createState() => _WebCheckoutRunScreenState();
 }
 
-enum _Stage {
-  working,
-
-  mintFailed,
-
-  noPage,
-
-  launchFailed,
-
-  opened,
-}
+enum _Stage { working, mintFailed, noPage, launchFailed, opened }
 
 class _WebCheckoutRunScreenState extends State<WebCheckoutRunScreen> {
   _Stage _stage = _Stage.working;

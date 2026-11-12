@@ -84,7 +84,6 @@ Future<HistoryEntry> recordRun({
   );
   try {
     await history.append(entry).timeout(bookkeepingTimeout);
-  } catch (_) {
-  }
+  } catch (_) {}
   return entry;
 }

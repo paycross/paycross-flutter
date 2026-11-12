@@ -96,8 +96,7 @@ class SecretStore {
     } catch (_) {
       try {
         await forget();
-      } catch (_) {
-      }
+      } catch (_) {}
       rethrow;
     }
   }

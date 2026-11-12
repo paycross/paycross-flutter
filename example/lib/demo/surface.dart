@@ -1,8 +1,4 @@
-enum PaymentSurface {
-  sdkSheet,
-
-  webCheckout,
-}
+enum PaymentSurface { sdkSheet, webCheckout }
 
 String surfaceName(PaymentSurface surface) => switch (surface) {
   PaymentSurface.sdkSheet => sdkSurfaceName,

@@ -15,13 +15,7 @@ const Duration _writeTimeout = Duration(seconds: 5);
 
 final Expando<Future<void>> _writeQueues = Expando<Future<void>>();
 
-enum PresetKind {
-  builtIn,
-
-  custom,
-
-  scratch,
-}
+enum PresetKind { builtIn, custom, scratch }
 
 class CustomPreset {
   const CustomPreset({

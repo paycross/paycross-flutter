@@ -68,13 +68,7 @@ String? liveEmailProblem(String email) {
 
 const String liveSmokeCustomerReference = 'paycross_live_smoke';
 
-enum LiveScenario {
-  smoke,
-
-  storeCard,
-
-  paySavedCard,
-}
+enum LiveScenario { smoke, storeCard, paySavedCard }
 
 String? liveExtraOption(LiveScenario scenario) => switch (scenario) {
   LiveScenario.smoke => null,
