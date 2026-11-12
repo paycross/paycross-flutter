@@ -28,7 +28,7 @@ Pod::Spec.new do |s|
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
-    # Flutter.framework has no i386 slice.
+    # Flutter.framework has no i386 architecture.
     'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
     # The wrapped SDK uses Swift 6 strict concurrency, which Pods do not inherit from Package.swift.
     'SWIFT_VERSION' => '6.0'
