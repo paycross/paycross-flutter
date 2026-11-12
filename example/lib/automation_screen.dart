@@ -4,18 +4,9 @@ import 'package:paycross_flutter/paycross_flutter.dart';
 import 'e2e_label.dart';
 import 'e2e_mode.dart';
 
-/// The E2E matrix runner's entry point: paste a token, press Pay, read the
-/// outcome out of the accessibility tree.
-///
-/// Frozen. Its widget tree, its strings and the shape of its outcome node
-/// are a contract every cell file in `tool/e2e/cells/` compares against, and
-/// `test/automation_screen_test.dart` pins the tree the runner sees. It kept
-/// the name `CheckoutScreen` and the title `PayCross Example` through the
-/// rename to PayCross Demo for that reason.
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({super.key, this.e2e = kE2e});
 
-  /// Renders the contract label instead of the human-readable outcome.
   final bool e2e;
 
   @override
@@ -42,8 +33,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     String describe;
     try {
       final result = await PayCross.presentPayment(_token.text.trim());
-      // Exhaustive: adding a result case makes this a compile error rather
-      // than a silently unhandled outcome.
       describe = widget.e2e
           ? labelForResult(result)
           : switch (result) {
@@ -52,10 +41,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               PayCrossFailure(:final recovery) when recovery.isRetryable =>
                 'Declined, retryable — $recovery',
               PayCrossFailure(:final recovery) => 'Declined — $recovery',
-              // Distinct from a decline on purpose: the payment may have gone
-              // through, so the merchant reconciles rather than re-charging.
-              // The wording keeps the "Outcome unknown" prefix the matrix
-              // runner uses to recognise a build made without the define.
               PayCrossPending(:final transactionId, :final reasonRaw) =>
                 'Outcome unknown ($reasonRaw) — reconcile server-side'
                     '${transactionId == null ? '' : ': $transactionId'}',
@@ -109,14 +94,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ),
           if (_outcome != null) ...[
             const SizedBox(height: 24),
-            // Plain Text, and deliberately unwrapped. Verified against a
-            // live simulator: SelectableText produces no node in the iOS
-            // accessibility tree at all, and wrapping either widget in
-            // Semantics suppressed it too -- only a bare Text surfaced. The
-            // payment outcome is the one string here that must never be
-            // silent, so it trades selection for being readable at all.
-            // The E2E matrix runner reads this same node, so the shape of
-            // this widget is part of a frozen contract -- see e2e_label.dart.
             Text(_outcome!, style: const TextStyle(height: 1.4)),
           ],
         ],

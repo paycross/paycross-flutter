@@ -6,77 +6,40 @@ import 'package:flutter/material.dart';
 import 'environment.dart';
 import 'presets.dart';
 
-/// This app's own URL scheme.
-///
-/// Its own, and not `paycross-demo`, because the native Android demo
-/// (`com.paycross.demo`) already owns that scheme with the hosts `run` and
-/// `result`, and both apps live on the same colleagues' phones. Two
-/// activities answering one VIEW intent gives a disambiguation chooser at
-/// best and, once somebody has picked a default, the wrong app silently.
 const String demoScheme = 'paycross-flutter-demo';
 
-/// The only surface this app can present. Named in the link so the grammar
-/// has somewhere to grow if a browser surface is ever added, and rejected
-/// rather than ignored when it is anything else.
 const String sheetSurface = 'sheet';
 
-/// What a link turned out to be.
 sealed class DeepLink {
   const DeepLink();
 }
 
-/// Run this scenario.
 final class DeepLinkRun extends DeepLink {
   const DeepLinkRun(this.preset);
 
   final Preset preset;
 }
 
-/// Not addressed to this app. Say nothing.
 final class DeepLinkIgnored extends DeepLink {
   const DeepLinkIgnored();
 }
 
-/// Ours, and wrong. Say what was wrong with it.
 final class DeepLinkRejected extends DeepLink {
   const DeepLinkRejected(this.reason);
 
   final String reason;
 }
 
-/// A preset's name in a form that survives a shell: lower case, with every
-/// run of anything that is not a letter or a digit collapsed to one `-`.
 String presetSlug(String name) => name
     .toLowerCase()
     .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
     .replaceAll(RegExp(r'^-+|-+$'), '');
 
-/// `paycross-flutter-demo://run?preset=<name>&surface=sheet`
-///
-/// `<name>` is either a preset's name exactly as Home spells it -- percent
-/// encoded, arrows and all -- or its [presetSlug]. So `3DS challenge →
-/// approve` answers to `3DS%20challenge%20%E2%86%92%20approve` and to
-/// `3ds-challenge-approve`, and the second is the one that survives being
-/// typed into a shell by somebody reading the name off a screen.
-///
-/// A link carries a preset's name and nothing else. It cannot carry a
-/// credential, a token or a body: the run it starts reads the same secure
-/// store a tile tap reads, so a link that leaked out of a shell history says
-/// only which scenario somebody ran.
-///
-/// In Live every run link is [DeepLinkRejected] rather than honoured: the one
-/// Live scenario is a real charge behind a confirmation dialog, and a link is
-/// exactly the shape that arrives without one -- from a shell history, a chat
-/// message, a script somebody wrote for the sandbox. It is rejected rather
-/// than ignored for the reason every other bad link here is: silence reads as
-/// a broken build.
 DeepLink parseDeepLink(
   Uri uri, {
   DemoEnvironment environment = DemoEnvironment.test,
 }) {
   if (uri.scheme != demoScheme || uri.host != 'run') {
-    // Before the environment check: a link addressed to another app is not
-    // ours to refuse in either environment.
     return const DeepLinkIgnored();
   }
   if (environment == DemoEnvironment.live) {
@@ -99,25 +62,13 @@ DeepLink parseDeepLink(
   for (final preset in demoPresets) {
     if (preset.name == name) return DeepLinkRun(preset);
   }
-  // Exact names first, so no preset's slug can shadow another's real name.
   final slug = presetSlug(name);
   for (final preset in demoPresets) {
     if (presetSlug(preset.name) == slug) return DeepLinkRun(preset);
   }
-  // `customPreset` is deliberately not searched: it is the one entry on Home
-  // that opens the editor rather than a run, because its body is whatever the
-  // person typing decides. It falls through to here and is named back.
   return DeepLinkRejected('No preset is called "$name".');
 }
 
-/// Subscribes to incoming links for as long as its child is mounted.
-///
-/// `uriLinkStream` rather than `getInitialLink()`: the stream replays the
-/// link that launched a cold start, and the one-shot getter races it.
-///
-/// Mounted only in an ordinary build. Under the automation define no
-/// handler is registered at all, so the frozen build opens no subscription
-/// and `main()` awaits exactly what it always did.
 class DeepLinkListener extends StatefulWidget {
   const DeepLinkListener({
     super.key,
@@ -129,7 +80,6 @@ class DeepLinkListener extends StatefulWidget {
   final void Function(Preset preset) onRun;
   final Widget child;
 
-  /// Injected by tests. Null means the real platform stream.
   final Stream<Uri>? links;
 
   @override
@@ -155,10 +105,6 @@ class _DeepLinkListenerState extends State<DeepLinkListener> {
   }
 
   void _handle(Uri uri) {
-    // `readOf`, not `maybeOf`: this runs from a stream callback rather than
-    // from build, and registering a dependency there would be a rebuild
-    // nobody asked for. What it reads is the environment at the moment the
-    // link landed, which is the one that matters.
     final environment =
         LiveModeScope.readOf(context)?.environment ?? DemoEnvironment.test;
     switch (parseDeepLink(uri, environment: environment)) {
@@ -171,17 +117,9 @@ class _DeepLinkListenerState extends State<DeepLinkListener> {
     }
   }
 
-  /// A link the platform could not deliver at all.
-  ///
-  /// Only the type reaches the screen. A native error message is the one
-  /// thing on this path that came from outside the app, and it can carry the
-  /// URL that failed -- the same reason a bug report scrubs one.
   void _handleError(Object error) =>
       _say('Could not read the link: ${error.runtimeType}');
 
-  /// Said on screen rather than only in a log: the person who fired the link
-  /// is holding the phone, and a link that quietly did nothing reads as a
-  /// broken build.
   void _say(String message) {
     ScaffoldMessenger.maybeOf(
       context,

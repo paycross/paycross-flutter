@@ -1,15 +1,5 @@
 // ignore_for_file: prefer_initializing_formals
-// The lint's own fix does not compile: Dart forbids a private NAMED
-// parameter, so `this._x` cannot appear in a `{...}` list, and one of these
-// fields holds a credential.
-//
-// File-level rather than one line-level ignore per field, and that is a
 // readability call, not a limitation: an `// ignore:` on its own line
-// between the `})` and the `:` does attach to the first initializer and does
-// survive `dart format`. It just costs four of them -- `_credentials`,
-// `_now`, `_newIdempotencyKey` and `_timeout` -- which buries a six-line
-// initializer list under comments for one lint that the whole constructor
-// answers the same way.
 
 import 'dart:convert';
 import 'dart:math';
@@ -20,23 +10,12 @@ import 'endpoints.dart';
 import 'presets.dart';
 import 'secrets.dart';
 
-/// How early to replace a bearer token, and the one constant here with a
-/// hard upper bound rather than a preference.
-///
-/// A token minted at the origin at T0 expires at T0 + lifetime, but the
-/// API-Gateway cache in front of the endpoint keeps serving it until
-/// T0 + cacheTTL. A refresh fired at T0 + lifetime - margin only reaches the
-/// origin while `margin < lifetime - cacheTTL`, which is 3600 - 3300 = 300 s
-/// on TEST today. Get it wrong and the failure is not a stale token, it is a
-/// busy loop: the gateway hands back the very same token, its `exp` has not
-/// moved, and the client asks again immediately. Smaller is safe.
 const Duration tokenRefreshMargin = Duration(seconds: 240);
 
 const Duration _requestTimeout = Duration(seconds: 60);
 
 const Set<String> _tokenKeys = {'session_token', 'saved_token', 'used_token'};
 
-/// The merchant API did not do what was asked. Never carries a credential.
 class MinterError implements Exception {
   const MinterError(this.message);
 
@@ -46,8 +25,6 @@ class MinterError implements Exception {
   String toString() => message;
 }
 
-/// One minted session. The token is a live credential with a short life: it
-/// is handed to `presentPayment` once and then dropped.
 class MintedSession {
   const MintedSession({
     required this.id,
@@ -59,34 +36,11 @@ class MintedSession {
   final String id;
   final String token;
 
-  /// The hosted checkout page for this session, when the API offered one.
-  ///
-  /// **Treat this exactly as [token].** It is `…/pay?session=<token>`, so the
-  /// credential is not merely referenced by this string, it is spelled out in
-  /// it. It is handed to the browser once and dropped: it never reaches
-  /// History, a bug report, a log line or a test fixture as a real value, for
-  /// the same reason and with the same force as the token itself.
-  ///
-  /// Null on a session the API did not report as open, and null on a backend
-  /// older than the field. Both are the same thing to the app -- there is no
-  /// page to open -- and the Web checkout surface refuses on either without
-  /// having to tell them apart.
   final String? checkoutUrl;
 
-  /// What was actually sent, with `{{timestamp}}` and `{{uuid}}` resolved.
-  ///
-  /// It does not leave this module, and it must not start to. The preset
-  /// bodies carry a customer's name, email, phone number and billing
-  /// address, so this is PII rather than a debugging string: History stores
-  /// it nowhere, the bug-report block does not quote it, and no screen shows
-  /// it. What reads it today is the minter's own test, which is how the
-  /// substitution is checked at all.
   final String sentBody;
 }
 
-/// A v4 UUID from the platform's secure RNG.
-///
-/// Nine lines instead of a dependency.
 String randomUuidV4() {
   final random = Random.secure();
   final bytes = List<int>.generate(16, (_) => random.nextInt(256));
@@ -97,13 +51,6 @@ String randomUuidV4() {
       '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
 }
 
-/// The `exp` claim out of a JWT, or null if there is not one to read.
-///
-/// Deliberately does not verify the signature: this is scheduling, not
-/// authentication. A forged `exp` costs one unnecessary refresh, and the API
-/// is what decides whether a token is honoured. (Dart's `bool` is not an
-/// `int`, so unlike the Python reference this needs no guard against
-/// `exp: true`.)
 DateTime? jwtExpiry(String token) {
   final parts = token.split('.');
   if (parts.length != 3) return null;
@@ -123,16 +70,6 @@ DateTime? jwtExpiry(String token) {
   }
 }
 
-/// Drops the values a merchant-API resource carries that are credentials.
-///
-/// Every key ending `_url` is treated as carrying one, not `checkout_url`
-/// alone: the same rule `evidence.py`'s `scrub_resource` applies, and one
-/// field name is a worse thing to depend on than a suffix.
-///
-/// Keyed, never shaped. The API re-mints a `session_token` on every read of
-/// an **open** session, so a shape rule anchored on a token this app already
-/// holds would miss it -- and a partial match is worse than none, because it
-/// leaves a headless remnant that reads as redacted and is not.
 Object? scrubResource(Object? value) {
   if (value is Map) {
     return <String, Object?>{
@@ -161,19 +98,6 @@ Object? _withoutSessionParam(Object? value) {
       .toString();
 }
 
-/// One session, minted and immediately abandoned, to prove a credential.
-///
-/// This is the only end-to-end check of `endpoints.dart` there is: a host
-/// that does not resolve surfaces on the first person's phone as a message
-/// they can read and report, rather than at build time.
-///
-/// Each call mints a NEW session rather than replaying the last -- [Minter]
-/// generates a fresh `Idempotency-Key` per call -- so verifying twice leaves
-/// two abandoned sandbox sessions and proves the credentials twice.
-///
-/// [client] exists so a test can drive this without a socket. Passing one
-/// also makes it the caller's to close: the minter closes only a client it
-/// made itself.
 Future<String> mintThrowawaySession(
   Credentials credentials, {
   http.Client? client,
@@ -187,17 +111,11 @@ Future<String> mintThrowawaySession(
   }
 }
 
-/// A thin merchant-API client: one M2M token, mint, read.
-///
-/// This is the merchant-backend step of the flow, performed in-app for
-/// testing only. A real integration does it server-side, never in the app.
 class Minter {
   Minter({
     required Credentials credentials,
     http.Client? client,
     DateTime Function() now = DateTime.now,
-    // Injected by the 401 test, which is what proves the retry replays the
-    // one key rather than minting a second session.
     String Function() newIdempotencyKey = randomUuidV4,
     Duration timeout = _requestTimeout,
     Endpoints endpoints = testEndpoints,
@@ -216,32 +134,18 @@ class Minter {
   final String Function() _newIdempotencyKey;
   final Duration _timeout;
 
-  /// Which environment this minter talks to. Test unless told otherwise.
-  ///
-  /// A default rather than a required argument because every call site but
-  /// one is Test, and because the guarantee that matters is not here: the
-  /// Live path takes its pair from `DemoEnvironmentState.endpoints`, which
-  /// is derived from the same field the red banner renders. The endpoints a
-  /// Live run mints against therefore cannot disagree with what the screen
-  /// says they are.
   final Endpoints _endpoints;
 
   String? _accessToken;
   DateTime _accessTokenDeadline = DateTime.utc(1970);
   Future<String>? _bearerInFlight;
 
-  /// Creates one session from a raw JSON body.
-  ///
-  /// `{{timestamp}}` and `{{uuid}}` are substituted first, the same two
-  /// placeholders the Android demo's scenario bodies use.
   Future<MintedSession> mint(String body) async {
     final sent = substitutePlaceholders(body, now: _now);
     final Object? decoded;
     try {
       decoded = jsonDecode(sent);
     } on FormatException catch (error) {
-      // Unguarded this escapes as a FormatException, and every failure out of
-      // this module is supposed to be a MinterError the UI can render.
       throw MinterError('The session body is not JSON: ${error.message}');
     }
     if (decoded is! Map) {
@@ -254,8 +158,6 @@ class Minter {
       body: sent,
       extraHeaders: {
         'Content-Type': 'application/json',
-        // Generated before the first attempt, so the 401 replay below sends
-        // the same key rather than minting a second live session.
         'Idempotency-Key': _newIdempotencyKey(),
       },
     );
@@ -265,12 +167,6 @@ class Minter {
     if (id is! String || token is! String) {
       throw const MinterError('The mint returned no session_token.');
     }
-    // Kept only if it is a non-empty string. The API sends the key with an
-    // explicit null on a session that is not open, an older one omits it
-    // altogether, and neither is a page anything can be opened at -- so all
-    // three collapse to null here rather than being told apart by a caller.
-    // Not a reason to refuse the mint: a session with no checkout page is
-    // still a session the SDK sheet presents perfectly well.
     final checkoutUrl = raw['checkout_url'];
     return MintedSession(
       id: id,
@@ -282,8 +178,6 @@ class Minter {
     );
   }
 
-  /// The merchant-side truth for one session, scrubbed before it is
-  /// returned. Nothing above this method ever sees a live token.
   Future<Map<String, Object?>> read(String sessionId) async {
     final raw = await _send(
       'GET',
@@ -292,11 +186,6 @@ class Minter {
     return scrubResource(raw)! as Map<String, Object?>;
   }
 
-  /// Releases the HTTP client, if this minter is the one that made it.
-  ///
-  /// A client that was passed in belongs to whoever passed it: closing it
-  /// here would take the connection pool out from under the next minter
-  /// built over the same one.
   void close() {
     if (_ownsClient) _client.close();
   }
@@ -315,11 +204,6 @@ class Minter {
       extraHeaders,
     );
     if (response.statusCode == 401) {
-      // The backstop for every expiry the clock cannot predict: a token that
-      // is not a JWT, a cache that restated `expires_in`, a clock that
-      // disagrees with the issuer's, a token revoked early. Once, never in a
-      // loop -- a replay refused again means the credentials are wrong, and
-      // the decode below says so.
       _accessToken = null;
       _accessTokenDeadline = DateTime.utc(1970);
       response = await _once(method, url, await _bearer(), body, extraHeaders);
@@ -347,16 +231,11 @@ class Minter {
 
   Future<http.Response> _run(http.Request request) async {
     try {
-      // One deadline over both legs. `send` completes when the headers land,
-      // so a deadline on it alone leaves the body read untimed and a phone
-      // that lost signal mid-response waiting as long as the socket lives.
       return await _client
           .send(request)
           .then(http.Response.fromStream)
           .timeout(_timeout);
     } catch (error) {
-      // The exception type is safe to name; its message is not always, so it
-      // goes through the same scrub as a response body.
       throw MinterError(
         '${request.method} ${request.url.path} failed: '
         '${error.runtimeType}: ${_safeToEcho('$error')}',
@@ -369,9 +248,6 @@ class Minter {
     if (cached != null && _now().isBefore(_accessTokenDeadline)) {
       return Future.value(cached);
     }
-    // One fetch however many callers are waiting on it. Two taps in a row
-    // would otherwise mint two tokens, and the second would evict the first
-    // while a request was still on its way out carrying it.
     return _bearerInFlight ??= _fetchBearer().whenComplete(
       () => _bearerInFlight = null,
     );
@@ -400,18 +276,7 @@ class Minter {
     return token;
   }
 
-  /// When to stop reusing a freshly issued token.
-  ///
-  /// The JWT's own `exp` wins over `expires_in`, because only one of them
-  /// describes *this* token: the M2M endpoint sits behind a cache, and a
-  /// cached hit arrives with a full `expires_in` restated as though the
-  /// token had just been minted, so a client starting partway through a
-  /// token's life is told it has the whole thing (tracked internally). `exp` is
-  /// inside the signed payload and the cache does not rewrite it.
   DateTime _deadlineFor(String token, Object? expiresIn) {
-    // No clock-skew guard, unlike `sandbox.py`'s IMPLAUSIBLE_EXP_AGE_SECONDS:
-    // a phone whose clock is wrong reads every `exp` as long past and pays one
-    // extra token round trip per call for it, which is never a failed payment.
     final expiry = jwtExpiry(token);
     if (expiry != null) return expiry.subtract(tokenRefreshMargin);
     final seconds = expiresIn is num ? expiresIn.toInt() : 3600;
@@ -450,13 +315,6 @@ class Minter {
   }
 }
 
-/// Substitutes the two placeholders the preset bodies carry.
-///
-/// Called by [Minter.mint] and nowhere else: substitution happens once, at
-/// the moment of sending, so what the editor holds and what a deep link
-/// carries stay templates until then. It takes its clock rather than reading
-/// the ambient one so that a test can pin `{{timestamp}}` and compare the
-/// reference the minter actually sent against the same stamp.
 String substitutePlaceholders(
   String body, {
   DateTime Function() now = DateTime.now,
@@ -473,18 +331,6 @@ final RegExp _jwtShape = RegExp(
   r'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
 );
 
-/// Renders a response for an error message with every token dropped and the
-/// text cut short. Whole session resources reach here, not just refusals.
-///
-/// Two branches, the same two `sandbox.py`'s `_safe_to_echo` has. A body that
-/// parses is scrubbed by key first, so a token is dropped whatever shape its
-/// value has -- an opaque `saved_token` is invisible to the mask below.
-/// Anything that does not parse -- a transport failure's message, a gateway's
-/// plain-text refusal -- has only the mask.
-///
-/// The key pass is not optional here the way it nearly is in the Python: what
-/// this text reaches is History and the bug-report block, so it is an
-/// artifact rather than a line in a run log.
 String _safeToEcho(String text) {
   final Object? decoded;
   try {
@@ -495,16 +341,6 @@ String _safeToEcho(String text) {
   return maskAndTrim(jsonEncode(scrubResource(decoded)));
 }
 
-/// Masks anything JWT-shaped in [text] and cuts it short.
-///
-/// Public because it is not only responses that need it: a native SDK's
-/// error message makes no promise about what it quotes, and that message is
-/// stored in History and copied into the block people paste into issues.
-/// `outcome.dart` puts it through here for the same reason `_safeToEcho`
-/// does -- one rule about what may leave this app in text, not two.
-///
-/// The 400-character cut is what keeps a runaway message from becoming the
-/// whole bug report.
 String maskAndTrim(String text) {
   final masked = text.replaceAll(_jwtShape, '<redacted>');
   return masked.length <= 400 ? masked : '${masked.substring(0, 400)}…';

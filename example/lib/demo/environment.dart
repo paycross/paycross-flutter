@@ -6,28 +6,12 @@ import 'live.dart';
 import 'secrets.dart';
 import 'wallets.dart';
 
-/// Which backend the app is pointed at right now.
-///
-/// Never persisted. The value lives in one object built at launch, so
-/// "every cold start begins in Test" is a property of the construction
-/// rather than a rule somebody has to remember to apply.
 enum DemoEnvironment { test, live }
 
-/// The word that has to be typed to leave Test.
-///
-/// Typed, not flicked and not tapped through: a switch can be brushed in a
-/// pocket and a dialog can be dismissed by muscle memory, and what is on
-/// the other side of this one spends money.
 const String liveConfirmationWord = 'LIVE';
 
-/// What a switch answers when another one has not finished yet.
-///
-/// An ordinary refusal string rather than an exception, so every caller
-/// renders it the same way it renders the wrong-word message.
 const String switchAlreadyInProgress = 'A switch is already in progress.';
 
-/// Points the native SDK at an environment. Injected so a widget test never
-/// reaches a platform channel.
 typedef ConfigureSdk =
     Future<void> Function({
       required PayCrossEnvironment environment,
@@ -37,7 +21,6 @@ typedef ConfigureSdk =
       String? locale,
     });
 
-/// The real one.
 Future<void> configurePayCross({
   required PayCrossEnvironment environment,
   String? googlePayMerchantId,
@@ -52,18 +35,6 @@ Future<void> configurePayCross({
   locale: locale,
 );
 
-/// Which environment the app is in, and the Live credentials while it is
-/// there.
-///
-/// One object, held above the Navigator, so Settings, Home, History and a
-/// Run screen cannot disagree about where a payment is going.
-///
-/// The Live credentials are a plain field and that is the whole storage
-/// design: they are never written to the secure store, to
-/// `SharedPreferences`, to History or to a bug report, so process death
-/// forgets them and leaving Live drops them. `secrets.dart` is untouched by
-/// this class on purpose -- code that cannot reach the store cannot write
-/// to it by mistake.
 class DemoEnvironmentState extends ChangeNotifier {
   DemoEnvironmentState({
     this.configure = configurePayCross,
@@ -75,62 +46,14 @@ class DemoEnvironmentState extends ChangeNotifier {
 
   final ConfigureSdk configure;
 
-  /// What `main` configured the SDK with at launch, kept so that returning
-  /// to Test restores it. Re-pointing the SDK replaces the whole
-  /// configuration, so a merchant id left out of the way back is a Google
-  /// Pay button that stops appearing until the app is relaunched.
   final String? googlePayMerchantId;
 
-  /// What `main` configured the SDK with at launch for Apple Pay, kept for
-  /// the same reason the Google one is: returning to Test restores it.
-  ///
-  /// Unlike the Google id this is never typed and never stored -- it is the
-  /// build constant that matches the app's entitlement -- so the value that
-  /// arrives here is always [testApplePayMerchantId]. It is carried as a
-  /// field rather than read from the constant on the way back so that the
-  /// two directions have one source between them.
   final String? applePayMerchantId;
 
-  /// The language `main` configured the SDK with at launch, carried for the
-  /// same reason the two wallet identifiers are: re-pointing the SDK replaces
-  /// the whole configuration, so a locale left out of any call here is a
-  /// French sheet that silently goes back to English.
-  ///
-  /// Read once at launch and never changed, which is what the setting itself
-  /// says on the Settings screen. The demo's own screens are unaffected by
-  /// it; this is the sheet's language, not the app's.
   final String? locale;
 
-  /// The theme `main` configured the SDK with at launch, carried for the
-  /// reason the locale is: every re-point replaces the whole configuration,
-  /// so a theme left out of one is a sheet that goes back to its platform
-  /// colours and stays there until the app is relaunched.
-  ///
-  /// What [applyTestAppearance] puts back, which is why that method takes
-  /// null to mean "as it was at launch" rather than "unthemed".
-  ///
-  /// Deliberately not sent to production by [enterLive]. Unlike the language,
-  /// which belongs to the shopper and is the same person's on both sides of
-  /// the switch, a brand colour belongs to a merchant -- and the merchant in
-  /// Live is a different one, whose own colour is set in its back office. A
-  /// Test theme painted over a production sheet would misrepresent exactly
-  /// the thing somebody crossed into Live to look at.
   final PayCrossAppearance? appearance;
 
-  /// True while a switch is waiting on the SDK.
-  ///
-  /// One switch at a time. Two overlapping calls each re-point the SDK and
-  /// each assign the environment, and nothing makes the last configure to
-  /// land and the last assignment to land the same call -- so the banner
-  /// ends up describing an environment the SDK is not in.
-  ///
-  /// There is no timeout on this, and that is a decision rather than an
-  /// omission. A `configure` that never comes back leaves both switches
-  /// refusing until the app is relaunched, which is the accepted trade: this
-  /// is a tool a few people reach for a few times, relaunching is cheap, and
-  /// a timeout would have to guess when the SDK has really given up. Guessing
-  /// that wrong puts a second configure in flight beside the first, which is
-  /// exactly the disagreement this flag exists to prevent.
   bool _switching = false;
 
   DemoEnvironment _environment = DemoEnvironment.test;
@@ -139,50 +62,14 @@ class DemoEnvironmentState extends ChangeNotifier {
 
   Credentials? _liveCredentials;
 
-  /// The production credentials, and only while the app is actually in Live.
-  ///
-  /// Gated on the environment rather than returning the field, because the
-  /// field and the environment change at different moments: [leaveLive]
-  /// awaits the SDK between dropping one and flipping the other, and
-  /// [useForThisSession] is reachable from a button across that await. The
-  /// gate makes "Test never has production credentials" true of every path
-  /// through this class, including ones nobody has written yet.
   Credentials? get liveCredentials => isLive ? _liveCredentials : null;
 
   LiveIdentity? _liveIdentity;
 
-  /// Who a Live charge is made under, and only while the app is actually in
-  /// Live.
-  ///
-  /// Gated on the environment for the same reason [liveCredentials] is: the
-  /// field and the environment change at different moments, [leaveLive]
-  /// awaits the SDK between dropping one and flipping the other, and a
-  /// button is reachable across that await. Unlike a credential this is a
-  /// real person's name and address rather than a secret, which is not a
-  /// reason to hold it any longer -- it is held for one session because that
-  /// is all a charge needs.
   LiveIdentity? get liveIdentity => isLive ? _liveIdentity : null;
 
-  // There is deliberately no currency here. It was held for a session, set
-  // by the same button as the identity and quoted by every Live tile -- and
-  // the owner's word for that was "a lazy workaround". The currency a Live
-  // run charges in is a field of the preset body now, edited on the same
-  // screen and saved in the same store as the amount beside it. What is
-  // held for a session is what a session is actually for: a credential and
-  // an identity, neither of which belongs in a file.
-
-  /// The pair a mint in this environment must use.
-  ///
-  /// Derived rather than stored, so the URLs a run reaches cannot drift
-  /// from the environment the banner is rendering.
   Endpoints get endpoints => isLive ? liveEndpoints : testEndpoints;
 
-  /// Switches to Live, or returns why it did not.
-  ///
-  /// The SDK is re-pointed first and the state flips only if that call
-  /// comes back: a banner that says LIVE over an SDK still on sandbox is a
-  /// lie, and it is the kind that ends with somebody trusting a green
-  /// result that never touched production.
   Future<String?> enterLive(String typed) async {
     if (_switching) return switchAlreadyInProgress;
     if (typed.trim() != liveConfirmationWord) {
@@ -192,22 +79,11 @@ class DemoEnvironmentState extends ChangeNotifier {
     try {
       await configure(
         environment: PayCrossEnvironment.production,
-        // Live's own identifiers, read from the constants rather than from
-        // this state's fields. The fields hold what Test was configured
-        // with, and a Test Apple identifier reaching production would mint
-        // tokens encrypted to the TEST key that no production vault can
-        // decrypt. Google's is empty until the owner is granted production
-        // access in the Wallet Console, which `walletIdOrNull` turns into
-        // the null both SDKs read as "render no button".
         googlePayMerchantId: walletIdOrNull(liveGooglePayMerchantId),
         applePayMerchantId: walletIdOrNull(liveApplePayMerchantId),
-        // The shopper's language, not the environment's: it is the same
-        // person reading the sheet on either side of this switch.
         locale: locale,
       );
     } catch (problem) {
-      // Only the type. A platform exception's message is the one thing on
-      // this path that came from outside the app.
       return 'The SDK would not switch to production: ${problem.runtimeType}';
     } finally {
       _switching = false;
@@ -217,75 +93,31 @@ class DemoEnvironmentState extends ChangeNotifier {
     return null;
   }
 
-  /// Holds a production credential for this session and no longer.
-  ///
-  /// A no-op outside Live rather than a throw: this is reachable only from
-  /// a button that exists only in Live, so a Test-mode call would be a
-  /// programming mistake, and the safe behaviour for one is to hold
-  /// nothing. A Test credential belongs in the secure store, where the
-  /// human can see it and forget it.
   void useForThisSession(Credentials credentials) {
     if (!isLive) return;
     _liveCredentials = Credentials(
       clientId: credentials.clientId,
       clientSecret: credentials.clientSecret,
-      // Rebuilt rather than kept, so a merchant id typed in Test cannot
-      // ride into Live on a copied object.
       googlePayMerchantId: null,
     );
     notifyListeners();
   }
 
-  /// Holds the identity for this session and no longer.
-  ///
-  /// Its own setter rather than an argument on [useForThisSession], so a
-  /// state can be in the one condition the Live tile has to refuse: holding
-  /// a credential and no identity. In the app the same button calls both in
-  /// the same frame.
-  ///
-  /// A no-op outside Live, like [useForThisSession] and for the same reason.
   void useIdentityForThisSession(LiveIdentity identity) {
     if (!isLive) return;
     _liveIdentity = identity;
     notifyListeners();
   }
 
-  /// Re-points the SDK at Test with [appearance], and with null to put it
-  /// back the way `main` configured it at launch.
-  ///
-  /// Sandbox is hard-coded rather than derived, and that is the guard: the
-  /// preset tiles this is called from are not rendered in Live at all, so a
-  /// call from one is always a Test call, and an environment read from the
-  /// state here would be a second way for a themed run to reach production.
-  ///
-  /// Re-pointing replaces the whole configuration, so both wallet identifiers
-  /// go back in each time — a merchant id left out of the way back is a
-  /// Google Pay button that stops appearing until the app is relaunched.
   Future<void> applyTestAppearance(PayCrossAppearance? forThisRun) => configure(
     environment: PayCrossEnvironment.sandbox,
     googlePayMerchantId: googlePayMerchantId,
     applePayMerchantId: applePayMerchantId,
-    // Null is the way back rather than a clearing, which is what the launch
-    // theme is here for: a themed tile that ended by clearing the colours a
-    // colleague set in Settings would leave them cleared until the next
-    // launch, and look exactly like the setting having no effect.
     appearance: forThisRun ?? appearance,
     locale: locale,
   );
 
-  /// Returns to Test, or returns why it did not.
-  ///
-  /// On every exit this actually performs, the credentials go first: they
-  /// are the human's to revoke the moment they ask, whatever the SDK says
-  /// next. An exit refused at the door -- because another switch is already
-  /// in flight -- returns before touching them, which is the point of
-  /// refusing at the door: it performed nothing, so it forgets nothing.
-  ///
-  /// The environment flips only on proof, for the same reason [enterLive]
-  /// flips only on proof.
   Future<String?> leaveLive() async {
-    // Before the credentials are touched: a refused exit must not be an exit
-    // that forgot them anyway.
     if (_switching) return switchAlreadyInProgress;
     _liveCredentials = null;
     _liveIdentity = null;
@@ -296,18 +128,9 @@ class DemoEnvironmentState extends ChangeNotifier {
         googlePayMerchantId: googlePayMerchantId,
         applePayMerchantId: applePayMerchantId,
         locale: locale,
-        // Restored on the way back, with the wallet identifiers and the
-        // language: this is the environment the theme belongs to, and it is
-        // the only call that can put it back.
         appearance: appearance,
       );
     } catch (problem) {
-      // The same second drop the success path makes below, and for the same
-      // reason: the app was in Live across that await, so a button could
-      // have armed a fresh credential in the window. This path stays in
-      // Live, so the getter's gate would not hide one -- and the message
-      // returned here promises they are gone. Before the notify, so a
-      // listener reading during it sees that promise already kept.
       _liveCredentials = null;
       _liveIdentity = null;
       notifyListeners();
@@ -316,11 +139,6 @@ class DemoEnvironmentState extends ChangeNotifier {
     } finally {
       _switching = false;
     }
-    // Again, and this is not the same drop as the one above. The app was
-    // still in Live across that await, so a button could have armed a fresh
-    // production credential in the window. Dropping the reference is what
-    // stops it being handed back the next time Live is entered; the getter
-    // only stops it being read in Test.
     _liveCredentials = null;
     _liveIdentity = null;
     _environment = DemoEnvironment.test;
@@ -329,25 +147,8 @@ class DemoEnvironmentState extends ChangeNotifier {
   }
 }
 
-/// The colour of the banner, and of every Live marking that echoes it.
-///
-/// Material's own error red rather than a theme colour: the banner is
-/// outside every `Scaffold` and has to read the same in the light theme and
-/// the dark one, and "this is the dangerous mode" is not a brand decision.
 const Color liveRed = Color(0xFFB3261E);
 
-/// Publishes [DemoEnvironmentState] to the whole app and paints the LIVE
-/// banner over every route.
-///
-/// Mounted from `MaterialApp.builder`, which wraps the **Navigator**: a
-/// route pushed later is a descendant, so Settings, History and a Run
-/// screen all read one environment and all sit under one banner. A scope
-/// mounted inside `home:` would be a sibling of every pushed route and
-/// invisible to all of them.
-///
-/// Not mounted at all under the automation define -- `main.dart` passes no
-/// builder there -- so the frozen build has no toggle in it rather than a
-/// toggle that is switched off.
 class LiveModeScope extends StatefulWidget {
   const LiveModeScope({
     super.key,
@@ -361,44 +162,22 @@ class LiveModeScope extends StatefulWidget {
 
   final Widget child;
 
-  /// Injected by tests. Null means this widget owns one.
   final DemoEnvironmentState? state;
 
-  /// Passed on to a state this widget builds itself, so returning to Test
-  /// restores what `main` configured at launch.
   final String? googlePayMerchantId;
 
-  /// Passed on with the Google one, and for the same reason.
   final String? applePayMerchantId;
 
-  /// Passed on with the wallet identifiers, and for the same reason: every
-  /// re-point this scope's state makes has to carry it or the sheet's
-  /// language is lost at the first environment switch.
   final String? locale;
 
-  /// Passed on with the language, and for the same reason.
   final PayCrossAppearance? appearance;
 
-  /// The state above [context], or null where there is none.
-  ///
-  /// Subscribes: a widget that calls this rebuilds when the environment or
-  /// the held credentials change.
   static DemoEnvironmentState? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<_EnvironmentScope>()?.state;
 
-  /// The state above [context] without subscribing to it.
-  ///
-  /// For a callback that runs outside `build` -- the deep-link stream is
-  /// the one that matters -- where registering a dependency would be a
-  /// rebuild nobody asked for.
   static DemoEnvironmentState? readOf(BuildContext context) =>
       context.getInheritedWidgetOfExactType<_EnvironmentScope>()?.state;
 
-  /// The environment above [context], or Test where there is no scope.
-  ///
-  /// Absent-means-Test is what keeps every widget test written before Live
-  /// mode existed meaning exactly what it meant, and it is also what the
-  /// automation build gets.
   static DemoEnvironment environmentOf(BuildContext context) =>
       maybeOf(context)?.environment ?? DemoEnvironment.test;
 
@@ -407,19 +186,11 @@ class LiveModeScope extends StatefulWidget {
 }
 
 class _LiveModeScopeState extends State<LiveModeScope> {
-  /// The state this widget made, or null when one was passed in.
-  ///
-  /// Non-null exactly when there is something to dispose, which is what
-  /// [dispose] below reads it for.
   DemoEnvironmentState? _own;
 
   @override
   void initState() {
     super.initState();
-    // Here rather than lazily in `build`, so that building this widget is
-    // not what brings its state into existence. Nothing depended on the
-    // laziness -- `build` runs immediately after this -- and a `build` with
-    // no side effects is one that can be called twice safely.
     if (widget.state == null) {
       _own = DemoEnvironmentState(
         googlePayMerchantId: widget.googlePayMerchantId,
@@ -435,11 +206,6 @@ class _LiveModeScopeState extends State<LiveModeScope> {
   @override
   void didUpdateWidget(LiveModeScope old) {
     super.didUpdateWidget(old);
-    // Whether a scope owns its state is decided once, in initState, so a
-    // rebuild that changes the answer would find `_own` null and read as a
-    // null-check failure somewhere in `build` rather than as the misuse it
-    // is. Nothing in the app does this -- `main` never passes a state -- but
-    // a suite that pumps a scope both ways at one position would.
     assert(
       (widget.state == null) == (old.state == null),
       'Whether a scope owns its state is fixed for its lifetime.',
@@ -448,9 +214,6 @@ class _LiveModeScopeState extends State<LiveModeScope> {
 
   @override
   void dispose() {
-    // Only the one this widget made. A state that was passed in belongs to
-    // whoever passed it, and disposing it here would take it out from under
-    // a test that is still asserting on it.
     _own?.dispose();
     super.dispose();
   }
@@ -471,7 +234,6 @@ class _EnvironmentScope extends InheritedNotifier<DemoEnvironmentState> {
   DemoEnvironmentState get state => notifier!;
 }
 
-/// The red bar, and nothing at all in Test.
 class _LiveFrame extends StatelessWidget {
   const _LiveFrame({required this.child});
 
@@ -483,8 +245,6 @@ class _LiveFrame extends StatelessWidget {
     return Column(
       children: [
         const Material(
-          // Its own Material: this is above every Scaffold, so there is no
-          // ancestor to take a colour or a text style from.
           color: liveRed,
           child: SafeArea(
             bottom: false,
@@ -506,9 +266,6 @@ class _LiveFrame extends StatelessWidget {
             ),
           ),
         ),
-        // The banner has already taken the status-bar inset. Without this
-        // the Scaffold below takes it a second time and leaves a visible
-        // double gap under the bar on a real phone.
         Expanded(
           child: MediaQuery.removePadding(
             context: context,

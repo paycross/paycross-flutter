@@ -17,13 +17,6 @@ import 'shop_outcome.dart';
 import 'shop_screen.dart';
 import 'thank_you_screen.dart';
 
-/// The order, the total, and the button that pays for it.
-///
-/// The third of the five review screens, and the only one in the shop that
-/// touches the payment machinery. Every platform edge is a constructor
-/// argument -- the credential read, the mint, the sheet, the history and the
-/// version read -- which is what lets the whole flow be tested with no device
-/// and no network, the way `RunScreen` is.
 class ShopCheckoutScreen extends StatefulWidget {
   const ShopCheckoutScreen({
     super.key,
@@ -38,8 +31,6 @@ class ShopCheckoutScreen extends StatefulWidget {
 
   final Product product;
 
-  /// Where the merchant credentials are read from, exactly as a preset run
-  /// reads them.
   final SecretStore store;
 
   final Future<MintedSession> Function(Credentials, String body) mintWith;
@@ -47,7 +38,6 @@ class ShopCheckoutScreen extends StatefulWidget {
   final HistoryStore history;
   final Future<DemoVersions> Function() readVersions;
 
-  /// The clock the order number is stamped from.
   final DateTime Function() now;
 
   @override
@@ -55,24 +45,10 @@ class ShopCheckoutScreen extends StatefulWidget {
 }
 
 class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
-  /// True from the tap until the payment has finished or been refused.
-  ///
-  /// The button goes dead rather than merely ignoring the second tap: the
-  /// credential read and the mint both sit in that gap, and a second one
-  /// would mint a second session and open a second sheet over the first.
   bool _paying = false;
 
-  /// What to tell the shopper about a payment that did not complete, or null
-  /// when there is nothing to say yet.
   String? _note;
 
-  /// True once a payment came back unresolved.
-  ///
-  /// Its own field rather than a second reading of [_note], and the reason is
-  /// the one outcome it stands for: nobody knows whether that payment took
-  /// the money, so pressing Pay again can charge the shopper twice. The
-  /// button stays dead for the life of this screen, because nothing that
-  /// happens here can resolve it.
   bool _unresolved = false;
 
   Future<void> _pay() async {
@@ -88,19 +64,12 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
       );
       if (!mounted) return;
       if (credentials == null) {
-        // The demo's own answer to "not configured", and the same one both
-        // preset entrances give: somewhere the human can act beats a refusal
-        // they can only read. Nothing has been minted, so nothing is lost by
-        // coming back here and pressing Pay again afterwards.
         await Navigator.of(
           context,
         ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
         return;
       }
 
-      // Stamped before the mint and held, because the body carries it and the
-      // thank-you page shows it: a second reading of the clock would let the
-      // number on the screen differ from the one the back office has.
       final reference = orderReference(widget.now());
       final MintedSession minted;
       try {
@@ -109,7 +78,6 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
           orderBody(product: widget.product, reference: reference),
         );
       } on MinterError catch (problem) {
-        // MinterError never carries a credential; see minter.dart.
         if (mounted) setState(() => _note = problem.message);
         return;
       }
@@ -117,10 +85,6 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
       final run = await presentSession(widget.present, minted.token);
       if (!mounted) return;
 
-      // Recorded, but never waited on. A payment that may have taken money
-      // must not hold the shopper on a spinner while a store answers, and
-      // `recordRun` swallows both its own failures -- so there is nothing
-      // here for an unawaited future to lose.
       unawaited(
         recordRun(
           history: widget.history,
@@ -133,10 +97,6 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
       );
 
       if (run.result is PayCrossSuccess) {
-        // The checkout and the product page go with it. A paid order that is
-        // still one back-press from a live Pay button is an order somebody
-        // can buy twice, and back is the first thing anybody walking a flow
-        // presses.
         await Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute<void>(
             builder: (_) => ThankYouScreen(
@@ -149,12 +109,6 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
         );
         return;
       }
-      // Everything else -- cancelled, refused, unresolved, and a sheet that
-      // threw -- lands back here in the shop's own words for it. The demo's
-      // wording carries the server's recovery token and a transaction id,
-      // which is what somebody debugging a scenario needs and exactly what a
-      // shopper must never be shown. Nothing is lost by it: History records
-      // the demo's wording, so the run is still reportable in full.
       if (mounted) {
         setState(() {
           _note = shopOutcomeMessage(run);
@@ -194,10 +148,6 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Flexible and Expanded for the reason the thank-you
-                // page's rows carry them: two loose children in a
-                // `spaceBetween` row have no width to give back, and this
-                // one ran off the edge once the phone's font scale was up.
                 Flexible(
                   child: Text('Total', style: theme.textTheme.titleMedium),
                 ),
@@ -214,10 +164,6 @@ class _ShopCheckoutScreenState extends State<ShopCheckoutScreen> {
           ),
           const SizedBox(height: 24),
           if (note != null) ...[
-            // A live region, like the run screen's outcome card: the answer
-            // lands in place minutes after the tap when a bank has asked the
-            // shopper a question, and without this a screen-reader user is
-            // never told the payment finished.
             Semantics(
               liveRegion: true,
               child: Card(

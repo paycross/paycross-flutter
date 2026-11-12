@@ -10,25 +10,12 @@ import 'minter.dart';
 import 'secrets.dart';
 import 'version_panel.dart';
 
-/// Mints a throwaway session to prove the credentials work, and returns a
-/// line to show the human. Injected so the widget tests never mint.
-///
-/// This is the only end-to-end check of `endpoints.dart` there is: a host
-/// that does not resolve surfaces here, on the first person's phone, as a
-/// message they can read and report.
 typedef VerifyCredentials = Future<String> Function(Credentials credentials);
 
-/// Why "Use for this session" is dead while a field is still empty.
-///
-/// A filled-but-wrong field carries its own `errorText`; an empty one
-/// carries nothing, because an untouched field is not a mistake yet and
-/// a screen that opens with two red errors reads as a broken screen. So
-/// the reason for an empty field lives on the button instead.
 const String _liveInputsHint =
     'Fill in the client ID, the client secret, a first and last name, '
     'and an email address to enable this.';
 
-/// Where the credentials are entered, checked and forgotten.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
@@ -41,14 +28,8 @@ class SettingsScreen extends StatefulWidget {
 
   final SecretStore store;
 
-  /// Where the payment sheet's language is kept. Its own store rather than a
-  /// field on [SecretStore]: a language is not a secret, and it is read at
-  /// launch by `main` from plain preferences rather than from a keychain.
   final LanguageStore languageStore;
 
-  /// Where the payment sheet's theme is kept. Its own store beside the
-  /// language's, and plain preferences for the same reason: how a sheet looks
-  /// is not a secret, and `main` reads it at launch from the same place.
   final AppearanceStore appearanceStore;
   final VerifyCredentials verifyCredentials;
   final Future<DemoVersions> Function() readVersions;
@@ -70,63 +51,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _buttonCornerRadius = TextEditingController();
   final _fontScale = TextEditingController();
 
-  // There is deliberately no currency field here any more. This screen held
-  // one, picked off a list of three and handed over by "Use for this
-  // session" -- which meant the amount a Live tile charged was set in one
-  // place and the currency in another. Both are fields of the preset body
-  // now, edited together on the editor screen and saved together.
-
   bool _revealSecret = false;
   bool _busy = false;
 
-  /// True from the moment Live is chosen until it is either confirmed or
-  /// abandoned. It is not the environment -- the environment lives in
-  /// [DemoEnvironmentState] and only the typed word moves it.
   bool _askingForLive = false;
 
-  /// Whether the first read has come back, whatever it found.
-  ///
-  /// Every button is dead until it has. Before that the fields are empty
-  /// because nothing has been read yet, not because nothing is stored, and
-  /// a Save on that emptiness would write it straight over a good
-  /// credential -- silently, since an empty pair reads back as "not
-  /// configured" and looks exactly like a store that was never set up.
   bool _loaded = false;
   String? _message;
 
-  /// What the store is believed to hold, so "Verify credentials" can say
-  /// whether what was just proven is also what the next launch will use.
-  ///
-  /// After a write or a delete that threw, this goes back to null rather than
-  /// staying as it was: `SecretStore.write` and `forget` touch three keys in
-  /// turn, so a failure part-way leaves a store this screen can no longer
-  /// describe -- and null is both the honest answer and the one a guarded
-  /// read will most likely give, since it needs the id and the secret to
-  /// return anything at all.
   Credentials? _stored;
 
-  /// The language the payment sheet is pinned to, as this screen last read or
-  /// wrote it.
   DemoLanguage _language = DemoLanguage.system;
 
-  /// Whether the language read has come back.
-  ///
-  /// The toggle is dead until it has, for the reason [_loaded] keeps the
-  /// buttons dead: before the read lands the toggle shows System because
-  /// nothing has been read yet, not because nothing is stored, and a tap on
-  /// that emptiness would write it over a good choice.
   bool _languageLoaded = false;
 
-  /// Whether the sheet follows the device or is pinned, as this screen last
-  /// read or wrote it. The five text fields hold the rest of the theme.
   PayCrossThemeMode _themeMode = PayCrossThemeMode.system;
 
-  /// Whether the appearance read has come back.
-  ///
-  /// Every appearance control is dead until it has, for the reason the
-  /// language toggle is: before the read lands the fields are empty because
-  /// nothing has been read yet, not because nothing is stored, and a
-  /// keystroke on that emptiness would write it over a good theme.
   bool _appearanceLoaded = false;
 
   @override
@@ -156,29 +96,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final stored = await widget.store.read();
     if (!mounted) return;
-    // Read here, where the store has just answered, and never held as a
-    // field. `SecretStore.read` is three sequential platform-channel
-    // round-trips, so a load started in Test can easily land after the human
-    // has crossed into Live -- and the environment that decides whether this
-    // read may be shown is the one in force when it lands, not the one it
-    // began under. A `bool` maintained by this screen's own switch paths
-    // could only ever know about crossings this screen made; the scope is
-    // the one source of truth, and it knows about all of them.
-    //
-    // `readOf`, not `maybeOf`: this runs after an await rather than from
-    // build, where registering an inherited dependency would be a rebuild
-    // nobody asked for.
     final live = LiveModeScope.readOf(context)?.isLive ?? false;
     setState(() {
       _stored = stored;
-      // Read, but not shown. A screen pushed from Live -- by the tile with
-      // no credentials, or by the profile strip -- would otherwise arrive
-      // with the sandbox client id and secret already in its fields, one tap
-      // from being sent to the production merchant. `_stored` is still set,
-      // so the screen still knows what the next Test launch will use.
       if (stored != null && !live) {
-        // Only what is still empty: a slow Keychain that answers after the
-        // human started typing must not pull the text out from under them.
         if (_clientId.text.isEmpty) _clientId.text = stored.clientId;
         if (_clientSecret.text.isEmpty) {
           _clientSecret.text = stored.clientSecret;
@@ -187,17 +108,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _googlePay.text = stored.googlePayMerchantId ?? '';
         }
       }
-      // Set on the empty path too -- a store with nothing in it is the
-      // first-run case, and leaving the screen dead there would make a fresh
-      // install impossible to configure.
       _loaded = true;
     });
   }
 
   Future<void> _loadLanguage() async {
-    // Guarded inside the store, which answers System for a store it could not
-    // read -- the same answer `main` acts on, so the screen and the launch
-    // cannot disagree about an unreadable store.
     final language = await widget.languageStore.read();
     if (!mounted) return;
     setState(() {
@@ -207,8 +122,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _chooseLanguage(DemoLanguage language) async {
-    // On screen first: the toggle is what the human just pressed, and a
-    // segment that springs back while a write is in flight reads as a refusal.
     setState(() {
       _language = language;
       _message = null;
@@ -217,10 +130,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await widget.languageStore.write(language);
     } catch (problem) {
       if (!mounted) return;
-      // Only the type, like every other store failure on this screen. What
-      // matters is that the choice on screen is not the choice the next
-      // launch will read, because the next launch is the only thing that
-      // reads it at all.
       setState(
         () => _message =
             'Could not save the language: ${problem.runtimeType}. It applies '
@@ -230,9 +139,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadAppearance() async {
-    // Guarded inside the store, which answers `DemoAppearance.none` for
-    // anything it cannot read -- the same answer `main` acts on, so the screen
-    // and the launch cannot disagree about an unreadable store.
     final appearance = await widget.appearanceStore.read();
     if (!mounted) return;
     setState(() {
@@ -241,12 +147,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  /// Puts a theme on screen. Call inside `setState`.
-  ///
-  /// An empty field is how "leave this alone" is typed, so a null field is
-  /// cleared rather than written as the word null -- and clearing is also
-  /// what the preset button does to the font scale, which the preset does not
-  /// set.
   void _showAppearance(DemoAppearance appearance) {
     _brandLight.text = appearance.brandLight == null
         ? ''
@@ -260,12 +160,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _fontScale.text = _lengthText(appearance.fontScale);
   }
 
-  /// What is on screen right now, with every field this app would refuse left
-  /// out.
-  ///
-  /// Left out rather than refused wholesale: a half-typed colour beside a
-  /// good radius should cost the colour and keep the radius, and the field
-  /// that was refused is carrying its own `errorText` while it is.
   DemoAppearance get _typedAppearance => DemoAppearance(
     brandLight: colorFromHex(_brandLight.text.trim()),
     brandDark: colorFromHex(_brandDark.text.trim()),
@@ -275,23 +169,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     fontScale: _typedLength(_fontScale, isValidFontScale),
   );
 
-  /// Writes what is on screen, and says so when it could not.
-  ///
-  /// Called on every keystroke and every segment, like the language toggle
-  /// beside it: there is no Save for a theme, and one that had to be pressed
-  /// would be one more thing to forget between typing a colour and relaunching
-  /// to see it. A half-typed colour writes as no colour and is corrected by
-  /// the next keystroke, which costs nothing -- the store is read once, at
-  /// launch.
   Future<void> _writeAppearance() async {
     setState(() => _message = null);
     try {
       await widget.appearanceStore.write(_typedAppearance);
     } catch (problem) {
       if (!mounted) return;
-      // Only the type, like every other store failure on this screen. What
-      // matters is that the theme on screen is not the theme the next launch
-      // will read, because the next launch is the only thing that reads it.
       setState(
         () => _message =
             'Could not save the appearance: ${problem.runtimeType}. It '
@@ -301,38 +184,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _chooseThemeMode(PayCrossThemeMode mode) async {
-    // On screen first, for the reason the language toggle sets itself first:
-    // a segment that springs back while a write is in flight reads as a
-    // refusal.
     setState(() => _themeMode = mode);
     await _writeAppearance();
   }
 
-  /// Loads the theme the one themed preset tile runs with.
-  ///
-  /// A starting point rather than a mode: what it writes is ordinary typed
-  /// values, and the next keystroke in any field edits them like any others.
   Future<void> _loadThemedPreset() async {
     setState(() => _showAppearance(DemoAppearance.themedPreset));
     await _writeAppearance();
   }
 
-  /// Why what is typed cannot be used yet, or null if it can.
-  ///
-  /// Both halves or neither. An empty pair does not fail early on its own:
-  /// the minter would send Basic auth over a bare colon and the token
-  /// endpoint would answer 401, which reads as "these credentials are wrong"
-  /// rather than "you have not entered any".
   String? _whyUnusable(Credentials typed) =>
       typed.clientId.isEmpty || typed.clientSecret.isEmpty
       ? 'Enter both a client ID and a client secret first.'
       : null;
 
-  /// Whether what is on screen is what the store holds.
-  ///
-  /// Nothing stored counts as a difference: there is something to save. The
-  /// merchant id is compared too even though minting does not use it, because
-  /// an unsaved change to it is lost just as quietly as an unsaved secret.
   bool _matchesStored(Credentials typed) {
     final stored = _stored;
     return stored != null &&
@@ -349,16 +214,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         : _googlePay.text.trim(),
   );
 
-  /// The identity typed on this screen, or null if what is typed is not
-  /// one.
   LiveIdentity? get _typedIdentity =>
       LiveIdentity.parse(name: _liveName.text, email: _liveEmail.text);
 
-  /// Whether "Use for this session" has everything it needs.
-  ///
-  /// Named once and read twice, by the button's `onPressed` and by the
-  /// hint that explains why it is dead, so the reason given and the
-  /// reason applied cannot drift -- the same shape `armed` already has.
   bool get _liveInputsComplete =>
       _whyUnusable(_typed) == null && _typedIdentity != null;
 
@@ -380,8 +238,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       nowStored = typed;
       said = 'Saved.';
     } catch (problem) {
-      // Only the type: the thing that failed to be written is a credential,
-      // and a store's exception is free to quote what it was handed.
       said = 'Could not save: ${problem.runtimeType}';
     }
     if (!mounted) return;
@@ -407,8 +263,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       said = 'Could not forget: ${problem.runtimeType}';
     }
     if (!mounted) return;
-    // Only on success: emptying the fields after a delete that threw would
-    // tell the human the credentials are gone while they are still there.
     if (forgotten) {
       _clientId.clear();
       _clientSecret.clear();
@@ -421,21 +275,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  /// What a tap on the switch does, which is never the switch itself.
-  ///
-  /// Choosing Live opens the gate. Choosing Test walks straight back through
-  /// it, dropping the Live credentials on the way -- the ceremony is on the
-  /// way in, because that is the direction that costs money.
   Future<void> _chooseEnvironment(
     DemoEnvironmentState state,
     DemoEnvironment chosen,
   ) async {
-    // The handler, not just the widget. `onSelectionChanged: _busy ? null`
-    // and `onPressed: _busy ? null` only take effect on the NEXT build, so
-    // two taps inside one frame both arrive here. The second would get
-    // `switchAlreadyInProgress` back, render it for a switch that has not
-    // failed, and set `_busy` back to false underneath the first -- reopening
-    // the toggle while the SDK call is still in flight.
     if (_busy) return;
     if (chosen == DemoEnvironment.live) {
       setState(() {
@@ -450,26 +293,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     final refused = await state.leaveLive();
     if (!mounted) return;
-    // Unconditional, unlike the enter path below: a refused exit may have
-    // left a production credential on screen, and forgetting one that was
-    // safe costs a retype, while keeping one that was not costs a real
-    // charge. So the two directions differ on purpose -- entering clears
-    // only on success, leaving clears either way.
     _forgetWhatWasTyped();
     setState(() {
       _busy = false;
       _askingForLive = false;
-      // With it, not just beside it: this screen cannot be in Live with the
-      // gate open, but a second surface driving the same state can flip to
-      // Live and back, which hides the gate and shows it again. A word left
-      // in the field across that round trip is a red button armed the moment
-      // it reappears.
       _liveConfirm.clear();
       _message = refused;
     });
-    // Only once back in Test is there a store to read: the fields fill again
-    // from the sandbox credentials the human saved, which are the ones the
-    // next Test run will use.
     if (refused == null) await _load();
   }
 
@@ -481,15 +311,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     final refused = await state.enterLive(_liveConfirm.text);
     if (!mounted) return;
-    // Emptied only when the switch actually happened: what was in these
-    // fields is a sandbox credential, and in Live it must not be one
-    // keystroke away from being sent to production. A refused switch left
-    // the app in Test, where that credential still belongs.
-    //
-    // A read started in Test can still be in flight here and will fill any
-    // empty field it finds when it lands. It cannot undo this clear: a
-    // `refused` of null means `enterLive` has already flipped the
-    // environment, and [_load] reads that at the moment it lands.
     if (refused == null) _forgetWhatWasTyped();
     setState(() {
       _busy = false;
@@ -499,11 +320,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  /// Closes the gate without switching, forgetting what was typed into it.
-  ///
-  /// The word is cleared rather than left for next time, and that is the
-  /// whole value of the button: a gate that reopens with [liveConfirmationWord]
-  /// already in it is a red button armed on arrival.
   void _abandonTheGate() {
     setState(() {
       _askingForLive = false;
@@ -512,39 +328,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  /// Empties every field this screen holds, without touching any store.
-  ///
-  /// Crossing between environments in either direction: a sandbox
-  /// credential left on screen in Live is one tap away from the wrong
-  /// place, a production credential left on screen in Test is one Save
-  /// away from a worse one, and an identity typed for one Live session
-  /// has no business being pre-filled for the next.
   void _forgetWhatWasTyped() {
     _clientId.clear();
     _clientSecret.clear();
     _googlePay.clear();
     _liveName.clear();
     _liveEmail.clear();
-    // The reveal goes with them. It is a decision the human took about a
-    // sandbox secret, in a room they judged safe for one; inheriting it puts
-    // the next environment's secret on screen in plaintext without anybody
-    // choosing that.
     _revealSecret = false;
     _stored = null;
   }
 
-  /// Holds what is typed for this session, in memory, and says so.
-  ///
-  /// The Live counterpart of Save, and deliberately not called one: nothing
-  /// is saved. There is no Verify beside it because the smoke charge is the
-  /// verification -- a Live probe would create a real production session as
-  /// a side effect of checking a password. (The figure lives in
-  /// `liveSmokeMinorUnits`; this sentence deliberately does not repeat it.)
   void _useForThisSession(DemoEnvironmentState state) {
     final identity = _typedIdentity;
-    // The button is dead unless this is non-null, so this is the type
-    // system rather than a second rule: `parse` returns a nullable and
-    // the state takes a `LiveIdentity`.
     if (identity == null) return;
     state.useForThisSession(_typed);
     state.useIdentityForThisSession(identity);
@@ -569,16 +364,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     String said;
     try {
       final minted = await widget.verifyCredentials(typed);
-      // Verify mints with what is on screen, not with what is stored, and
-      // deliberately does not save -- the mint is a throwaway. So a human who
-      // edits a field, verifies and walks away has proven a credential the
-      // next launch will not use. This line is the only thing that says so.
       said = _matchesStored(typed)
           ? '$minted Verified.'
           : '$minted Verified — press Save to keep them.';
     } on MinterError catch (problem) {
-      // MinterError never carries a credential -- see minter.dart's
-      // _safeToEcho -- so this is safe to put on screen verbatim.
       said = problem.message;
     } catch (problem) {
       said = 'Could not reach the sandbox: ${problem.runtimeType}';
@@ -594,18 +383,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final state = LiveModeScope.maybeOf(context);
     final live = state?.isLive ?? false;
-    // Named once and read twice, by the gate's button and by the hint that
-    // explains it, so the reason given and the reason applied cannot drift.
     final armed = _liveConfirm.text.trim() == liveConfirmationWord;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          // Absent in a tree with no scope, which is what the automation
-          // build and every widget test written before Live mode gets: there
-          // is nothing to toggle there, so the screen stays exactly what it
-          // was.
           if (state != null) ...[
             SegmentedButton<DemoEnvironment>(
               key: const ValueKey('environmentToggle'),
@@ -641,8 +424,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 autocorrect: false,
                 enableSuggestions: false,
                 textCapitalization: TextCapitalization.characters,
-                // The button wakes on the keystroke that completes the word,
-                // rather than on a submit nobody would think to press.
                 onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
                   labelText: 'Type $liveConfirmationWord',
@@ -655,16 +436,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 runSpacing: 12,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  // The reason travels with the button. Sighted, the
-                  // instruction is a paragraph three rows up and obviously
-                  // related; to a screen reader it is two nodes back, so a
-                  // dimmed button with nothing attached is a dead end. The
-                  // Test branch keeps "Reading saved credentials…" inside the
-                  // Wrap beside the buttons it explains for the same reason.
-                  // Empty once the button is live: a hint that outlives the
-                  // condition it describes is noise on every later swipe.
-                  // Merged, so the hint lands on the button's own node rather
-                  // than on a parent one a screen reader reaches separately.
                   MergeSemantics(
                     child: Semantics(
                       hint: armed
@@ -681,12 +452,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                   ),
-                  // Without this the gate is a dead end: the environment is
-                  // still Test, so Test is the selected segment, and a
-                  // SegmentedButton makes tapping the selected one a no-op.
-                  // Nothing is at risk while it is open, but a screen whose
-                  // job is to be unambiguous should not have a corner with no
-                  // way out of it.
                   TextButton(
                     key: const ValueKey('cancelLive'),
                     onPressed: _busy ? null : _abandonTheGate,
@@ -697,11 +462,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 20),
             ],
           ],
-          // Names the environment it is configuring and the host it will
-          // reach, in both directions. The line shipped in v0.1.0 promised
-          // this build had no way to switch; there is one now, immediately
-          // above this, and a promise left standing after it stopped being
-          // true is worse than no promise at all.
           Text(
             live
                 ? 'Live — ${liveEndpoints.sessionsUrl}. These must be '
@@ -720,16 +480,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             controller: _clientId,
             autocorrect: false,
             enableSuggestions: false,
-            // In Live only: "Held for this session" describes a pair that
-            // has just stopped being what is on screen, and silence is the
-            // honest state -- the human presses the button again when they
-            // are ready, and the pair actually held is never changed behind
-            // their back. Unconditional now rather than only while there is
-            // something to retract, because the button's enablement is read
-            // off these fields on every keystroke and needs the rebuild.
-            // Setting `_message` to null when it is already null costs
-            // nothing. In Test it stays null, so *typing in Test does not
-            // take away the last outcome* is untouched.
             onChanged: live ? (_) => setState(() => _message = null) : null,
             decoration: const InputDecoration(
               labelText: 'Client ID',
@@ -743,16 +493,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             obscureText: !_revealSecret,
             autocorrect: false,
             enableSuggestions: false,
-            // In Live only: "Held for this session" describes a pair that
-            // has just stopped being what is on screen, and silence is the
-            // honest state -- the human presses the button again when they
-            // are ready, and the pair actually held is never changed behind
-            // their back. Unconditional now rather than only while there is
-            // something to retract, because the button's enablement is read
-            // off these fields on every keystroke and needs the rebuild.
-            // Setting `_message` to null when it is already null costs
-            // nothing. In Test it stays null, so *typing in Test does not
-            // take away the last outcome* is untouched.
             onChanged: live ? (_) => setState(() => _message = null) : null,
             decoration: InputDecoration(
               labelText: 'Client secret',
@@ -767,9 +507,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
-          // Live only, and where the wallet id sits in Test. Who the charge
-          // is made under is typed here beside the credentials because it is
-          // held exactly as long as they are.
           if (live) ...[
             const SizedBox(height: 12),
             TextField(
@@ -783,7 +520,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 labelText: 'Name on the charge',
                 helperText: 'First and last, split on the last space.',
                 helperMaxLines: 2,
-                // Only once there is text to be wrong about.
                 errorText: _liveName.text.trim().isEmpty
                     ? null
                     : liveNameProblem(_liveName.text),
@@ -809,12 +545,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            // What the charge costs is not asked for here. The amount and
-            // the currency are fields of the preset body, on the editor
-            // screen behind each Live tile's pencil -- so the figure a
-            // tester agrees to on the confirmation dialog is the figure
-            // they edited, rather than one screen's constant and another
-            // screen's dropdown meeting in the middle.
             const Text(
               key: ValueKey('liveAmountNote'),
               'The amount and the currency belong to each Live tile. Open a '
@@ -822,9 +552,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'keep it.',
             ),
           ],
-          // Test only: there is no Google Pay tile in Live for a wallet id to
-          // serve, and the id is configuration for one wallet on one
-          // merchant.
           if (!live) ...[
             const SizedBox(height: 12),
             TextField(
@@ -848,19 +575,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               runSpacing: 12,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                // Merged, so the hint lands on the button's own node rather
-                // than on a parent a screen reader reaches separately -- the
-                // same shape the gate's dead button uses, for the same
-                // reason.
                 MergeSemantics(
                   child: Semantics(
                     hint: _liveInputsComplete ? '' : _liveInputsHint,
                     child: FilledButton(
                       key: const ValueKey('useForThisSession'),
-                      // Not gated on `_loaded`, unlike the three in Test:
-                      // there is no store read to wait for here, and a button
-                      // dead until a Keychain answers would be dead for a
-                      // reason that does not apply.
                       onPressed: _busy || !_liveInputsComplete
                           ? null
                           : () => _useForThisSession(state!),
@@ -889,11 +608,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: _busy || !_loaded ? null : _forget,
                   child: const Text('Forget credentials'),
                 ),
-                // Beside the buttons rather than above the fields, because it is
-                // the buttons being dead that needs explaining: three empty
-                // fields under three grey buttons is what a broken build looks
-                // like, and a cold Keychain read takes a visible moment on a
-                // real phone. Gone the moment the read lands, whatever it found.
                 if (!_loaded) const Text('Reading saved credentials…'),
               ],
             ),
@@ -905,16 +619,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
           const SizedBox(height: 32),
-          // Offered in both environments, unlike the wallet id above: this is
-          // the shopper's language rather than one merchant's configuration,
-          // and it is the same person reading the sheet on either side of the
-          // switch.
-          // A real heading, so a screen reader can jump to this section
-          // rather than swiping through every credential field to reach it.
-          // The note below stays a node of its own, read after the control it
-          // describes: a hint on a SegmentedButton would have to be attached
-          // to the group rather than to a segment, and that is not something
-          // this change can verify without a device.
           Semantics(
             header: true,
             child: const Text(
@@ -936,12 +640,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 : (chosen) => _chooseLanguage(chosen.single),
           ),
           const SizedBox(height: 8),
-          // The reason travels with the control, like the credential buttons'
-          // "Reading saved credentials…" and the Live gate's hint: a dead
-          // control with nothing attached is a dead end, and to a screen
-          // reader the note below is a separate node rather than an
-          // explanation. Gone the moment the read lands, whatever it found,
-          // so it is not noise on every later swipe.
           if (!_languageLoaded)
             const Text(
               key: ValueKey('languageLoading'),
@@ -956,13 +654,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'either way.',
           ),
           const SizedBox(height: 32),
-          // Offered in both environments, like the language above it and for
-          // the same reason: a merchant evaluating the SDK wants to see their
-          // own colours on the sheet, and the sheet is the same sheet on
-          // either side of the switch. What each environment does with it
-          // differs -- in Live the production merchant's own back-office
-          // colour is what a brand left empty falls back to -- and no field
-          // here reaches the app's own screens.
           Semantics(
             header: true,
             child: const Text(
@@ -977,10 +668,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: TextField(
               key: const ValueKey('brandLight'),
               controller: _brandLight,
-              // Dead until the read lands, for the reason the toggle above is:
-              // the field is empty because nothing has been read yet, not
-              // because nothing is stored, and a keystroke on that emptiness
-              // would write it over a good theme.
               enabled: _appearanceLoaded,
               autocorrect: false,
               enableSuggestions: false,
@@ -1104,11 +791,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (_) => _writeAppearance(),
               decoration: InputDecoration(
                 labelText: 'Font scale',
-                // The bound is the SDK's, and it is stated here rather than
-                // only enforced, because a field that silently refuses 1.5 is
-                // one a colleague retypes rather than corrects. Refused here
-                // as well as stated: the SDK raises on anything outside it,
-                // and the launch does not catch that.
                 helperText:
                     'Multiplies every size in the sheet, on top of the '
                     'phone\'s own text-size setting. Between $minFontScale '
@@ -1133,10 +815,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          // The reason travels with the controls, like the language toggle's
-          // note and the credential buttons' "Reading saved credentials…":
-          // five dead fields with nothing attached is a dead end. Gone the
-          // moment the read lands, whatever it found.
           if (!_appearanceLoaded)
             const Text(
               key: ValueKey('appearanceLoading'),
@@ -1159,8 +837,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
-/// A number as a field holds it, with a whole number written without its
-/// trailing zero: 16 rather than 16.0, which is what the person typed.
 String _lengthText(double? value) {
   if (value == null) return '';
   return value == value.roundToDouble()
@@ -1168,27 +844,17 @@ String _lengthText(double? value) {
       : value.toString();
 }
 
-/// The number in [field], or null where there is nothing this app will store.
-///
-/// Null for an empty field and null for a number [valid] refuses, which are
-/// the same thing to `PayCross.configure`: no opinion about that property.
 double? _typedLength(TextEditingController field, bool Function(double) valid) {
   final typed = double.tryParse(field.text.trim());
   return typed != null && valid(typed) ? typed : null;
 }
 
-/// Why a filled colour field is wrong, or null while it is not.
-///
-/// Only once there is text to be wrong about, like the Live identity fields:
-/// an untouched field is not a mistake yet, and a section that opens with
-/// five red errors reads as a broken screen.
 String? _hexProblem(TextEditingController field) {
   final typed = field.text.trim();
   if (typed.isEmpty || colorFromHex(typed) != null) return null;
   return 'Six or eight hex digits, like 00875A.';
 }
 
-/// Why a filled number field is wrong, or null while it is not.
 String? _numberProblem(
   TextEditingController field,
   bool Function(double) valid,
@@ -1201,10 +867,6 @@ String? _numberProblem(
   return valid(value) ? null : rule;
 }
 
-/// What a theme mode reads as on screen.
-///
-/// Spelt out rather than derived from the enum's name, so the sheet's own
-/// three words do not change the day somebody renames a constant.
 String themeModeLabel(PayCrossThemeMode mode) => switch (mode) {
   PayCrossThemeMode.system => 'System',
   PayCrossThemeMode.light => 'Light',

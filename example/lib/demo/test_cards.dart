@@ -1,6 +1,5 @@
 import 'dart:math';
 
-/// One sandbox card and what it does.
 class TestCard {
   const TestCard({required this.pan, required this.behaviour, this.note});
 
@@ -8,7 +7,6 @@ class TestCard {
   final String behaviour;
   final String? note;
 
-  /// `4111 1111 1117 0000` -- what a person types.
   String get grouped {
     final groups = <String>[];
     for (var i = 0; i < pan.length; i += 4) {
@@ -18,12 +16,10 @@ class TestCard {
   }
 }
 
-/// Expiry `12/28`, CVV `123`, cardholder `John Doe` on every one of them.
 const String testCardExpiry = '12/28';
 const String testCardCvv = '123';
 const String testCardholder = 'John Doe';
 
-/// The sandbox cards that route to the outcome they claim.
 const List<TestCard> usableTestCards = <TestCard>[
   TestCard(pan: '4111111111170000', behaviour: 'Approve, no 3-D Secure'),
   TestCard(pan: '4111111111153063', behaviour: 'Frictionless 3-D Secure'),
@@ -40,11 +36,6 @@ const List<TestCard> usableTestCards = <TestCard>[
   TestCard(pan: '4111111111150051', behaviour: 'Provider timeout'),
 ];
 
-/// Cards the sandbox does not route. **They approve.**
-///
-/// Listed rather than hidden: they appear in older harnesses and in the
-/// Android demo's seed list, so somebody will try one, watch a "decline"
-/// succeed, and file an SDK bug that is really a backend gap.
 const List<TestCard> doNotUseTestCards = <TestCard>[
   TestCard(
     pan: '4111111111153055',

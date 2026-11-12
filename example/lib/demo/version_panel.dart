@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 
-/// The three version strings a support ticket needs.
 typedef DemoVersions = ({String demo, String plugin, String nativeSdk});
 
 const DemoVersions unknownVersions = (
@@ -11,12 +10,6 @@ const DemoVersions unknownVersions = (
   nativeSdk: 'unknown',
 );
 
-/// Reads the versions off the running app and the linked SDKs.
-///
-/// `nativeSdkVersion` is null on Android by design -- that SDK declares no
-/// version constant -- so "unknown" there is the correct answer and not a
-/// failed read. Both are rendered the same way on purpose: a colleague
-/// pasting this into a bug report should not have to know the difference.
 Future<DemoVersions> platformVersions() async {
   final package = await PackageInfo.fromPlatform();
   final sdk = await PayCross.versionInfo();
@@ -27,7 +20,6 @@ Future<DemoVersions> platformVersions() async {
   );
 }
 
-/// Demo, plugin and native SDK versions, side by side.
 class VersionPanel extends StatefulWidget {
   const VersionPanel({super.key, this.readVersions = platformVersions});
 
@@ -37,11 +29,6 @@ class VersionPanel extends StatefulWidget {
   State<VersionPanel> createState() => _VersionPanelState();
 }
 
-/// What each row shows while the first read is still in flight.
-///
-/// A state of its own rather than a pre-filled "unknown": with the two
-/// rendered the same, a read that never ran and a read that failed looked
-/// identical on screen and in a test.
 const String _pending = '…';
 
 class _VersionPanelState extends State<VersionPanel> {
@@ -58,9 +45,6 @@ class _VersionPanelState extends State<VersionPanel> {
     try {
       read = await widget.readVersions();
     } catch (_) {
-      // A version panel is never worth an unhandled exception: the app is
-      // usable without it, and "unknown" is the honest rendering of a read
-      // that did not happen.
       read = unknownVersions;
     }
     if (!mounted) return;
