@@ -3,6 +3,9 @@ name: Publish to pub.dev
 # The tag must equal `version:` in pubspec.yaml, or pub.dev rejects the upload.
 # Publishing authenticates with GitHub OIDC, so no token secret is stored.
 # pub sends the token on version listing too, so it is added only before the upload.
+# pub.dev trusts this repository's GitHub Actions identity (tag pattern v{{version}}, environment pub.dev).
+# The pub.dev environment's required reviewer is the approval gate: the run waits until an admin approves it.
+# An unaccepted token fails resolution as "depends on <package> <version> which doesn't match any versions", an error that never mentions auth.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']

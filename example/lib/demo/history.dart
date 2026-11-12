@@ -12,6 +12,7 @@ const Duration _appendTimeout = Duration(seconds: 5);
 
 final Expando<Future<void>> _writeQueues = Expando<Future<void>>();
 
+/// One past run. No field holds a session token, or a checkout URL, which carries it as ?session=.
 class HistoryEntry {
   const HistoryEntry({
     required this.at,

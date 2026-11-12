@@ -2,6 +2,7 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // STAGING ONLY. Remove once com.pay-cross is on Maven Central; then no repository entry is needed.
         mavenLocal()
     }
 }

@@ -8,7 +8,7 @@ class PayCrossAmount {
   /// Amount in minor units: 1250 is €12.50.
   final int minorUnits;
 
-  /// ISO 4217 currency code.
+  /// ISO 4217 currency code. Empty when the session was already complete and no transaction reference was returned.
   final String currencyCode;
 
   @override

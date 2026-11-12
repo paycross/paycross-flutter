@@ -1,7 +1,6 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// Swift Package Manager manifest for Flutter's SPM route; the podspec describes the same sources.
 // Tools version 5.9, not 6.0: merchants' Xcode must clear this floor to resolve the package.
 let package = Package(
     name: "paycross_flutter",
@@ -9,10 +8,9 @@ let package = Package(
     platforms: [.iOS("16.0")],
     products: [.library(name: "paycross-flutter", targets: ["paycross_flutter"])],
     dependencies: [
-        // Flutter symlinks this path in at build time, so `swift build` alone cannot resolve it.
-        // Without this dependency, `import Flutter` compiles only where a Podfile is present.
+        // Flutter symlinks this path in at build time: `swift build` alone cannot resolve it, and `import Flutter` compiles only under a Podfile build.
         .package(name: "FlutterFramework", path: "../FlutterFramework"),
-        // upToNextMinor: the SDK is pre-1.0, where breaking changes ship in minor releases. The podspec pins the same release.
+        // upToNextMinor: the SDK is pre-1.0, where breaking changes ship in minor releases; the podspec pins the same release.
         .package(url: "https://github.com/paycross/payment-ios-sdk.git", .upToNextMinor(from: "0.8.0")),
     ],
     targets: [

@@ -24,8 +24,7 @@ import 'test_card_prefill.dart';
 /// }
 /// ```
 ///
-/// The card form, 3-D Secure and status polling run in the native SDK. No card
-/// data passes through Dart.
+/// No card data passes through Dart: it keeps the PAN out of the Flutter engine heap and platform-channel traces.
 abstract final class PayCross {
   static g.PayCrossHostApi _api = g.PayCrossHostApi();
 
@@ -90,7 +89,6 @@ abstract final class PayCross {
           environment: environment == PayCrossEnvironment.sandbox
               ? g.PcEnvironment.sandbox
               : g.PcEnvironment.production,
-          // Sent only without an appearance: one brand colour on the wire.
           brandColorArgb: appearance == null ? brandColorArgb : null,
           testCardPrefill: testCardPrefill == null
               ? null
@@ -119,7 +117,7 @@ abstract final class PayCross {
   /// charged after the timeout abandons the call.
   ///
   /// A decline is a [PayCrossFailure] and an unobserved outcome a
-  /// [PayCrossPending]. Anything thrown is a [PayCrossIntegrationError].
+  /// [PayCrossPending]. A platform rejection is thrown as a [PayCrossIntegrationError].
   static Future<PayCrossResult> presentPayment(String sessionToken) async {
     if (_inFlight) {
       throw const PayCrossIntegrationError(

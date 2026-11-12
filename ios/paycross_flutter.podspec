@@ -15,7 +15,7 @@ Pod::Spec.new do |s|
   # Recursive, so the generated Pigeon sources under generated/ are compiled too.
   s.source_files = 'paycross_flutter/Sources/paycross_flutter/**/*.swift'
 
-  # CocoaPods ignores Package.swift's resources, so the privacy manifest is declared here too.
+  # CocoaPods ignores Package.swift's resources, so the privacy manifest is declared here too. Apple reads it from the built bundle; a missing one is silent in the build log.
   s.resource_bundles = {
     'paycross_flutter_privacy' => ['paycross_flutter/Sources/paycross_flutter/PrivacyInfo.xcprivacy']
   }

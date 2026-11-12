@@ -25,6 +25,7 @@ android {
 
     defaultConfig {
         applicationId = "com.paycross.flutterdemo"
+        // A merchant app pinned below 24 must raise minSdk to 24 explicitly; the plugin requires it.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

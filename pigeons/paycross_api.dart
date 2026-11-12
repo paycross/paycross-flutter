@@ -1,3 +1,4 @@
+// Regenerate: dart run pigeon --input pigeons/paycross_api.dart && dart format lib/src/generated. Pin pigeon exactly.
 import 'package:pigeon/pigeon.dart';
 
 @ConfigurePigeon(

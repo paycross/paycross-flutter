@@ -28,6 +28,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="paycross-flutter-demo" android:host="run" />
             </intent-filter>
+            <!-- app_links owns the link; with this on, uriLinkStream stays silent. -->
             <meta-data
                 android:name="flutter_deeplinking_enabled"
                 android:value="false" />
@@ -36,6 +37,7 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+    <!-- https only: a wildcard exposes every app. On API 30+ an undeclared package is invisible. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>

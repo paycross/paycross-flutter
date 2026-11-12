@@ -35,6 +35,7 @@ Future<void> configurePayCross({
   locale: locale,
 );
 
+/// Live credentials are a plain field, never persisted. Process death forgets them; leaving Live drops them.
 class DemoEnvironmentState extends ChangeNotifier {
   DemoEnvironmentState({
     this.configure = configurePayCross,

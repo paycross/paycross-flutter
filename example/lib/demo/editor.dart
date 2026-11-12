@@ -538,6 +538,7 @@ class _EditorScreenState extends State<EditorScreen> {
             value: _hasOption(savedCardsEntry, _topLevel),
             onChanged: (on) => _setOption(savedCardsEntry, _topLevel, on),
           ),
+          // Test only. A fabricated New York address on a production merchant is what AVS and fraud rules exist to refuse.
           if (!_live)
             SwitchListTile(
               key: const ValueKey('sandboxBilling'),

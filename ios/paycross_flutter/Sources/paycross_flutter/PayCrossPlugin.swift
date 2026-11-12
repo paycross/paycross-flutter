@@ -290,7 +290,7 @@ extension Recovery {
 
 // MARK: - Shared state
 
-// WHY: @unchecked Sendable: the lock keeps this safe, which the compiler cannot verify.
+// @unchecked Sendable: reads run on the channel thread, writes on the main actor; the lock keeps both safe.
 private final class PluginState: @unchecked Sendable {
     private let lock = NSLock()
     private var storedConfiguration: PcConfiguration?

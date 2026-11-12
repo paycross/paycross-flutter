@@ -2,8 +2,6 @@ import 'wire.dart';
 
 /// What the shopper can do after a declined payment.
 ///
-/// What the shopper can do after a declined payment.
-///
 /// Parsed in Dart from the server's raw token, not sent as a closed enum: an
 /// unknown token degrades to [RecoveryUnrecognized], which is not retryable but
 /// is still reported verbatim.

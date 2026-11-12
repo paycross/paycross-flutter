@@ -4,6 +4,7 @@ const String _clientIdKey = 'paycross_demo_client_id';
 const String _clientSecretKey = 'paycross_demo_client_secret';
 const String _googlePayKey = 'paycross_demo_google_pay_merchant_id';
 
+/// Credentials, held in memory; the only durable copy is in flutter_secure_storage. No toString or toJson, so none reaches a log.
 class Credentials {
   const Credentials({
     required this.clientId,
@@ -26,6 +27,7 @@ abstract interface class SecretBackend {
 class SecureStorageBackend implements SecretBackend {
   const SecureStorageBackend([this._storage = const FlutterSecureStorage()]);
 
+  /// Keychain item stays on the writing device (no restore). Reads and deletes pass the same options.
   static const IOSOptions iosOptions = IOSOptions(
     accessibility: KeychainAccessibility.first_unlock_this_device,
   );
@@ -94,8 +96,10 @@ class SecretStore {
         await _backend.write(_googlePayKey, merchantId);
       }
     } catch (_) {
+      // A failed write can leave a new id beside the old secret; forget clears both, so the state reads as not configured.
       try {
         await forget();
+      // Best effort: a failed forget must not hide the original error, which rethrow passes on.
       } catch (_) {}
       rethrow;
     }
