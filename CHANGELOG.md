@@ -8,6 +8,13 @@
   asking for before it is opened. Every demo before it ran the sheet from
   paycross-android 0.8.4 and PayCross 0.7.3.
 
+## 0.7.5
+
+Pins the native releases paycross-android 0.8.6 and PayCross 0.8.1. No API
+change.
+
+* Comments in the plugin and both native SDKs are trimmed to plain API docs.
+
 ## 0.7.4
 
 Pins the native releases paycross-android 0.8.5 and PayCross 0.8.0. No Dart API
