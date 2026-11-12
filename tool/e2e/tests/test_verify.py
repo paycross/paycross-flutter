@@ -37,8 +37,6 @@ def txn(status="succeeded", **extra):
         ("result:cancelled", "result:cancelled:x", False, None),
         ("error:invalidToken", "error:invalidToken", True, None),
         ("error:invalidToken", "error:unknown", False, None),
-        # A transaction id containing a colon would still be captured whole:
-        # <txn> is always last, so the capture is unambiguous.
         ("result:success:<txn>", "result:success:a:b", True, "a:b"),
     ],
 )
@@ -55,8 +53,6 @@ def test_match_label_on_a_missing_label():
 
 
 def test_every_merchant_key_a_cell_can_declare_is_checked_here():
-    # A key added to cells.py without a check here would pass vacuously --
-    # the cell would assert it and verify_merchant would ignore it in silence.
     assert cells.MERCHANT_KEYS == verify.MERCHANT_CHECKS
 
 
@@ -76,7 +72,6 @@ def test_verify_merchant_passes_a_clean_control_cell():
 
 
 def test_verify_merchant_only_checks_the_keys_that_are_asserted():
-    # No txn_status key, so a failed transaction is not a mismatch here.
     assert (
         verify.verify_merchant(
             session(status="open", txns=[txn(status="failed")]),
@@ -99,9 +94,6 @@ def test_verify_merchant_reports_every_mismatch_not_just_the_first():
 
 
 def test_a_resource_with_no_status_key_is_named_as_a_shape_fault():
-    # sandbox.read raises on any non-2xx or non-JSON response, so a resource
-    # that reaches this check without a `status` key is an unexpected shape,
-    # not a session that reported a null status.
     problems = verify.verify_merchant({"id": "01a0-sess"}, {"session_status": "open"})
 
     assert len(problems) == 1
@@ -142,9 +134,6 @@ def test_failure_recovery_distinguishes_absent_from_a_value():
 
 
 def test_an_explicit_null_failure_object_does_not_crash():
-    # A succeeded transaction plausibly carries "failure": null rather than
-    # omitting the key, and the re-arm cell asserts failure_recovery on both
-    # platforms -- so this shape reaches the check on every run.
     explicit_null = session(txns=[txn(failure=None)])
 
     assert verify.verify_merchant(explicit_null, {"failure_recovery": None}) == []
@@ -168,7 +157,6 @@ def test_threeds_is_a_subset_match_on_the_latest_transaction():
         ]
     )
 
-    # Asserting three of five fields must not fail on the two not named.
     assert (
         verify.verify_merchant(
             completed,
@@ -188,8 +176,6 @@ def test_threeds_is_a_subset_match_on_the_latest_transaction():
 
 
 def test_threeds_asserted_on_a_session_with_no_threeds_result():
-    # One line, not one per asserted key: the ...153055 no-3DS case would
-    # otherwise report the same absence once for every field the cell names.
     problems = verify.verify_merchant(
         session(txns=[txn()]),
         {"threeds": {"flow": "frictionless", "outcome": "authenticated"}},
@@ -211,8 +197,6 @@ def test_label_transaction_must_exist_server_side_when_it_is_not_empty():
 
 
 def test_a_transaction_without_an_id_does_not_break_the_mismatch_message():
-    # sorted() over a set holding both None and a string raises TypeError, so
-    # an id-less transaction would turn a verification failure into a crash.
     resource = session(txns=[txn(), {"type": "payment", "status": "failed"}])
 
     problems = verify.verify_label_transaction(resource, "txn-ghost")
@@ -249,8 +233,6 @@ def test_crash_lines_finds_only_real_faults():
     ],
 )
 def test_every_unscoped_fault_marker_fires(line):
-    # The package is deliberately absent from each line: these markers carry no
-    # component of their own, so a marker is a fault on its own.
     assert verify.crash_lines(f"quiet\n{line}\nquiet\n", "com.paycross.x") == (
         [line],
         [],
@@ -275,17 +257,12 @@ def test_every_scoped_fault_marker_fires_for_this_app(line):
 
 
 def test_an_anr_in_another_package_is_not_this_apps_crash():
-    # Without the package filter this reads as our crash. The emulator ANRs on
-    # its own housekeeping often enough that the difference matters.
-    log = "08-28 12:00:03.000 E ActivityManager: ANR in com.other.app\n"
+    log ="08-28 12:00:03.000 E ActivityManager: ANR in com.other.app\n"
 
     assert verify.crash_lines(log, "com.paycross.flutterdemo") == ([], [], [])
 
 
 def test_a_force_finish_of_another_app_is_not_this_apps_crash():
-    # The activity manager names the component it is finishing, and it finishes
-    # other apps' activities all day. Unscoped, one of those fails a cell, then
-    # fails the interleaved control for the same reason, and aborts the run.
     log = (
         "08-28 12:00:02.000 I ActivityManager: Force finishing activity "
         "com.android.settings/.Settings\n"
@@ -295,7 +272,6 @@ def test_a_force_finish_of_another_app_is_not_this_apps_crash():
 
 
 def test_a_fatal_exception_in_another_process_is_not_ours():
-    # The header line names no package; the Process: line under it does.
     log = (
         "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
         "08-28 12:00:02.000 E AndroidRuntime: Process: com.other.app, PID: 9\n"
@@ -320,30 +296,17 @@ def test_a_fatal_exception_in_our_process_is_ours():
 
 
 def test_a_fatal_exception_with_no_process_line_is_kept():
-    # A window that starts mid-crash has the header and not the line under it.
-    # A missed crash is the expensive direction to be wrong in.
-    log = "08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
+    log ="08-28 12:00:02.000 E AndroidRuntime: FATAL EXCEPTION: main\n"
 
     assert verify.crash_lines(log, "com.paycross.x") == ([log.strip()], [], [])
 
 
-# --- the driver's own crash is not the app's -----------------------------
-
-#: The `uiautomator dump` the Android driver runs after every action. It races
-#: the sheet's own accessibility traffic and dies on a closed binder now and
-#: then, and the crash it writes carries no `Process:` line -- so the
-#: conservative fall-through above attributed the driver's crash to the app.
 UIAUTOMATION_CRASH = (FIXTURES / "android-uiautomation-crash.log").read_text()
 
-#: A FATAL on the driver's own thread whose stack nonetheless reaches the app.
-#: The thread name alone must never be enough to excuse one.
 UIAUTOMATION_HEADER = "09-01 13:22:50.706 E/AndroidRuntime(11111): "
 
 
 def test_the_drivers_own_uiautomator_crash_is_not_the_apps():
-    # The finding this was written for: cell saved_card_3_challenge_save, in
-    # the 2026-09-01 Android run, made a payment that fully succeeded and was
-    # failed by this crash. It is the driver's dump dying on a closed binder.
     scan = verify.crash_lines(UIAUTOMATION_CRASH, "com.paycross.flutterdemo")
 
     assert scan.faults == []
@@ -353,8 +316,6 @@ def test_the_drivers_own_uiautomator_crash_is_not_the_apps():
 
 
 def test_the_drivers_crash_is_still_reported_as_a_warning():
-    # Reclassified, never muted: it stays in the evidence under a named
-    # reason, so the next reader can see the rig misbehaved.
     scan = verify.crash_lines(UIAUTOMATION_CRASH, "com.paycross.flutterdemo")
 
     assert scan.driver
@@ -362,9 +323,6 @@ def test_the_drivers_crash_is_still_reported_as_a_warning():
 
 
 def test_a_uiautomation_crash_that_reaches_our_code_is_still_ours():
-    # The hole this rule must not become. Same thread name, same missing
-    # `Process:` line -- but one frame is the plugin's, so the crash is the
-    # app's whatever thread it surfaced on.
     log = (
         f"{UIAUTOMATION_HEADER}FATAL EXCEPTION: UiAutomation\n"
         f"{UIAUTOMATION_HEADER}PID: 11111\n"
@@ -382,8 +340,6 @@ def test_a_uiautomation_crash_that_reaches_our_code_is_still_ours():
 
 
 def test_a_uiautomation_crash_carrying_our_process_line_is_still_ours():
-    # `Process:` decides whenever it is there. A driver-shaped stack under a
-    # header that names the app under test is the app's crash.
     log = (
         f"{UIAUTOMATION_HEADER}FATAL EXCEPTION: UiAutomation\n"
         f"{UIAUTOMATION_HEADER}Process: com.paycross.flutterdemo, PID: 11111\n"
@@ -401,7 +357,6 @@ def test_a_uiautomation_crash_carrying_our_process_line_is_still_ours():
 
 
 def test_an_ordinary_app_fatal_still_fails_the_cell():
-    # The control. Nothing about this change may make a real crash quieter.
     log = (
         "09-01 13:22:50.706 E/AndroidRuntime(11111): FATAL EXCEPTION: main\n"
         "09-01 13:22:50.706 E/AndroidRuntime(11111): Process: "
@@ -420,9 +375,6 @@ def test_an_ordinary_app_fatal_still_fails_the_cell():
 
 
 def test_a_framework_only_crash_on_another_thread_is_not_the_drivers():
-    # Every frame is the framework's, but the thread is `main`. Only the
-    # driver's own thread is attributed to the driver: a framework-only crash
-    # on the app's thread is the app's problem, and stays a fault.
     log = (
         "09-01 13:22:50.706 E/AndroidRuntime(11111): FATAL EXCEPTION: main\n"
         "09-01 13:22:50.706 E/AndroidRuntime(11111): PID: 11111\n"
@@ -440,9 +392,6 @@ def test_a_framework_only_crash_on_another_thread_is_not_the_drivers():
 
 
 def test_a_uiautomation_crash_with_no_accessibility_frame_is_kept():
-    # The thread name is not the tell on its own -- the accessibility stack
-    # is. A UiAutomation crash somewhere else entirely stays a fault, because
-    # a missed crash is still the expensive direction to be wrong in.
     log = (
         f"{UIAUTOMATION_HEADER}FATAL EXCEPTION: UiAutomation\n"
         f"{UIAUTOMATION_HEADER}PID: 11111\n"
@@ -456,11 +405,7 @@ def test_a_uiautomation_crash_with_no_accessibility_frame_is_kept():
     assert scan.driver == []
 
 
-# --- Plan B: no_succeeded_txn: false is an assertion ----------------------
-
-
 def test_no_succeeded_txn_false_fails_a_session_where_no_money_moved():
-    # It used to be a no-op that read like an assertion.
     problems = verify.verify_merchant(
         session(status="open", txns=[txn(status="failed")]),
         {"no_succeeded_txn": False},
@@ -478,9 +423,6 @@ def test_no_succeeded_txn_false_passes_a_session_where_money_moved():
 
 @pytest.mark.parametrize("status", sorted(verify.MONEY_MOVED))
 def test_no_succeeded_txn_true_fails_on_every_status_that_means_money_moved(status):
-    # An `auth` session stops at `authorized` and an `auth_capture` at
-    # `captured`; a cancel cell that only looked for `succeeded` passed on
-    # either of those.
     problems = verify.verify_merchant(
         session(status="open", txns=[txn(status=status)]),
         {"no_succeeded_txn": True},
@@ -490,12 +432,7 @@ def test_no_succeeded_txn_true_fails_on_every_status_that_means_money_moved(stat
     assert "moved money" in problems[0]
 
 
-# --- Plan B: the four assertions D2, D4 and D5 need -----------------------
-
-
 def test_failure_code_and_network_decline_code_read_the_failure_block():
-    # The shape is the one the 2026-08-29 Android run recorded for
-    # challenge_fraud_suspected.
     declined = session(
         status="open",
         txns=[
@@ -534,9 +471,6 @@ def test_a_failure_key_asserted_null_is_a_real_assertion():
 
 
 def test_the_saved_card_assertions_read_presence_not_the_value():
-    # `evidence.scrub_resource` drops both keys by name before this ever sees
-    # them, so what is left is the redaction marker for a card that was stored
-    # and null for one that was not.
     saved = session(
         txns=[txn(stored_credentials={"saved_token": "[REDACTED-SESSION-TOKEN]"})]
     )
@@ -563,19 +497,6 @@ def test_saved_card_used_is_separate_from_saved_card_saved():
 
 
 def test_a_real_scrub_leaves_the_saved_card_assertions_something_to_read():
-    """The seam D5 rests on, tested end to end instead of at both ends.
-
-    The two tests above hand `verify_merchant` a hand-written
-    `"[REDACTED-SESSION-TOKEN]"`, and `test_evidence` separately checks that a
-    token is scrubbed. Neither one covers the coupling: `saved_token` and
-    `used_token` are in `evidence.TOKEN_KEYS`, so the value these assertions
-    read has already been through the scrubber, and they work only because a
-    scrubbed token is **replaced rather than removed**.
-
-    Removing the key instead is the change that reads like the safer one, and
-    it would turn every `saved_card_saved: true` into a failure while every
-    test above stayed green. So the real scrubber runs here.
-    """
     live = session(
         txns=[
             txn(
@@ -591,24 +512,14 @@ def test_a_real_scrub_leaves_the_saved_card_assertions_something_to_read():
     scrubbed, found = evidence.scrub_resource(live)
     stored = scrubbed["transactions"][0]["stored_credentials"]
 
-    # The credential came back to be used as a literal secret elsewhere, and
-    # is gone from what will be filed.
     assert found == ["eyJhbGciOiJSUzI1NiJ9.eyJjYXJkIjoiMSJ9.c2ln"]
     assert stored["saved_token"] == evidence.REDACTED.decode()
-    # The key survives, which is the whole point; and the null one is untouched,
-    # so "stored" and "not stored" stay distinguishable after scrubbing.
     assert "saved_token" in stored
     assert stored["used_token"] is None
-    # `save_operation` is not an assertable merchant key, so it is not scrubbed
-    # and stays readable in the evidence -- which is where `already_existing`
-    # is confirmed when the D5 pair runs a second time.
     assert stored["save_operation"] == "created"
 
     assert verify.verify_merchant(scrubbed, {"saved_card_saved": True}) == []
     assert verify.verify_merchant(scrubbed, {"saved_card_used": False}) == []
-
-
-# --- Plan B: match_label and the two sentinels ----------------------------
 
 
 @pytest.mark.parametrize(
@@ -619,8 +530,6 @@ def test_a_real_scrub_leaves_the_saved_card_assertions_something_to_read():
         ("<any>", "result:cancelled", True, None),
         ("<any>", "result:failure:retry:txn-1", True, "txn-1"),
         ("<any>", "result:success:txn-9", True, "txn-9"),
-        # The app emits an empty one when the session never reached a
-        # transaction, and that is not the same as there being none to read.
         ("<any>", "result:success:", True, ""),
         ("<any>", "error:resultUnknown", True, None),
         ("<any>", "not a label", False, None),
@@ -634,14 +543,6 @@ def test_a_sentinel_decides_whether_a_label_had_to_appear(
 
 
 def test_a_discovery_cell_captures_the_id_it_reports():
-    # `<any>` used to capture nothing, so the id reaching
-    # verify_label_transaction was always None and the check returned on its
-    # first line. Every discovery cell in the matrix could therefore report a
-    # transaction id that names nothing and still pass -- which happened:
-    # D2's session_expired_server_submit measured
-    # `result:failure:restart:3a9c6d3b-...` against a session whose merchant
-    # record held `"transactions": []`, and it took reading merchant.json by
-    # hand to notice.
     _, captured = verify.match_label(
         "<any>", "result:failure:restart:3a9c6d3b-0000-0000-0000-000000000000"
     )
@@ -651,8 +552,6 @@ def test_a_discovery_cell_captures_the_id_it_reports():
 
 
 def test_an_unrecognized_recovery_may_hold_colons_and_the_id_still_comes_out():
-    # `unrecognized(<raw>)` wraps whatever the app could not parse, so the id
-    # cannot be found by splitting on ':'.
     _, captured = verify.match_label(
         "<any>", "result:failure:unrecognized(weird:thing):txn-1"
     )
@@ -661,8 +560,6 @@ def test_an_unrecognized_recovery_may_hold_colons_and_the_id_still_comes_out():
 
 
 def test_a_stored_credentials_of_the_wrong_shape_is_a_problem_not_a_crash():
-    # `verify_merchant`'s whole contract is to return problems; raising
-    # AttributeError out of it turns a malformed resource into a traceback.
     odd = session(txns=[txn(stored_credentials=["saved_token"])])
 
     problems = verify.verify_merchant(odd, {"saved_card_saved": True})
@@ -671,8 +568,6 @@ def test_a_stored_credentials_of_the_wrong_shape_is_a_problem_not_a_crash():
     assert "stored_credentials is a list" in problems[0]
 
 
-# --- criterion 3: what a cell may be excused from --------------------------
-
 FORCE_FINISH = (
     "08-28 12:00:02.000 I ActivityManager: Force finishing activity "
     "com.paycross.x/com.paycross.PaymentActivity"
@@ -680,8 +575,6 @@ FORCE_FINISH = (
 
 
 def test_a_force_finish_is_a_fault_by_default():
-    # It is what a crash-looping activity looks like, and no cell that has not
-    # asked for it should ever see one.
     faults, excused, driver = verify.crash_lines(
         f"quiet\n{FORCE_FINISH}\n", "com.paycross.x"
     )
@@ -691,9 +584,6 @@ def test_a_force_finish_is_a_fault_by_default():
 
 
 def test_a_cell_may_be_excused_the_force_finish_it_asked_for():
-    # `always_finish_activities 1` makes the activity manager log exactly this
-    # for the app under test, by design -- it is literally what the setting
-    # does, and it is the behaviour the cell exists to observe.
     faults, excused, driver = verify.crash_lines(
         f"quiet\n{FORCE_FINISH}\n",
         "com.paycross.x",
@@ -706,8 +596,6 @@ def test_a_cell_may_be_excused_the_force_finish_it_asked_for():
 
 
 def test_an_excuse_does_not_reach_another_apps_line():
-    # The package filter still decides first: a line naming another app was
-    # never this cell's fault, so it is not this cell's excuse either.
     other = (
         "08-28 12:00:02.000 I ActivityManager: Force finishing activity "
         "com.android.settings/.Settings"
@@ -731,11 +619,6 @@ def test_an_excuse_does_not_reach_another_apps_line():
     ],
 )
 def test_no_caller_can_excuse_a_real_crash(line):
-    # Belt and braces over the load-time guard. `crash_lines` honours only the
-    # closed allow-list, whatever it is handed, because a function that could
-    # be talked into muting a FATAL EXCEPTION would defeat the one thing
-    # criterion 3 exists to stop -- and this one is called from a runner, not
-    # only from a validated cell file.
     faults, excused, driver = verify.crash_lines(
         f"quiet\n{line}\n", "com.paycross.x", tolerated=(line, "ANR in")
     )
@@ -745,5 +628,4 @@ def test_no_caller_can_excuse_a_real_crash(line):
 
 
 def test_the_tolerable_markers_are_exactly_one():
-    # If this ever grows, whoever grew it has to come here and say why.
     assert cells.TOLERABLE_CRASH_MARKERS == frozenset({"Force finishing activity"})

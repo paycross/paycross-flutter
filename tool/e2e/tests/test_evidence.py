@@ -17,7 +17,6 @@ JWT = (
 
 
 def png_bytes():
-    """A minimal but real PNG, so the passthrough test is not testing a stub."""
     header = b"\x89PNG\r\n\x1a\n"
     ihdr = b"\x00\x00\x00\x01" * 2 + b"\x08\x02\x00\x00\x00"
     idat = zlib.compress(b"\x00\xff\xff\xff")
@@ -43,7 +42,6 @@ def test_redacts_a_jwt_out_of_an_accessibility_dump():
 
     assert b"eyJ" not in out
     assert b"[REDACTED-SESSION-TOKEN]" in out
-    # Everything that is not the token survives verbatim.
     assert b'bounds="[53,347][1028,746]"' in out
 
 
@@ -56,9 +54,6 @@ def test_redacts_every_occurrence_and_leaves_short_lookalikes_alone():
     assert b"eyJshort.a.b" in out
 
 
-#: A token the shape rule cannot see: its middle segment is ten characters
-#: and JWT_RE wants sixteen. Not every environment mints a 1011-character JWT,
-#: and the runner knows the exact string it handed to the device.
 SHORT_TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJhIjoxfQ.sig"
 
 
@@ -72,18 +67,10 @@ def test_redacts_a_literal_secret_the_shape_rule_misses():
     assert b"[REDACTED-SESSION-TOKEN]" in out
 
 
-#: What WebDriverAgent actually put in a `.uix` on 2026-08-29: iOS truncates
-#: an element's accessibility value at 512 characters, so the example's token
-#: field carries a header, a dot and about 420 characters of payload -- and no
-#: signature. Two segments, not three.
 TRUNCATED_JWT = JWT[: JWT.index(".", JWT.index(".") + 1)][:512]
 
 
 def test_redacts_a_token_the_device_truncated_before_its_signature():
-    # This leaked 512-character session-token prefixes into every iOS cell's
-    # dumps in the first live run: JWT_RE wanted three segments and the
-    # literal-secret replace wanted the whole string, so a prefix was invisible
-    # to both.
     assert TRUNCATED_JWT.count(".") == 1
     dump = f'<node value="{TRUNCATED_JWT}"/>'.encode()
 
@@ -94,11 +81,6 @@ def test_redacts_a_token_the_device_truncated_before_its_signature():
 
 
 def test_redacts_a_prefix_of_a_secret_it_was_handed():
-    # The shape rule cannot see a token truncated inside its first segment --
-    # there is no dot yet. The caller holds the exact string, so a prefix of
-    # it is still recognisable.
-    # A strict prefix: the signature and the end of the payload are gone, as a
-    # device that truncated the value would leave them.
     prefix = JWT[: JWT.index(".", JWT.index(".") + 1) - 6]
     assert prefix != JWT and len(prefix) > 40
     dump = f'<node value="{prefix}"/>'.encode()
@@ -110,22 +92,12 @@ def test_redacts_a_prefix_of_a_secret_it_was_handed():
 
 
 def test_a_short_head_shared_with_a_secret_is_not_a_leak():
-    # Every RS256 JWT starts the same way. Redacting on a handful of shared
-    # characters would blank unrelated evidence.
     text = b'<node value="eyJhbGci"/>'
 
     assert evidence.redact(text, secrets=[JWT]) == text
 
 
 def test_redact_takes_the_shape_rule_before_the_prefix_rule():
-    # The merchant API re-mints a session token on every read of an open
-    # session, and the new one shares a 617-character prefix with the old --
-    # same header, same session, merchant, customer, amount and urls; only
-    # iat, exp and jti differ, and they sit late in the payload. Measured
-    # 2026-08-29. With the prefix rule first, that shared head was replaced and
-    # a 394-character tail was left behind -- and JWT_RE is anchored on `eyJ`,
-    # so it could not see a token whose head had just been eaten. The shape
-    # rule has to go first, while the token still looks like one.
     minted = (
         "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjoiMDFhMCJ9.AAA" + "a" * 40
     )
@@ -134,8 +106,6 @@ def test_redact_takes_the_shape_rule_before_the_prefix_rule():
 
     out = evidence.redact(f"<v>{reminted}</v>".encode(), secrets=[minted])
 
-    # The tail is the half the prefix rule cannot reach, and in the real case
-    # it is signature bytes.
     assert reminted[-20:].encode() not in out
     assert b"eyJ" not in out
     assert b"[REDACTED-SESSION-TOKEN]" in out
@@ -159,8 +129,6 @@ def test_scrub_resource_drops_a_token_by_key_at_any_depth():
 
 
 def test_scrub_resource_drops_the_token_out_of_a_checkout_url():
-    # The token is a query parameter as well as a field, so dropping the field
-    # alone leaves the whole credential on disk one key over.
     resource = {"checkout_url": f"https://checkout.test-pay-cross.com/?session={JWT}"}
 
     safe, found = evidence.scrub_resource(resource)
@@ -190,8 +158,6 @@ def test_scrub_resource_does_not_mutate_what_it_was_given():
 
 
 def test_a_secret_too_short_to_be_a_token_is_left_alone():
-    # Blanket-replacing a three-character string would corrupt every artifact
-    # it appears in, and nothing that short is a credential worth protecting.
     text = b"a status of open, an id of sess-0"
 
     assert evidence.redact(text, secrets=["open"]) == text
@@ -273,9 +239,6 @@ def test_passed_cells_reads_every_previous_run(tmp_path):
 
 
 def test_passed_cells_ignores_interleaved_control_checks(tmp_path):
-    # A control check is a rig probe, not the control cell's own run. Counting
-    # it would let a resumed run skip `control`, after which the next failure's
-    # skepticism check re-runs a cell resume considers done.
     run = evidence.Run(tmp_path, platform="android", run_id="r1")
     run.append_progress({"cell": "frictionless", "status": "fail"})
     run.append_progress({"cell": "control", "status": "pass", "control_check": True})
@@ -290,7 +253,6 @@ def test_passed_cells_on_an_empty_root_is_empty(tmp_path):
 def test_passed_cells_survives_a_run_killed_mid_append(tmp_path):
     run = evidence.Run(tmp_path, platform="android", run_id="r1")
     run.append_progress({"cell": "control", "status": "pass"})
-    # What a WSL reboot leaves behind: the last record never finished.
     with run.progress_path.open("ab") as handle:
         handle.write(b'{"at": "2026-08-28T12:00:00Z", "platform": "android", "cell')
 
@@ -317,8 +279,6 @@ def test_the_runs_own_platform_wins_over_the_record(tmp_path):
 def test_two_platforms_starting_in_the_same_second_get_their_own_run_dirs(
     tmp_path, monkeypatch
 ):
-    # Android and iOS are run from two shells. Without the platform in the id
-    # they would share a run directory and overwrite each other's artifacts.
     monkeypatch.setattr(evidence, "_stamp", lambda: "20260828-120000")
 
     android = evidence.Run(tmp_path, platform="android")
@@ -329,9 +289,6 @@ def test_two_platforms_starting_in_the_same_second_get_their_own_run_dirs(
 
 
 def test_progress_reaches_the_disk_before_the_next_cell_starts(tmp_path, monkeypatch):
-    # The docstring promises a killed run leaves usable progress, and a WSL
-    # reboot has killed a run before. A buffer the kernel never wrote does not
-    # keep that promise.
     synced = []
     real_fsync = os.fsync
 
@@ -351,7 +308,6 @@ def test_progress_reaches_the_disk_before_the_next_cell_starts(tmp_path, monkeyp
 def test_cell_dir_refuses_a_cell_id_that_could_leave_the_run_directory(
     tmp_path, cell_id
 ):
-    # A cell file named `...yaml` has stem `..`.
     run = evidence.Run(tmp_path, platform="android", run_id="r1")
 
     with pytest.raises(ValueError):
@@ -367,12 +323,7 @@ def test_write_refuses_it_too_before_anything_touches_disk(tmp_path):
     assert not (tmp_path / "escape").exists()
 
 
-# --- Plan B: a pass carries the build that produced it --------------------
-
-
 def test_a_pass_recorded_under_one_build_does_not_satisfy_another(tmp_path):
-    # Pointing a release APK at a debug run's evidence root used to report
-    # yesterday's result as today's.
     run = evidence.Run(tmp_path, platform="android", run_id="r1")
     run.append_progress({"cell": "control", "status": "pass", "build": "debug-1"})
 
@@ -389,32 +340,20 @@ def test_a_run_with_no_build_id_matches_records_that_carry_none(tmp_path):
 
 
 def test_a_record_written_before_build_ids_existed_still_resumes(tmp_path):
-    # Every record in the two Phase 0 evidence roots has no `build` key at
-    # all, and an existing root must keep resuming exactly as it did.
     run = evidence.Run(tmp_path, platform="android", run_id="r1")
     run.append_progress({"cell": "control", "status": "pass"})
 
     assert evidence.passed_cells(tmp_path, "android") == {"control"}
 
 
-# --- Plan B: the two gaps a later phase would have tripped over -----------
-
-
 @pytest.mark.parametrize("path", sorted(FIXTURES.glob("*")))
 def test_a_committed_fixture_is_already_clean(path):
-    # Otherwise a test is asserting on a string the runner would have
-    # scrubbed, and the fixture is a live credential besides.
     raw = path.read_bytes()
 
     assert evidence.redact(raw) == raw, f"{path.name} holds token-shaped material"
 
 
 def test_a_token_sharing_a_long_head_with_a_known_secret_leaves_no_tail():
-    # The ordering regression that leaked twice. A GET on an open session
-    # re-mints a token sharing a 617-character head with the old one; running
-    # the literal rule first decapitates the new one, and the shape rule --
-    # anchored on the `eyJ` that head begins with -- can no longer see the
-    # tail it left behind.
     head = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjoi" + "A" * 600
     minted = head + "ORIGINAL.c2lnbmF0dXJlLWJ5dGVzLWhlcmU"
     remined = head + "SECONDONE.c2lnbmF0dXJlLXR3by1oZXJl"
@@ -423,6 +362,5 @@ def test_a_token_sharing_a_long_head_with_a_known_secret_leaves_no_tail():
     scrubbed = evidence.redact(log, secrets=[minted])
 
     assert b"eyJ" not in scrubbed
-    # And no marker with the rest of a token still hanging off it.
     assert b"SECONDONE" not in scrubbed
     assert evidence.REDACTED in scrubbed
