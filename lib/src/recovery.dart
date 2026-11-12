@@ -2,31 +2,21 @@ import 'wire.dart';
 
 /// What the shopper can do after a declined payment.
 ///
-/// Deliberately a sealed class rather than an enum, and deliberately parsed in
-/// Dart from the server's raw token rather than crossing the platform channel
-/// as a closed enum.
+/// What the shopper can do after a declined payment.
 ///
-/// The reason is forward compatibility. Pigeon cannot express an enum with an
-/// associated value, so a closed enum on the boundary would silently rewrite
-/// any recovery value the server adds after this package ships. Carrying the
-/// raw string and parsing it here means an unknown token degrades to
-/// [RecoveryUnrecognized] - not retryable, but still reported verbatim, so
-/// merchant telemetry can tell "this SDK is out of date" apart from "the bank
-/// said stop".
+/// Parsed in Dart from the server's raw token, not sent as a closed enum: an
+/// unknown token degrades to [RecoveryUnrecognized], which is not retryable but
+/// is still reported verbatim.
 sealed class PayCrossRecovery {
   const PayCrossRecovery();
 
-  /// Whether the shopper may reasonably try again in the same session.
+  /// Whether the shopper may try again in the same session.
   ///
-  /// A whitelist, not a blacklist: anything unrecognised fails closed. Both
-  /// native SDKs make the same call the same way.
+  /// An allow-list: anything unrecognised is not retryable.
   bool get isRetryable => this is RecoveryRetry || this is RecoveryChangeMethod;
 
-  /// Parses the server's token.
-  ///
-  /// Mirrors `Recovery.fromString` on Android and `Recovery(apiValue:)` on iOS,
-  /// including the trim, the lowercasing, the `contact_us` alias and the
-  /// absent-means-retry default.
+  /// Parses the server's token. An absent token means retry, and `contact_us`
+  /// is an alias for `contact_support`.
   factory PayCrossRecovery.fromApiValue(String? value) {
     switch (normalizedWireToken(value)) {
       case null:
@@ -87,15 +77,9 @@ class RecoveryDoNotRetry extends PayCrossRecovery {
 
 /// The outcome was never observed.
 ///
-/// **No longer reachable through `PayCross.presentPayment`.** Every
-/// verify-before-retry is a `PayCrossPending` now, because it is the one
-/// outcome where reading a decline and charging again can charge a shopper
-/// twice — see `PayCrossPending` for what to do about it, and for the
-/// transaction id to reconcile against.
-///
-/// This case remains so that [PayCrossRecovery.fromApiValue] still parses the
-/// raw token, and still refuses to call it retryable, for anything that reads
-/// a server response directly.
+/// Not returned by `PayCross.presentPayment`, which reports it as a
+/// `PayCrossPending`. [PayCrossRecovery.fromApiValue] still parses the token for
+/// anything that reads a server response directly, and never calls it retryable.
 class RecoveryVerifyBeforeRetry extends PayCrossRecovery {
   const RecoveryVerifyBeforeRetry();
   @override
@@ -104,13 +88,7 @@ class RecoveryVerifyBeforeRetry extends PayCrossRecovery {
 
 /// A value this version of the SDK does not know.
 ///
-/// Treated as not retryable. [value] is the server's token, kept so it can be
-/// logged and acted on without shipping a new SDK first.
-///
-/// Reachable on both platforms. iOS has always kept the raw string inside its
-/// enum, as `unrecognized(String)`; Android used to discard it, and from SDK
-/// 0.4.0 keeps it beside the enum on `Failure.recoveryRaw`, which the plugin
-/// passes through.
+/// Treated as not retryable. [value] is the server's token, kept for logging.
 class RecoveryUnrecognized extends PayCrossRecovery {
   const RecoveryUnrecognized(this.value);
 

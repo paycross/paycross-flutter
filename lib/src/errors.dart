@@ -1,9 +1,7 @@
 /// Something is wrong with the integration, not with the payment.
 ///
-/// A decline is never this — it arrives as a `PayCrossFailure`, and an unknown
-/// outcome as a `PayCrossPending`. Every code here means the SDK was asked to
-/// do something it cannot, and every one points at a mistake that is fixable in
-/// merchant code.
+/// Declines arrive as a `PayCrossFailure`, and unknown outcomes as a
+/// `PayCrossPending`. Each code here points at a mistake in merchant code.
 class PayCrossIntegrationError implements Exception {
   const PayCrossIntegrationError(this.code, this.message);
 
@@ -21,20 +19,15 @@ enum PayCrossErrorCode {
   /// `PayCross.configure` was given a `testCardPrefill` alongside
   /// `PayCrossEnvironment.production`.
   ///
-  /// Raised in Dart, before anything crosses to the native side. A prefill is a
-  /// sandbox-only debugging aid; both native SDKs drop it outside sandbox
-  /// anyway, so accepting it here would silently do nothing.
+  /// Raised in Dart, before the native side is called.
   testPrefillInProduction,
 
-  /// `PayCross.configure` was given a `PayCrossAppearance` holding a value no
-  /// sheet can draw: a `sizeScaleFactor` outside 0.8-1.3, or a negative or
-  /// non-finite radius, border width or height.
+  /// `PayCross.configure` was given an appearance no sheet can draw: a
+  /// `sizeScaleFactor` outside 0.8-1.3, or a negative or non-finite radius,
+  /// border width or height.
   ///
-  /// Raised in Dart, before anything crosses to the native side. Both native
-  /// SDKs clamp the scale instead, for callers that reach them directly, and a
-  /// clamp is a silent correction: a merchant who asked for 3.0 wanted
-  /// something the sheet will never draw, and is better told than quietly
-  /// given 1.3.
+  /// Raised in Dart rather than clamped natively, so the merchant learns about
+  /// the value instead of getting a silently corrected one.
   invalidAppearance,
 
   /// A payment is already in flight. One at a time, per process.
@@ -50,13 +43,7 @@ enum PayCrossErrorCode {
   /// The session token was empty.
   invalidToken,
 
-  /// A lost result. No longer thrown: it arrives as a `PayCrossPending` with
-  /// `PayCrossPendingReason.resultLost`, because the payment may have
-  /// succeeded and that is an outcome to reconcile, not an integration
-  /// mistake to catch.
-  ///
-  /// Kept, with its code mapping, for one minor so a `switch` over this enum
-  /// in merchant code still compiles.
+  /// A lost result. Not thrown: it arrives as a `PayCrossPending`.
   @Deprecated('Never thrown since 0.4.0; a lost result is PayCrossPending')
   resultUnknown,
 
@@ -66,10 +53,7 @@ enum PayCrossErrorCode {
 
 /// The platform-error code both native sides send when a result was lost.
 ///
-/// Not an error to merchants since 0.4.0: `presentPayment` turns it into a
-/// `PayCrossPending` value instead of throwing. It stays a platform error on
-/// the wire because that is the only channel a native side has once it no
-/// longer has a result to return.
+/// Not thrown to merchants: `presentPayment` turns it into a `PayCrossPending`.
 const String payCrossResultLostCode = 'paycross_result_unknown';
 
 PayCrossErrorCode payCrossErrorCodeFrom(String? raw) => switch (raw) {
@@ -78,9 +62,7 @@ PayCrossErrorCode payCrossErrorCodeFrom(String? raw) => switch (raw) {
   'paycross_no_activity' => PayCrossErrorCode.noActivity,
   'paycross_no_presenter' => PayCrossErrorCode.noPresenter,
   'paycross_invalid_token' => PayCrossErrorCode.invalidToken,
-  // Unreachable from presentPayment, which intercepts this code first. Kept
-  // for the deprecation window so a merchant still matching on the enum member
-  // sees the value they used to.
+  // WHY: presentPayment intercepts this code first, so it is only reached from other callers.
   // ignore: deprecated_member_use_from_same_package
   payCrossResultLostCode => PayCrossErrorCode.resultUnknown,
   _ => PayCrossErrorCode.unknown,
