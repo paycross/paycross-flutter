@@ -21,7 +21,8 @@ TOKEN_LIFETIME_SECONDS = 1200
 
 REQUEST_TIMEOUT_SECONDS = 60
 
-#: Also pinned in `example/ios/Flutter/Release.xcconfig` and `release-ios.sh`; change them together.
+#: Also pinned in `example/ios/Flutter/Release.xcconfig` and `release-ios.sh`;
+#: change them together.
 PROFILE_NAME = "PayCross Demo App Store"
 
 #: App Store Connect's opaque id for the bundle, not its reverse-DNS identifier.
@@ -129,7 +130,8 @@ class AppStoreConnect:
         try:
             status, payload = self._transport(method, url, headers, body)
         except urllib.error.URLError as error:
-            # URLError carries no status and is not caught by main, so it is converted here.
+            # URLError carries no status and is not caught by main, so it is
+            # converted here.
             raise AscError(
                 f"{method} {url} did not complete: {error.reason}"
             ) from error
@@ -203,13 +205,15 @@ def _profile_record(client: AppStoreConnect, *, name: str) -> dict[str, Any] | N
 
 def find_profile(client: AppStoreConnect, *, name: str) -> str | None:
     """The profile with this exact name, or None."""
-    # The name filter must stay exact, so delete-then-create cannot reach another profile.
+    # The name filter must stay exact, so delete-then-create cannot reach
+    # another profile.
     record = _profile_record(client, name=name)
     return str(record["id"]) if record is not None else None
 
 
 def _expired(record: dict[str, Any], now: datetime.datetime) -> bool:
-    # Unparseable dates count as unexpired, so a date-format change cannot hide the certificate.
+    # Unparseable dates count as unexpired, so a date-format change cannot hide
+    # the certificate.
     raw = record.get("attributes", {}).get("expirationDate")
     if not raw:
         return False
@@ -224,7 +228,8 @@ def _expired(record: dict[str, Any], now: datetime.datetime) -> bool:
 
 def distribution_certificate_id(client: AppStoreConnect) -> str:
     """Returns the id of the one unexpired App Store distribution certificate."""
-    # Two live certificates are refused: a profile issued to the outgoing one expires with it.
+    # Two live certificates are refused: a profile issued to the outgoing one
+    # expires with it.
     found = client.get(
         "/v1/certificates",
         **{
@@ -316,8 +321,10 @@ def recreate_profile(
     client: AppStoreConnect, *, name: str, bundle_id_asc_id: str
 ) -> dict[str, str]:
     """Deletes the profile with this name if there is one, then creates it."""
-    # Apple refuses a duplicate name, so the old profile must go before the new one is created.
-    # The certificate is resolved before the delete, so a missing one leaves the old profile in place.
+    # Apple refuses a duplicate name, so the old profile must go before the new
+    # one is created.
+    # The certificate is resolved before the delete, so a missing one leaves the
+    # old profile in place.
     existing = find_profile(client, name=name)
     certificate_id = distribution_certificate_id(client)
     if existing is not None:
@@ -503,11 +510,13 @@ def main(argv: list[str] | None = None) -> int:
             profile = recreate_profile(
                 client, name=args.name, bundle_id_asc_id=args.bundle_id_asc_id
             )
-            # Print the id and uuid only: the content is the signed profile and goes to the file.
+            # Print the id and uuid only: the content is the signed profile and goes
+            # to the file.
             try:
                 destination.write_bytes(base64.b64decode(profile["content"]))
             except OSError as error:
-                # The profile exists by now, so the error must say so rather than invite a re-run.
+                # The profile exists by now, so the error must say so rather than
+                # invite a re-run.
                 raise AscError(
                     f"profile {profile['id']} was created but could not be "
                     f"written to {destination}: {error}. It exists in App "

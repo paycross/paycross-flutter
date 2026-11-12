@@ -148,7 +148,8 @@ ARG_ACTIONS = MappingProxyType(
         ),
         "expect": (_is_expectation, f"one of {sorted(EXPECTATIONS)}"),
         # WHY: a session token's JWT `exp` falls before its session's
-        # `expires_at`, so an expired token in an open session needs that gap waited out.
+        # `expires_at`, so an expired token in an open session needs that gap
+        # waited out.
         "wait":(_is_positive_seconds, "a positive number of seconds"),
         "wait_expired": (_is_positive_seconds, "a positive number of seconds"),
         "wait_result": (_is_positive_seconds, "a positive number of seconds"),
@@ -162,7 +163,8 @@ TEARDOWN = frozenset(
     {
         ("airplane", "off"),
         ("dont_keep_activities", "off"),
-        # WHY: a per-app locale outlives the cell and draws every later sheet in its language.
+        # WHY: a per-app locale outlives the cell and draws every later sheet in
+        # its language.
         ("device_language", DEVICE_LANGUAGE_DEFAULT),
     }
 )
@@ -211,7 +213,8 @@ _MERCHANT_VALUES = {
 
 MERCHANT_KEYS = frozenset(_MERCHANT_VALUES)
 
-# WHY: `eci` and `version` are left out so that a sandbox upgrade cannot show up as a finding.
+# WHY: `eci` and `version` are left out so that a sandbox upgrade cannot show
+# up as a finding.
 _THREEDS_VALUES = {
     "outcome": (_is_non_empty_str, "a non-empty string"),
     "flow": (_is_non_empty_str, "a non-empty string"),
@@ -298,7 +301,8 @@ class Cell:
     card: Card
     session: Session
     actions: tuple[Action, ...]
-    # WHY: ignores the per-platform overrides; read a run's expectation through expected_for.
+    # WHY: ignores the per-platform overrides; read a run's expectation through
+    # expected_for.
     expected: Expected
     overrides: dict[str, dict[str, Any]]
     tolerated_crash_markers: tuple[str, ...] = ()
@@ -352,7 +356,8 @@ def _check_label(label: Any, where: str) -> None:
         return
     if not LABEL_RE.fullmatch(label):
         raise CellError(f"{where}: label {label!r} is not in the frozen vocabulary")
-    # WHY: checked here, not on the constructed Expected, so override labels are held to it too.
+    # WHY: checked here, not on the constructed Expected, so override labels are
+    # held to it too.
     if label.count(TXN_PLACEHOLDER) > 1:
         raise CellError(
             f"{where}: label {label!r} has more than one '{TXN_PLACEHOLDER}'; "
@@ -406,7 +411,8 @@ def _check_expectation(raw: Any, where: str, what: str) -> dict[str, Any]:
 
 
 def _expected(raw: Any, where: str) -> Expected:
-    # WHY: label is checked before the unknown-key sweep, so a misspelled `lable:` is reported as missing.
+    # WHY: label is checked before the unknown-key sweep, so a misspelled
+    # `lable:` is reported as missing.
     label = _require(raw, "label", where)
     _check_expectation(raw, where, "expected")
     return Expected(
@@ -418,7 +424,8 @@ def _expected(raw: Any, where: str) -> Expected:
 
 def _check_cross_fields(cell: Cell, where: str) -> None:
     """Check each platform's merged expectation against the cell's actions."""
-    # WHY: one action list serves every platform, so the presence rules need each platform to agree.
+    # WHY: one action list serves every platform, so the presence rules need
+    # each platform to agree.
     verbs =[(a.verb, a.arg) for a in cell.actions]
     seen = [(p, cell.expected_for(p)) for p in cell.platforms]
 
@@ -459,7 +466,8 @@ def _check_cross_fields(cell: Cell, where: str) -> None:
             "wait_result, which raises rather than answering None. Such a "
             "cell cannot pass either way"
         )
-    # WHY: gated on looks_for_silence; ungated, it would reject cells several tests use as doubles.
+    # WHY: gated on looks_for_silence; ungated, it would reject cells several
+    # tests use as doubles.
     speaking =[p for p, e in seen if e.label != NO_LABEL]
     if looks_for_silence and speaking and not waits:
         raise CellError(
@@ -523,7 +531,8 @@ def load_cell(path: Path) -> Cell:
 
     expected = _expected(_require(raw, "expected", where), where)
 
-    # WHY: refused at load, before a device is touched, so no cell can be excused a crash it must not pass.
+    # WHY: refused at load, before a device is touched, so no cell can be
+    # excused a crash it must not pass.
     tolerated = raw.get("tolerated_crash_markers") or []
     if not isinstance(tolerated, list):
         raise CellError(f"{where}: tolerated_crash_markers must be a list")
@@ -540,7 +549,8 @@ def load_cell(path: Path) -> Cell:
         if override is None:
             continue
         if platform not in platforms:
-            # WHY: expected_for is only asked about declared platforms, so this override would never be read.
+            # WHY: expected_for is only asked about declared platforms, so this
+            # override would never be read.
             raise CellError(
                 f"{where}: expected.{platform} but the cell does not run on "
                 f"{platform!r}; platforms are {list(platforms)}"

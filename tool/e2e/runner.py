@@ -51,7 +51,8 @@ SAVED_CARD_TIMEOUT_SECONDS = 30
 
 FRENCH_SHEET_TIMEOUT_SECONDS = 30
 
-# WHY: the drivers keep their own literal defaults, because runner imports drivers and not the reverse.
+# WHY: the drivers keep their own literal defaults, because runner imports
+# drivers and not the reverse.
 EXPECT_TIMEOUT_SECONDS = {
     "rearmed": REARM_TIMEOUT_SECONDS,
     "no_result": NO_RESULT_TIMEOUT_SECONDS,
@@ -62,7 +63,8 @@ EXPECT_TIMEOUT_SECONDS = {
     "french_sheet": FRENCH_SHEET_TIMEOUT_SECONDS,
 }
 
-# WHY: redact() is byte-level and cannot scrub a PNG, so only verbs with the sheet or ACS page in front may take a frame.
+# WHY: redact() is byte-level and cannot scrub a PNG, so only verbs with the
+# sheet or ACS page in front may take a frame.
 SHOT_VERBS = ("type_card", "tap_pay", "acs", "expect")
 
 
@@ -85,7 +87,8 @@ EXIT_FAILED = 1
 EXIT_SETUP = 2
 EXIT_ABORTED = 3
 
-# WHY: the monotonic clock does not advance across a host suspend, so timeouts never fire during one.
+# WHY: the monotonic clock does not advance across a host suspend, so
+# timeouts never fire during one.
 SUSPEND_SECONDS = 60
 
 
@@ -127,7 +130,8 @@ VERB_BUDGET_SECONDS = {
 }
 DEFAULT_VERB_SECONDS = 120
 
-# WHY: a session's own expiry wait is longer than the default budget, so these verbs use their argument.
+# WHY: a session's own expiry wait is longer than the default budget, so
+# these verbs use their argument.
 TIMED_VERBS = ("wait", "wait_result", "wait_expired", "background")
 
 WAIT_SLACK_SECONDS = 60
@@ -284,7 +288,8 @@ def _observe(step: Step, what: str) -> tuple[bool, str | None]:
     driver = step.driver
     timeout = EXPECT_TIMEOUT_SECONDS.get(what)
     if timeout is None:
-        # WHY: a KeyError here would be read as a device problem, not an authoring fault.
+        # WHY: a KeyError here would be read as a device problem, not an
+        # authoring fault.
         raise DriverError(f"the runner cannot observe {what!r}: no deadline")
     if what == "rearmed":
         return driver.wait_rearmed(step.amount_text, timeout=timeout), None
@@ -404,7 +409,8 @@ def _perform(step: Step, action: Action):
     elif verb == "kill_activity":
         driver.kill_activity()
     elif _grammar_accepts(verb, arg):
-        # WHY: without this guard an unlanded verb would raise DriverError and be read as a device problem.
+        # WHY: without this guard an unlanded verb would raise DriverError and be
+        # read as a device problem.
         raise NotImplementedError(
             f"{verb} is in the action grammar but the runner has no branch "
             f"for it yet (arg {arg!r})"
@@ -507,7 +513,8 @@ def run_cell(
                             f"{EXPECT_TIMEOUT_SECONDS[action.arg]:.0f}s{seen}"
                         )
 
-                # WHY: every polling wait reads the tree, so a dump that fails ends the cell.
+                # WHY: every polling wait reads the tree, so a dump that fails ends
+                # the cell.
                 dump = driver.dump_tree()
                 write(f"{stem}.uix", dump)
                 if _may_screenshot(verb, dump, platform, secrets):
@@ -519,7 +526,8 @@ def run_cell(
                     screenshots_skipped.append(stem)
             reached_the_end = True
         except Exception as error:  # noqa: BLE001
-            # WHY: a hung emulator raises TimeoutExpired and a dead WebDriverAgent raises JSONDecodeError, not only DriverError.
+            # WHY: a hung emulator raises TimeoutExpired and a dead WebDriverAgent
+            # raises JSONDecodeError, not only DriverError.
             authoring = isinstance(error, NotImplementedError)
             problems.append(f"{_kind(error)}: {error}")
             try:
@@ -537,7 +545,8 @@ def run_cell(
                         )
                 elif verb in SHOT_VERBS:
                     screenshots_skipped.append(f"{stem}-failed")
-            # WHY: airplane mode outlives the process, so the teardown replay runs even after the budget is spent.
+            # WHY: airplane mode outlives the process, so the teardown replay runs
+            # even after the budget is spent.
             if step is not None:
                 replayed, said = _replay_teardown(step, cell.actions, index)
                 teardown_replayed.extend(replayed)
@@ -546,7 +555,8 @@ def run_cell(
             try:
                 shutil.rmtree(token_dir)
             except OSError as error:
-                # WHY: a live credential left on disk must be reported, so this error is not swallowed.
+                # WHY: a live credential left on disk must be reported, so this error
+                # is not swallowed.
                 run_problems.append(
                     _redacted(
                         f"token: {cell.id}'s token file was left behind at "
@@ -567,13 +577,15 @@ def run_cell(
                 f"merchant: could not read session {session['id']}: {error}"
             )
         else:
-            # WHY: a GET on an open session mints a session_token the runner did not name, so it is dropped here.
+            # WHY: a GET on an open session mints a session_token the runner did not
+            # name, so it is dropped here.
             resource, minted_by_the_read = evidence.scrub_resource(resource)
             secrets.extend(minted_by_the_read)
             write("merchant.json", json.dumps(resource, indent=2).encode())
             if reached_the_end:
                 problems += verify.verify_merchant(resource, expected.merchant)
-                # WHY: a `<any>` label records the transaction id rather than asserting it, so this check runs for it too.
+                # WHY: a `<any>` label records the transaction id rather than
+                # asserting it, so this check runs for it too.
                 said = verify.verify_label_transaction(resource, transaction_id)
                 if expected.label in LABEL_SENTINELS:
                     label_transaction_notes += said
@@ -581,23 +593,28 @@ def run_cell(
                     problems += said
 
         try:
-            # WHY: the log is read before the next launch(), which truncates the iOS console capture.
+            # WHY: the log is read before the next launch(), which truncates the iOS
+            # console capture.
             log = driver.logs_since(started)
         except Exception as error:  # noqa: BLE001
             problems.append(f"logs: {error}")
         else:
             write("logs.txt", log.encode())
-            # WHY: a crash is often the cause of the first failure, so it is checked even when the cell did not reach its end.
+            # WHY: a crash is often the cause of the first failure, so it is checked
+            # even when the cell did not reach its end.
             faults, tolerated_crash_lines, driver_crashes = verify.crash_lines(
                 log, driver.package, cell.tolerated_crash_markers
             )
             problems += [f"crash: {line.strip()}" for line in faults]
-            # WHY: uiautomator's FATAL on a closed binder has no `Process:` line, so it is a warning, not an app crash.
+            # WHY: uiautomator's FATAL on a closed binder has no `Process:` line, so
+            # it is a warning, not an app crash.
             warnings += [
                 f"driver_crash: {line.strip()} -- {verify.DRIVER_CRASH_REASON}"
                 for line in driver_crashes
             ]
-            # WHY: a setting can read back as applied yet be ignored until reboot (always_finish_activities on API 35), so the marker's absence is a finding.
+            # WHY: a setting can read back as applied yet be ignored until reboot
+            # (always_finish_activities on API 35), so the marker's absence is a
+            # finding.
             if cell.tolerated_crash_markers and not tolerated_crash_lines:
                 problems.append(
                     "tolerated_crash_markers: the cell declared "
@@ -607,7 +624,8 @@ def run_cell(
                     "something else"
                 )
 
-    # WHY: a session minted before a host suspend expires during it, so the cell's failure is a misdiagnosis, not evidence.
+    # WHY: a session minted before a host suspend expires during it, so the
+    # cell's failure is a misdiagnosis, not evidence.
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
     suspended = host_suspended_seconds(
         wall=elapsed, monotonic=time.monotonic() - started_monotonic
@@ -665,7 +683,8 @@ def run_cell(
             indent=2,
         ).encode(),
     )
-    # WHY: the progress line is appended last, so a resume never reads a cell whose evidence is not on disk.
+    # WHY: the progress line is appended last, so a resume never reads a cell
+    # whose evidence is not on disk.
     run.append_progress(
         {
             "cell": cell.id,
@@ -694,7 +713,8 @@ def check_cells(cell_dir: Path, platform: str) -> list[Cell]:
         except ValueError as error:
             raise CellError(f"{cell.path}: {error}") from error
     if not any(c.id == CONTROL_CELL_ID for c in everything):
-        # WHY: the control cell is what tells an SDK finding from a broken rig, so a run without one does not start.
+        # WHY: the control cell is what tells an SDK finding from a broken rig, so
+        # a run without one does not start.
         raise CellError(
             f"{cell_dir}: no {CONTROL_CELL_ID!r} cell runs on {platform}, so "
             "no failure here could be checked against a known-good payment"
@@ -774,7 +794,8 @@ def run_cells(
         write_run_report()
         return report
 
-    # WHY: the control cell comes from every cell, so --only cannot drop the check that vouches for the run.
+    # WHY: the control cell comes from every cell, so --only cannot drop the
+    # check that vouches for the run.
     control =next((c for c in everything if c.id == CONTROL_CELL_ID), None)
     consecutive_control_failures = 0
     checks = 0
@@ -788,13 +809,15 @@ def run_cells(
         if app_path:
             try:
                 driver.install(app_path)
-            # WHY: adb and ssh raise errors that are not DriverError, and a failed install makes every later result stale.
+            # WHY: adb and ssh raise errors that are not DriverError, and a failed
+            # install makes every later result stale.
             except Exception as error:  # noqa: BLE001
                 stop(f"could not install {app_path}: {_redacted(str(error))}")
                 return report
 
         for cell in todo:
-            # WHY: only run_cell holds the session token the progress record is scrubbed against.
+            # WHY: only run_cell holds the session token the progress record is
+            # scrubbed against.
             result = run_cell(cell, platform, driver, sandbox, run, build_id=build_id)
             report.results.append(result)
             report.problems += result.run_problems
@@ -804,7 +827,8 @@ def run_cells(
                     0 if result.passed else consecutive_control_failures + 1
                 )
             elif not result.passed and not result.authoring:
-                # WHY: a control re-checks the rig after a finding, but not after an authoring fault, which says nothing about the rig.
+                # WHY: a control re-checks the rig after a finding, but not after an
+                # authoring fault, which says nothing about the rig.
                 checks += 1
                 check = run_cell(
                     control,
@@ -833,7 +857,8 @@ def run_cells(
         try:
             driver.close()
         except Exception as error:  # noqa: BLE001
-            # WHY: the cells have already reached their verdicts, so a failing close is recorded, not raised.
+            # WHY: the cells have already reached their verdicts, so a failing close
+            # is recorded, not raised.
             problem =f"close: {_redacted(str(error))}"
             report.problems.append(problem)
             run.append_progress(
@@ -943,7 +968,8 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_SETUP
 
     if report.aborted:
-        # WHY: under a rig fault the findings below are not findings, so the abort line comes first.
+        # WHY: under a rig fault the findings below are not findings, so the abort
+        # line comes first.
         print(f"ABORT {report.abort_reason}")
     for cell_id in report.skipped:
         print(f"SKIP {cell_id} (passed in an earlier run; --all to rerun)")

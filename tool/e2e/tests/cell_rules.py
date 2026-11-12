@@ -2,7 +2,8 @@ from pathlib import Path
 
 from tool.e2e import cells
 
-# WHY: these PANs approve on TEST, so a cell that uses one would measure an approval, not a decline.
+# WHY: these PANs approve on TEST, so a cell that uses one would measure an
+# approval, not a decline.
 APPROVING_PANS = ("4111111111153055", "4111111111150069", "4111111111150127")
 
 TERMINAL_VERBS = ("wait_result", "expect")

@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-# WHY: one trailing segment is enough, because iOS truncates token values at 512 characters.
+# WHY: one trailing segment is enough, because iOS truncates token values at
+# 512 characters.
 JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_-]{16,}(?:\.[A-Za-z0-9_-]{16,})+")
 
 REDACTED = b"[REDACTED-SESSION-TOKEN]"
@@ -19,7 +20,8 @@ MIN_SECRET_CHARS = 8
 # WHY: long enough that the header every RS256 JWT shares is not a match on its own.
 MIN_SECRET_PREFIX_CHARS = 48
 
-# WHY: wider than sandbox._scrub on purpose; a token re-minted on a read is never named in advance.
+# WHY: wider than sandbox._scrub on purpose; a token re-minted on a read is
+# never named in advance.
 TOKEN_KEYS = frozenset({"session_token", "saved_token", "used_token"})
 
 # WHY: the checkout URL carries the token as a query parameter too.
@@ -58,7 +60,8 @@ def _replace_prefixes(data: bytes, secret: bytes) -> bytes:
 
 def scrub_resource(value: Any) -> tuple[Any, list[str]]:
     """Return a copy of the resource with its tokens replaced, and the tokens it held."""
-    # WHY: a scrubbed token is replaced, not removed, so saved_card_saved and saved_card_used still read presence.
+    # WHY: a scrubbed token is replaced, not removed, so saved_card_saved and
+    # saved_card_used still read presence.
     found: list[str] = []
 
     def walk(node: Any) -> Any:
@@ -107,7 +110,8 @@ class Run:
     """One invocation of the runner and the directory tree it fills."""
 
     def __init__(self, root: Path, platform: str, run_id: str | None = None):
-        # WHY: the platform is in the id so two platforms started in the same second do not share a directory.
+        # WHY: the platform is in the id so two platforms started in the same
+        # second do not share a directory.
         self.platform = platform
         self.run_id = run_id or f"{_stamp()}-{platform}"
         self.dir = Path(root) / self.run_id
@@ -146,7 +150,8 @@ class Run:
         self, record: dict[str, Any], *, secrets: Iterable[str | None] = ()
     ) -> None:
         """Append one line to progress.jsonl and fsync it."""
-        # WHY: platform is written last, so a record cannot file its results under another platform's ledger.
+        # WHY: platform is written last, so a record cannot file its results
+        # under another platform's ledger.
         line =json.dumps({**record, "at": _now(), "platform": self.platform})
         with self.progress_path.open("ab") as handle:
             handle.write(redact(line.encode(), secrets) + b"\n")
@@ -165,7 +170,8 @@ def passed_cells(root: Path, platform: str, build_id: str | None = None) -> set[
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
-                # WHY: a run killed mid-append leaves a partial last line; skip it rather than strand the resume.
+                # WHY: a run killed mid-append leaves a partial last line; skip it
+                # rather than strand the resume.
                 continue
             if (
                 record.get("platform") == platform
@@ -173,7 +179,8 @@ def passed_cells(root: Path, platform: str, build_id: str | None = None) -> set[
                 and record.get("cell")
                 # WHY: .get, so a legacy record with no build key reads as None.
                 and record.get("build") == build_id
-                # WHY: an interleaved control check is not the control cell's own run, so it is no pass.
+                # WHY: an interleaved control check is not the control cell's own
+                # run, so it is no pass.
                 and not record.get("control_check")
             ):
                 passed.add(record["cell"])

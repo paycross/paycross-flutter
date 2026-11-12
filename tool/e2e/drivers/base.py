@@ -23,7 +23,8 @@ class DriverError(RuntimeError):
     """The device did not do what was asked. Names what was being looked for."""
 
 
-# WHY: the token reaches an Android device shell that re-splits it, so its shape is checked first.
+# WHY: the token reaches an Android device shell that re-splits it, so its
+# shape is checked first.
 JWT_SHAPE = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}")
 
 

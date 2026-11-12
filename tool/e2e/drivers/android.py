@@ -14,7 +14,8 @@ from .. import tree
 from ..cells import DEVICE_LANGUAGE_DEFAULT, Card
 from .base import Driver, DriverError, device_text, read_token, rig_path
 
-# WHY: the Windows adb cannot open a WSL path, so the staging dir is given in both spellings.
+# WHY: the Windows adb cannot open a WSL path, so the staging dir is given in
+# both spellings.
 ADB = rig_path("PAYCROSS_E2E_ADB", "adb.exe")
 PACKAGE = "com.paycross.flutterdemo"
 
@@ -33,7 +34,8 @@ _LAUNCHER = "android.intent.category.LAUNCHER"
 # WHY: `input text` splits its argument on spaces; %s is the escape.
 _SPACE = "%s"
 
-# WHY: a faster pace reads as the caret bug returning on this emulator, a false finding against the SDK.
+# WHY: a faster pace reads as the caret bug returning on this emulator, a false
+# finding against the SDK.
 DIGIT_PACING_SECONDS = 0.4
 
 SETTLE_SECONDS = 1
@@ -50,7 +52,8 @@ _KEYCODE_DEL = 67
 _KEYCODE_BACK = 4
 _KEYCODE_MOVE_END = 123
 
-# WHY: the example app's Pay is a Flutter widget, so it matches on content-desc, not text.
+# WHY: the example app's Pay is a Flutter widget, so it matches on
+# content-desc, not text.
 EXAMPLE_PAY = "Pay"
 
 # WHY: the radios settle slowly; a shorter wait reads a half-applied state.
@@ -67,8 +70,10 @@ SAVE_BOX_TIMEOUT_SECONDS = 15
 
 QUOTED_DEVICE_TEXT_CHARS = 80
 
-# WHY: the testTag resource-ids reach a uiautomator dump only in a debuggable host app, not in a release build.
-# WHY: a card field's content-desc sits on a non-clickable child View, so the tagged EditText is the tap target.
+# WHY: the testTag resource-ids reach a uiautomator dump only in a debuggable
+# host app, not in a release build.
+# WHY: a card field's content-desc sits on a non-clickable child View, so the
+# tagged EditText is the tap target.
 CARD_NUMBER = "paycross.cardNumber"
 EXPIRY = "paycross.expiry"
 CVV = "paycross.cvv"
@@ -77,27 +82,34 @@ SAVE_CARD = "paycross.saveCard"
 PAY_BUTTON = "paycross.payButton"
 SAVED_CARDS = "paycross.savedCards"
 
-# WHY: a dump taken while a dialog is up holds only the dialog, so checks after a dismissal need a second look.
+# WHY: a dump taken while a dialog is up holds only the dialog, so checks after
+# a dismissal need a second look.
 CANCEL_DIALOG = "paycross.cancelDialog"
 CANCEL_CONFIRM = "paycross.cancelConfirm"
 CANCEL_DISMISS = "paycross.cancelDismiss"
 REMOVE_DIALOG = "paycross.removeDialog"
 REMOVE_CONFIRM = "paycross.removeConfirm"
 
-# WHY: the delete bin's identifier starts with the row's prefix, so a row match must exclude it.
+# WHY: the delete bin's identifier starts with the row's prefix, so a row match
+# must exclude it.
 SAVED_CARD_PREFIX = "paycross.savedCard."
 SAVED_CARD_DELETE_SUFFIX = ".delete"
-# WHY: the page title never reaches the accessibility tree, so only rendered text is matched.
-# WHY: deployments lag the source, so the old heading phrase stays alongside the new one.
+# WHY: the page title never reaches the accessibility tree, so only rendered
+# text is matched.
+# WHY: deployments lag the source, so the old heading phrase stays alongside the
+# new one.
 ACS_MARKERS = ("AUTHENTICATION OUTCOMES", "Sandbox 3DS Challenge")
-# WHY: the wallet button has no resource-id in a uiautomator dump, so it matches on Google's description.
-# WHY: Google Play services renders this text in the device language, so a cell that sets a language may not touch the wallet.
+# WHY: the wallet button has no resource-id in a uiautomator dump, so it
+# matches on Google's description.
+# WHY: Google Play services renders this text in the device language, so a cell
+# that sets a language may not touch the wallet.
 GOOGLE_PAY_DESC = "Pay with GPay"
 
 # WHY: an unusable logcat cutoff prints nothing, which reads as "nothing crashed".
 _LOGCAT_CUTOFF = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$")
 
-# WHY: a package the device does not hold exits 0 with no brackets, so the output is parsed, not trusted.
+# WHY: a package the device does not hold exits 0 with no brackets, so the
+# output is parsed, not trusted.
 _APP_LOCALES = re.compile(r"\bare \[(?P<tags>[^\]]*)\]")
 
 
@@ -177,7 +189,8 @@ class AndroidDriver(Driver):
 
     def _type_digits(self, digits: str) -> None:
         """Sends one key event per digit, paced by DIGIT_PACING_SECONDS."""
-        # WHY: bulk `input text` bypasses the card formatter, so digits are sent one key event at a time.
+        # WHY: bulk `input text` bypasses the card formatter, so digits are sent one
+        # key event at a time.
         for digit in digits:
             self._key(_KEYCODE_ZERO + int(digit))
             self._sleep(DIGIT_PACING_SECONDS)
@@ -201,7 +214,8 @@ class AndroidDriver(Driver):
         return found
 
     def _tap_text(self, text: str, **kw) -> None:
-        # WHY: an empty needle matches every node with empty text, so the tap would land on an arbitrary one.
+        # WHY: an empty needle matches every node with empty text, so the tap would
+        # land on an arbitrary one.
         if not text:
             raise DriverError("refusing to tap on an empty text match")
         self._tap(self._find(tree.find_text_exact, text, "node with text", **kw).centre)
@@ -266,18 +280,24 @@ class AndroidDriver(Driver):
     def launch(self) -> None:
         if self.getprop("sys.boot_completed") != "1":
             raise DriverError("the emulator has not finished booting")
-        # WHY: the device language is not refused, since a French device is a case the rig must measure.
-        # WHY: sheet_rearmed reads the amount in the en-US spelling; see tree.format_amount_en_us.
-        # WHY: a device never written to answers null, so this read fails open; airplane() fails closed.
+        # WHY: the device language is not refused, since a French device is a case
+        # the rig must measure.
+        # WHY: sheet_rearmed reads the amount in the en-US spelling; see
+        # tree.format_amount_en_us.
+        # WHY: a device never written to answers null, so this read fails open;
+        # airplane() fails closed.
         airplane = self._shell(["shell", "settings get global airplane_mode_on"])
         if airplane.strip() == "1":
-            # WHY: airplane mode left on by an earlier cell is a rig fault; refusing here keeps it from reading as an SDK finding.
-            # WHY: clearing the setting here would hide that the rig was left dirty, so this refuses instead.
+            # WHY: airplane mode left on by an earlier cell is a rig fault; refusing
+            # here keeps it from reading as an SDK finding.
+            # WHY: clearing the setting here would hide that the rig was left dirty,
+            # so this refuses instead.
             raise DriverError(
                 "the device is in airplane mode: a previous cell left it on. "
                 "Run: adb shell cmd connectivity airplane-mode disable"
             )
-        # WHY: a leftover detach on the plugin makes every following cell report result:pending:result_lost:, a rig fault.
+        # WHY: a leftover detach on the plugin makes every following cell
+        # report result:pending:result_lost:, a rig fault.
         if (
             self._shell(
                 ["shell", "settings get global always_finish_activities"]
@@ -290,8 +310,10 @@ class AndroidDriver(Driver):
                 "like an SDK finding. Run: adb shell settings put global "
                 "always_finish_activities 0"
             )
-        # WHY: user_rotation only applies while accelerometer_rotation is 0, so both settings are read.
-        # WHY: an un-restored rotation leaves the Pay button off screen, which reads as an SDK finding.
+        # WHY: user_rotation only applies while accelerometer_rotation is 0,
+        # so both settings are read.
+        # WHY: an un-restored rotation leaves the Pay button off screen, which
+        # reads as an SDK finding.
         sensor = self._shell(
             ["shell", "settings get system accelerometer_rotation"]
         ).strip()
@@ -346,7 +368,8 @@ class AndroidDriver(Driver):
 
         # WHY: polled, because the last chunks are still arriving.
         if self._poll(agreed, TOKEN_READBACK_SECONDS, SETTLE_SECONDS) is None:
-            # WHY: a truncated paste shows up as an instant 401, which would read as an SDK bug.
+            # WHY: a truncated paste shows up as an instant 401, which would read as
+            # an SDK bug.
             raise DriverError(
                 f"token entry never agreed with the file: {seen} characters on "
                 f"screen, {expected} expected"
@@ -359,7 +382,8 @@ class AndroidDriver(Driver):
 
     def present_token(self, token_path: Path) -> None:
         """Enters the token and taps the example's Pay, without waiting for a card form."""
-        # WHY: a token the SDK refuses never shows a card form, so waiting for one only delays the report.
+        # WHY: a token the SDK refuses never shows a card form, so waiting for
+        # one only delays the report.
         self._enter_token_text(read_token(Path(token_path), verb="type"))
         self.tap_example_pay()
 
@@ -368,7 +392,8 @@ class AndroidDriver(Driver):
 
     def enter_token(self, literal: str) -> None:
         """Types a short literal into the example's token field."""
-        # WHY: the literal is not read through read_token, and cells.py caps it so no live token fits.
+        # WHY: the literal is not read through read_token, and cells.py caps it
+        # so no live token fits.
         field = self._find_token_field()
         self._tap(field.centre)
         self._sleep(SETTLE_SECONDS)
@@ -378,7 +403,8 @@ class AndroidDriver(Driver):
 
     def airplane(self, on: bool) -> None:
         """Cuts the device's network, and reads back that it was cut."""
-        # WHY: the cmd connectivity command is used because a settings broadcast needs a system permission and leaves the radios up.
+        # WHY: the cmd connectivity command is used because a settings broadcast
+        # needs a system permission and leaves the radios up.
         # WHY: cmd connectivity exists only from API 30.
         want = "1" if on else "0"
         said = self._shell(
@@ -387,7 +413,8 @@ class AndroidDriver(Driver):
         self._sleep(AIRPLANE_SETTLE_SECONDS)
         got = self._shell(["shell", "settings get global airplane_mode_on"]).strip()
         if got != want:
-            # WHY: below API 30 the read-back reports '0' while cmd reports the service is missing, so both are quoted.
+            # WHY: below API 30 the read-back reports '0' while cmd reports
+            # the service is missing, so both are quoted.
             raise DriverError(
                 f"airplane mode reads {got[:QUOTED_DEVICE_TEXT_CHARS]!r} after "
                 f"asking for {want!r}: the cut did not take, so anything this "
@@ -428,7 +455,8 @@ class AndroidDriver(Driver):
 
     def background(self, seconds: float) -> None:
         """Sends HOME, waits, and brings the task back as a shopper's icon tap would."""
-        # WHY: `am start` on MainActivity would reorder the task and drop the SDK's activity from the top.
+        # WHY: `am start` on MainActivity would reorder the task and drop the
+        # SDK's activity from the top.
         self._key(_KEYCODE_HOME)
         self._sleep(BACKGROUND_SETTLE_SECONDS)
         if self._foreground_package() == self.package:
@@ -440,9 +468,11 @@ class AndroidDriver(Driver):
 
     def rotate(self) -> None:
         """Turns the screen a quarter turn and leaves it turned."""
-        # WHY: the sensor would turn the screen straight back, so auto-rotate goes off first.
+        # WHY: the sensor would turn the screen straight back, so auto-rotate
+        # goes off first.
         # WHY: PaymentActivity declares no configChanges, so a rotation recreates it.
-        # WHY: the CVV field is not saved across a recreation, so rotate after submitting or retype.
+        # WHY: the CVV field is not saved across a recreation, so rotate after
+        # submitting or retype.
         self._shell(["shell", "settings put system accelerometer_rotation 0"])
         current = self._shell(["shell", "settings get system user_rotation"]).strip()
         target = "0" if current == "1" else "1"
@@ -457,7 +487,8 @@ class AndroidDriver(Driver):
 
     def dont_keep_activities(self, on: bool) -> None:
         """Sets the "don't keep activities" developer option and reads it back."""
-        # WHY: with it on, the host activity is destroyed under the open sheet and the pending call comes back as result_lost.
+        # WHY: with it on, the host activity is destroyed under the open sheet
+        # and the pending call comes back as result_lost.
         want = "1" if on else "0"
         self._shell(["shell", f"settings put global always_finish_activities {want}"])
         self._sleep(SETTLE_SECONDS)
@@ -471,10 +502,14 @@ class AndroidDriver(Driver):
 
     def device_language(self, tag: str) -> None:
         """Sets the app's own language list to `tag`, or clears it for the default."""
-        # WHY: the system language cannot be set on this image, so the app's own list is the one the SDK reads.
-        # WHY: the list is cleared in teardown because it outlives the cell and the app's process.
-        # WHY: set-app-locales prints nothing on failure, so the list is read back below.
-        # WHY: the running app keeps its old language until it relaunches; cell_rules requires a relaunch step.
+        # WHY: the system language cannot be set on this image, so the app's own
+        # list is the one the SDK reads.
+        # WHY: the list is cleared in teardown because it outlives the cell
+        # and the app's process.
+        # WHY: set-app-locales prints nothing on failure, so the list is read
+        # back below.
+        # WHY: the running app keeps its old language until it relaunches;
+        # cell_rules requires a relaunch step.
         wanted = [] if tag == DEVICE_LANGUAGE_DEFAULT else [tag]
         # WHY: the empty list must reach the device shell as an empty quoted argument.
         listed = ",".join(wanted)
@@ -485,7 +520,8 @@ class AndroidDriver(Driver):
         got = parse_app_locales(
             self._shell(["shell", f"cmd locale get-app-locales {PACKAGE}"])
         )
-        # WHY: the system stores tags as given, so this compares tags, not canonical forms.
+        # WHY: the system stores tags as given, so this compares tags, not
+        # canonical forms.
         if [t.lower() for t in got] != [t.lower() for t in wanted]:
             raise DriverError(
                 f"the app's languages read {got} after asking for {wanted}: "
@@ -509,7 +545,8 @@ class AndroidDriver(Driver):
         if verify_pan:
             nodes = self._nodes()
             if not any(n.text.replace(" ", "") == card.pan for n in nodes):
-                # WHY: a caret bug and a mistyped tap look identical here, so the value read is reported.
+                # WHY: a caret bug and a mistyped tap look identical here, so the
+                # value read is reported.
                 field = tree.find_identifier(nodes, CARD_NUMBER)
                 reads = field[0].text if field else None
                 raise DriverError(
@@ -533,21 +570,24 @@ class AndroidDriver(Driver):
     def save_card(self, *, timeout: float = SAVE_BOX_TIMEOUT_SECONDS) -> None:
         """Ensures the save-card box is ticked and checks that it is."""
         # WHY: tapping a ticked box unticks it, so the state is checked before the tap.
-        # WHY: a tap that misses the box leaves the submit with card.save false, and only the saved-card check fails later.
+        # WHY: a tap that misses the box leaves the submit with card.save false,
+        # and only the saved-card check fails later.
         box = self._poll(
             lambda nodes: next(iter(tree.find_identifier(nodes, SAVE_CARD)), None),
             timeout,
             SETTLE_SECONDS,
         )
         if box is None:
-            # WHY: without save_card_config on the session, canSaveCard is false and the box is never composed.
+            # WHY: without save_card_config on the session, canSaveCard is false
+            # and the box is never composed.
             raise DriverError(
                 f"no {SAVE_CARD} on screen within {timeout}s: the session's "
                 "options are missing save_card_config, or the form has not "
                 "rendered"
             )
         if box.checked is None:
-            # WHY: the tap would land somewhere plausible and the read-back would blame the tap.
+            # WHY: the tap would land somewhere plausible and the read-back would
+            # blame the tap.
             raise DriverError(
                 f"{SAVE_CARD} is on screen at {box.bounds} but is not a "
                 "two-state control; the tag is no longer on the toggleable row"
@@ -574,12 +614,14 @@ class AndroidDriver(Driver):
 
     def type_cvv(self, cvv: str) -> None:
         """Fills the saved-card CVV field and nothing else."""
-        # WHY: type_card cannot serve here, its first act clears a card-number field that is not on this screen.
+        # WHY: type_card cannot serve here, its first act clears a card-number
+        # field that is not on this screen.
         self._tap_id(CVV)
         self._sleep(SETTLE_SECONDS)
         self._input_text(cvv)
         self._sleep(SETTLE_SECONDS)
-        # WHY: the numeric pad covers the Pay button, so it is dismissed before the Pay tap.
+        # WHY: the numeric pad covers the Pay button, so it is dismissed
+        # before the Pay tap.
         self._key(_KEYCODE_BACK)
         self._sleep(SETTLE_SECONDS)
 
@@ -588,8 +630,10 @@ class AndroidDriver(Driver):
         self._tap_id(PAY_BUTTON)
 
     def tap_google_pay(self, **kw) -> None:
-        # WHY: the wallet button is found by description; its identifier is not in the dump.
-        # WHY: the description sits on a non-clickable wrapper, so the tap goes by bounds.
+        # WHY: the wallet button is found by description; its identifier is
+        # not in the dump.
+        # WHY: the description sits on a non-clickable wrapper, so the tap
+        # goes by bounds.
         self._tap(
             self._find(
                 tree.find_content_desc, GOOGLE_PAY_DESC, "the Google Pay button", **kw
@@ -630,9 +674,12 @@ class AndroidDriver(Driver):
 
     def select_saved_card(self, *, timeout: float = 30) -> None:
         """Chooses the first stored card and checks that the form switched."""
-        # WHY: the saved-card rows are a radio list tagged with identifiers, so the first is tapped where it stands.
-        # WHY: the card-number field must be gone and the CVV field must remain, or the switch did not happen.
-        # WHY: the prompt text is localised, so the switch is checked by identifier rather than by prompt.
+        # WHY: the saved-card rows are a radio list tagged with identifiers,
+        # so the first is tapped where it stands.
+        # WHY: the card-number field must be gone and the CVV field must remain,
+        # or the switch did not happen.
+        # WHY: the prompt text is localised, so the switch is checked by
+        # identifier rather than by prompt.
         row = self._poll(
             lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
             timeout,
@@ -667,9 +714,12 @@ class AndroidDriver(Driver):
 
     def remove_saved_card(self, *, timeout: float = 30) -> None:
         """Deletes the first stored card and checks that its row is gone."""
-        # WHY: a removal can fail after Confirm and leave the row on the sheet, so the row is checked, not the dialog.
-        # WHY: the row's identifier carries the card's uuid, so the check is for this card only.
-        # WHY: the dialog's dump holds nothing else, so the check waits until the pay button is back on the sheet.
+        # WHY: a removal can fail after Confirm and leave the row on the sheet,
+        # so the row is checked, not the dialog.
+        # WHY: the row's identifier carries the card's uuid, so the check is
+        # for this card only.
+        # WHY: the dialog's dump holds nothing else, so the check waits until
+        # the pay button is back on the sheet.
         row = self._poll(
             lambda nodes: next(iter(self._saved_card_rows(nodes)), None),
             timeout,
@@ -706,7 +756,8 @@ class AndroidDriver(Driver):
 
     def wait_saved_card(self, timeout: float = 30) -> bool:
         """Returns whether the sheet is offering a stored card."""
-        # WHY: no stored card is a cell verdict, so it returns False rather than raising a device error.
+        # WHY: no stored card is a cell verdict, so it returns False rather than
+        # raising a device error.
         found = self._poll(
             lambda nodes: next(iter(tree.find_identifier(nodes, SAVED_CARDS)), None),
             timeout,
@@ -730,7 +781,8 @@ class AndroidDriver(Driver):
 
     def dismiss_cancel(self, *, timeout: float = 30) -> None:
         """Raises the cancel dialog, dismisses it, and checks that the form is back."""
-        # WHY: the dialog must be gone and the Pay button back; on iOS the dialog is drawn inside the sheet.
+        # WHY: the dialog must be gone and the Pay button back; on iOS the
+        # dialog is drawn inside the sheet.
         self._raise_cancel_dialog(timeout=timeout)
         self._tap_id(CANCEL_DISMISS, timeout=timeout)
         self._sleep(SETTLE_SECONDS)
@@ -747,7 +799,8 @@ class AndroidDriver(Driver):
 
     def _raise_cancel_dialog(self, *, timeout: float = 30) -> None:
         """Presses Back and waits for the cancel dialog."""
-        # WHY: the sheet has no cancel control on Android, so the Back gesture is the only way to raise the dialog.
+        # WHY: the sheet has no cancel control on Android, so the Back gesture
+        # is the only way to raise the dialog.
         self._key(_KEYCODE_BACK)
         self._find(
             tree.find_identifier, CANCEL_DIALOG, "the cancel dialog", timeout=timeout
@@ -756,7 +809,8 @@ class AndroidDriver(Driver):
     def wait_rearmed(
         self, amount_text: str, timeout: float, *, interval: float = 2
     ) -> bool:
-        # WHY: a device that will not dump raises rather than answering False, which would read as a verdict.
+        # WHY: a device that will not dump raises rather than answering False,
+        # which would read as a verdict.
         found = self._poll(
             lambda nodes: tree.sheet_rearmed(nodes, amount_text) or None,
             timeout,
@@ -776,7 +830,8 @@ class AndroidDriver(Driver):
 
     def wait_no_google_pay(self, timeout: float = 20) -> bool:
         """Returns True only if the Google Pay button is absent for the whole window."""
-        # WHY: the button can appear late after an async readiness check, so absence must hold for the whole window.
+        # WHY: the button can appear late after an async readiness check,
+        # so absence must hold for the whole window.
         deadline = time.monotonic() + timeout
         while True:
             live = time.monotonic() < deadline
@@ -793,7 +848,8 @@ class AndroidDriver(Driver):
         if attempts < 1:
             raise ValueError(f"attempts must be at least 1, got {attempts}")
         for attempt in range(attempts):
-            # WHY: uiautomator dump leaves the previous file in place when the UI is animating, so it is removed in the same call.
+            # WHY: uiautomator dump leaves the previous file in place when the
+            # UI is animating, so it is removed in the same call.
             said = self._shell(
                 ["shell", f"rm -f {_DUMP_PATH}; uiautomator dump {_DUMP_PATH}"]
             )
@@ -818,9 +874,11 @@ class AndroidDriver(Driver):
 
     def logs_since(self, since: datetime) -> str:
         """Returns logcat lines from `since` to now, with the cutoff computed on the device."""
-        # WHY: logcat stamps are in the device's zone, so the cutoff is computed on the device.
+        # WHY: logcat stamps are in the device's zone, so the cutoff is
+        # computed on the device.
         seconds = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
-        # WHY: the device shell re-splits on spaces, so the date format is quoted as one argument.
+        # WHY: the device shell re-splits on spaces, so the date format is
+        # quoted as one argument.
         cutoff = self._shell(
             ["shell", f"date -d @$(( $(date +%s) - {seconds} )) '+%m-%d %H:%M:%S.000'"]
         ).strip()

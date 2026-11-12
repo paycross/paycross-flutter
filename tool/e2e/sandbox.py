@@ -34,14 +34,17 @@ RETRY_BACKOFF_SECONDS = 2.0
 
 DEFAULT_TOKEN_LIFETIME_SECONDS = 3600.0
 
-# WHY: the TEST gateway caches a 3600 s token for 3300 s; the refresh margin depends on both.
+# WHY: the TEST gateway caches a 3600 s token for 3300 s; the refresh margin
+# depends on both.
 OBSERVED_TOKEN_LIFETIME_SECONDS = 3600.0
 OBSERVED_TOKEN_CACHE_TTL_SECONDS = 3300.0
 
-# WHY: a margin of 300 s or more refreshes inside the gateway cache window and busy-loops on one token.
+# WHY: a margin of 300 s or more refreshes inside the gateway cache window and
+# busy-loops on one token.
 TOKEN_REFRESH_MARGIN_SECONDS = 240.0
 
-# WHY: an exp older than one lifetime is this machine's clock (WSL suspend), not a dead token.
+# WHY: an exp older than one lifetime is this machine's clock (WSL suspend),
+# not a dead token.
 IMPLAUSIBLE_EXP_AGE_SECONDS = OBSERVED_TOKEN_LIFETIME_SECONDS
 
 # WHY: HTTPException covers short reads after the status line; those are not URLErrors.
@@ -60,8 +63,10 @@ class SandboxError(RuntimeError):
 
 def read_env_file(path: Path | str) -> dict[str, str]:
     """Parses the five keys the campaign needs out of a shell-style env file."""
-    # WHY: not `set -a; . file`, so nothing else in the file reaches a subprocess environment.
-    # WHY: the parsing is shallow: no unescaping, no variable expansion, no inline comments.
+    # WHY: not `set -a; . file`, so nothing else in the file reaches a
+    # subprocess environment.
+    # WHY: the parsing is shallow: no unescaping, no variable expansion, no
+    # inline comments.
     values: dict[str, str] = {}
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -92,7 +97,8 @@ def _urllib_transport(
         ) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
-        # WHY: urlopen raises on any 4xx/5xx; the status and body are returned so the API's reason is reported.
+        # WHY: urlopen raises on any 4xx/5xx; the status and body are returned so
+        # the API's reason is reported.
         return error.code, error.read()
 
 
@@ -126,7 +132,8 @@ def _jwt_exp(token: Any) -> tuple[float | None, str | None]:
         return None, None
     padded = parts[1] + "=" * (-len(parts[1]) % 4)
     try:
-        # WHY: binascii.Error is a ValueError, so a payload that is not base64 lands here too.
+        # WHY: binascii.Error is a ValueError, so a payload that is not base64
+        # lands here too.
         claims = json.loads(base64.urlsafe_b64decode(padded))
     except (ValueError, TypeError):
         return None, None
@@ -294,7 +301,8 @@ class Sandbox:
         merged.update(headers or {})
         status, payload = self._request(method, url, merged, body)
         if status == 401:
-            # A 401 can mean an expiry the clock cannot predict: refetch and replay once.
+            # A 401 can mean an expiry the clock cannot predict: refetch and
+            # replay once.
             # A replay refused again means the credentials or environment are wrong.
             self._access_token = None
             self._token_expires_at = 0.0
@@ -323,7 +331,8 @@ class Sandbox:
                     return status, payload
             self._sleep(RETRY_BACKOFF_SECONDS)
 
-    # WHY: the locals of _bearer and mint hold the client secret and a token; --showlocals would log them.
+    # WHY: the locals of _bearer and mint hold the client secret and a token;
+    # --showlocals would log them.
     def _bearer(self) -> str:
         if (
             self._access_token is not None

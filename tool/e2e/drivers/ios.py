@@ -23,14 +23,16 @@ UDID = "C311AFDC-25FA-44A2-A800-10EB5A1039E3"
 BUNDLE = "com.paycross.flutterdemo"
 WDA = "http://127.0.0.1:8100"
 
-# WHY: an ssh session gets launchd's minimal PATH, so xcrun, curl and flutter are missing unless exported here.
+# WHY: an ssh session gets launchd's minimal PATH, so xcrun, curl and flutter
+# are missing unless exported here.
 MAC_ENV = rig_path(
     "PAYCROSS_E2E_MAC_ENV",
     "export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer "
     "PATH=/opt/homebrew/bin:$HOME/development/flutter/bin:$PATH; ",
 )
 
-# WHY: the ssh ceiling is longer than the curl timeout, so a stalled WDA call is reported by curl, not by a killed ssh.
+# WHY: the ssh ceiling is longer than the curl timeout, so a stalled WDA call
+# is reported by curl, not by a killed ssh.
 SSH_TIMEOUT_SECONDS = 900
 WDA_TIMEOUT_SECONDS = 30
 
@@ -39,20 +41,25 @@ REMOTE_DIR = "$HOME/work/e2e/ios/run"
 CONSOLE_LOG = f"{REMOTE_DIR}/console.log"
 REMOTE_SHOT = f"{REMOTE_DIR}/shot.png"
 
-# WHY: simctl writes a note to stderr on success too, so the frame and stderr are split by a marker outside the base64 alphabet.
+# WHY: simctl writes a note to stderr on success too, so the frame and stderr
+# are split by a marker outside the base64 alphabet.
 SHOT_STDERR = "[simctl-stderr]"
 
-# WHY: the console size is asked for, because tail's own error text would otherwise pass for app output.
+# WHY: the console size is asked for, because tail's own error text would
+# otherwise pass for app output.
 CONSOLE_SIZE = "[console-size]"
 
-# WHY: these identifiers match on Android too, so they are matched rather than rendered text, which is localised.
+# WHY: these identifiers match on Android too, so they are matched rather than
+# rendered text, which is localised.
 CARDHOLDER = "paycross.cardholderName"
 CARD_NUMBER = "paycross.cardNumber"
 EXPIRY = "paycross.expiry"
 CVV = "paycross.cvv"
 PAY_BUTTON = "paycross.payButton"
-# WHY: on iOS the sheet's outer identifier overrides the Pay button's, so the Pay button is found another way.
-# WHY: the pay button is not in the simulator tree under its own identifier; see _is_pay_button.
+# WHY: on iOS the sheet's outer identifier overrides the Pay button's, so the
+# Pay button is found another way.
+# WHY: the pay button is not in the simulator tree under its own identifier;
+# see _is_pay_button.
 SHEET = "paycross.sheet"
 # WHY: the amount label carries a "Total, " caption ahead of the amount.
 AMOUNT = "paycross.amount"
@@ -66,7 +73,8 @@ SAVED_CARD_DELETE_SUFFIX = ".delete"
 THREE_DS_CANCEL = "paycross.threeDSCancel"
 SHEET_CANCEL = "paycross.cancel"
 
-# WHY: SwiftUI drops a button's identifier on the UIAlertAction, so the dialogs are drawn in the sheet.
+# WHY: SwiftUI drops a button's identifier on the UIAlertAction, so the dialogs
+# are drawn in the sheet.
 CANCEL_DIALOG = "paycross.cancelDialog"
 CANCEL_CONFIRM = "paycross.cancelConfirm"
 CANCEL_DISMISS = "paycross.cancelDismiss"
@@ -121,12 +129,14 @@ _DEVICE_STATE = re.compile(r"\(([^()]+)\)\s*$")
 def _is_pay_button(node: tree.Node) -> bool:
     if node.identifier == PAY_BUTTON:
         return True
-    # WHY: the SDK does not set the Pay button's identifier, so the sheet's Button is matched.
+    # WHY: the SDK does not set the Pay button's identifier, so the sheet's
+    # Button is matched.
     return node.identifier == SHEET and node.type == "Button"
 
 
 def _is_token_field(node: tree.Node) -> bool:
-    # WHY: a focused, empty field's label carries the hint, so the name is matched by prefix.
+    # WHY: a focused, empty field's label carries the hint, so the name is
+    # matched by prefix.
     name = node.identifier or node.content_desc
     return name == TOKEN_FIELD or name.startswith(TOKEN_FIELD + "\n")
 
@@ -138,7 +148,8 @@ def _is_paste_item(node: tree.Node) -> bool:
 def _ssh(command: str, *, stdin: bytes | None = None) -> str:
     what = (command.removeprefix(MAC_ENV).split() or ["ssh"])[0]
     # WHY: stdin carries the session token, since a command line is world-readable.
-    # WHY: a timeout or a missing ssh must be a DriverError, or it escapes every polling loop.
+    # WHY: a timeout or a missing ssh must be a DriverError, or it escapes every
+    # polling loop.
     try:
         done = subprocess.run(
             ["ssh", SSH_HOST, command],
@@ -166,7 +177,8 @@ class IosDriver(Driver):
     def __init__(
         self, ssh=_ssh, udid: str = UDID, bundle: str = BUNDLE, sleep=time.sleep
     ):
-        # WHY: a driver built for another bundle scopes its crash markers to that bundle.
+        # WHY: a driver built for another bundle scopes its crash markers to that
+        # bundle.
         super().__init__(package=bundle, sleep=sleep)
         self._ssh = ssh
         self._udid = udid
@@ -174,7 +186,8 @@ class IosDriver(Driver):
         self._bundle = bundle
         self._session_id: str | None = None
         self._window: tuple[int, int] | None = None
-        # WHY: reading from byte 0 would hand a previous cell's console output to crash_lines.
+        # WHY: reading from byte 0 would hand a previous cell's console output to
+        # crash_lines.
         self._console_from: int | None = None
         self._console_pid: int | None = None
         self._launch_languages: tuple[str, ...] = ()
@@ -211,7 +224,8 @@ class IosDriver(Driver):
                 f"WebDriverAgent's answer to {method} {path} was not an envelope: "
                 f"{raw.strip()[:_EXCERPT]!r}"
             )
-        # WHY: WDA reports a failure as HTTP 4xx with a JSON body that json.loads accepts.
+        # WHY: WDA reports a failure as HTTP 4xx with a JSON body that json.loads
+        # accepts.
         value = parsed.get("value")
         if isinstance(value, dict) and "error" in value:
             # WHY: the traceback runs to ~10 KB, so the message is cut short.
@@ -227,7 +241,8 @@ class IosDriver(Driver):
         return f"/session/{self._session_id}{path}"
 
     def _close_open_session(self) -> None:
-        # WHY: a stale session bound to the bundle terminates the app that launch() starts next.
+        # WHY: a stale session bound to the bundle terminates the app that launch()
+        # starts next.
         open_session = self._wda("GET", "/status").get("sessionId")
         if open_session:
             self._wda("DELETE", f"/session/{open_session}")
@@ -265,7 +280,8 @@ class IosDriver(Driver):
         return found.group(1)
 
     def _stop_console(self) -> None:
-        # WHY: the older capture still owns the app, so it must be dead before this one starts.
+        # WHY: the older capture still owns the app, so it must be dead before this
+        # one starts.
         if self._console_pid is None:
             return
         pid = self._console_pid
@@ -286,8 +302,10 @@ class IosDriver(Driver):
 
     def _start_console(self, *, truncate: bool = True) -> int | None:
         """Launches the app with its console captured, and returns the log mark."""
-        # WHY: the SDK emits no os_log, so crash markers reach the console, not `log show`.
-        # WHY: a pty, not --stdout, because NSLog writes to stderr only when stderr is a terminal.
+        # WHY: the SDK emits no os_log, so crash markers reach the console, not
+        # `log show`.
+        # WHY: a pty, not --stdout, because NSLog writes to stderr only when stderr
+        # is a terminal.
         said = self._remote(
             f"mkdir -p {REMOTE_DIR} && "
             + (f": > {CONSOLE_LOG} && " if truncate else "")
@@ -313,7 +331,8 @@ class IosDriver(Driver):
             f"kill -0 {self._console_pid} 2>/dev/null && echo alive || echo dead"
         ).strip()
         if said != "alive":
-            # WHY: the log is named, not quoted: app output is redacted only on the evidence path.
+            # WHY: the log is named, not quoted: app output is redacted only on the
+            # evidence path.
             raise DriverError(
                 "the app's console capture is not running, so a crash would go "
                 f"unseen; simctl launch --console-pty exited, see {CONSOLE_LOG} "
@@ -331,7 +350,8 @@ class IosDriver(Driver):
 
     def launch(self, *, truncate_console: bool = True) -> None:
         """Cold-starts the example app with its console captured."""
-        # WHY: truncate before anything that can fail, or a failed launch leaves the last log readable.
+        # WHY: truncate before anything that can fail, or a failed launch leaves the
+        # last log readable.
         if truncate_console:
             self._console_from = None
         state = self._device_state()
@@ -354,8 +374,10 @@ class IosDriver(Driver):
             {
                 "capabilities": {
                     "alwaysMatch": {
-                        # WHY: no bundleId, or WDA relaunches the app and drops its console capture.
-                        # WHY: the Flutter engine never quiesces, so the wait times out every request.
+                        # WHY: no bundleId, or WDA relaunches the app and drops its
+                        # console capture.
+                        # WHY: the Flutter engine never quiesces, so the wait times
+                        # out every request.
                         "shouldWaitForQuiescence": False,
                     }
                 }
@@ -372,7 +394,8 @@ class IosDriver(Driver):
         self._session_id = session_id
         self._window = None
         self._check_console()
-        # WHY: /orientation needs the session, and a cell that dies rotated leaves the simulator turned.
+        # WHY: /orientation needs the session, and a cell that dies rotated leaves
+        # the simulator turned.
         pose = self._wda("GET", self._session("/orientation")).get("value")
         if pose not in (None, "PORTRAIT"):
             raise DriverError(
@@ -441,7 +464,8 @@ class IosDriver(Driver):
         for node in hits:
             if self._on_screen(node):
                 return node
-        # WHY: without visibility data, on-screen matching is inert and taps land at raw coordinates.
+        # WHY: without visibility data, on-screen matching is inert and taps land at
+        # raw coordinates.
         if not any(n.visible for n in nodes):
             raise DriverError(
                 "no node in the whole source is marked visible, so nothing can "
@@ -465,7 +489,8 @@ class IosDriver(Driver):
         """Matches `name`, which is the identifier when one is set."""
         # WHY: WDA's name falls back to the label when an element has no identifier.
         if not name:
-            # WHY: untagged elements all have name="", so a blank name would tap an arbitrary one.
+            # WHY: untagged elements all have name="", so a blank name would tap an
+            # arbitrary one.
             raise DriverError("refusing to match on an empty name")
         found = self._poll(
             lambda nodes: self._pick(
@@ -511,10 +536,12 @@ class IosDriver(Driver):
         settle: float = SCROLL_SETTLE_SECONDS,
     ) -> tree.Node:
         """Swipes the sheet up until `name` is on screen, then returns it."""
-        # WHY: a name match alone finds ACS buttons below the fold, which cannot be tapped.
+        # WHY: a name match alone finds ACS buttons below the fold, which cannot be
+        # tapped.
         width, height = self._window_size()
         for attempt in range(max_swipes + 1):
-            # WHY: a WDA that will not answer must not read as a button that never came up.
+            # WHY: a WDA that will not answer must not read as a button that never
+            # came up.
             nodes = self._nodes(tolerate=attempt < max_swipes)
             node = self._pick(nodes, name, False, True)
             if node is not None:
@@ -537,7 +564,8 @@ class IosDriver(Driver):
 
     def _drag_origin(self, nodes: list[tree.Node], height: int) -> float:
         """Where a pan has to start for the sheet to receive it at all."""
-        # WHY: a pan that starts on a text field is swallowed, so the drag starts on a label.
+        # WHY: a pan that starts on a text field is swallowed, so the drag starts on
+        # a label.
         labels = [
             node.centre[1]
             for node in nodes
@@ -589,9 +617,11 @@ class IosDriver(Driver):
         self, *, settle: float = SETTLE_SECONDS, required: bool = True
     ) -> bool:
         """Puts away the keyboard the CVV field raised. True if it went."""
-        # WHY: a keyboard left up over the sheet's bottom stops scroll_to's drag from moving the page.
+        # WHY: a keyboard left up over the sheet's bottom stops scroll_to's drag from
+        # moving the page.
         if self._keyboard() is None:
-            # WHY: acs() calls this with no keyboard up, where dismissKeyboard only errors.
+            # WHY: acs() calls this with no keyboard up, where dismissKeyboard only
+            # errors.
             return True
         try:
             self._wda("POST", self._session("/wda/keyboard/dismiss"), {})
@@ -631,14 +661,16 @@ class IosDriver(Driver):
 
     def _paced_keys(self, text: str) -> None:
         """One request per character, at the pace a formatted field can take."""
-        # WHY: bulk keys arrive faster than the SDK reflows a formatted field, which drops characters.
+        # WHY: bulk keys arrive faster than the SDK reflows a formatted field, which
+        # drops characters.
         for character in text:
             self._keys(character)
             self._sleep(KEY_PACING_SECONDS)
 
     def _enter_token_text(self, text: str) -> None:
         """Pastes the token into the token field, up to the read-back."""
-        # WHY: the token goes over ssh stdin, so it is never an argument or on the Mac's disk.
+        # WHY: the token goes over ssh stdin, so it is never an argument or on the
+        # Mac's disk.
         field = self._find(
             TOKEN_FIELD, timeout=SCREEN_TIMEOUT_SECONDS, match=_is_token_field
         )
@@ -648,7 +680,8 @@ class IosDriver(Driver):
             )
             self._tap_node(field)
             self._sleep(PASTE_SETTLE_SECONDS)
-            # WHY: the keyboard the tap raises can scroll the field, so its centre is read again.
+            # WHY: the keyboard the tap raises can scroll the field, so its centre is
+            # read again.
             x, y = self._find(TOKEN_FIELD, timeout=15, match=_is_token_field).centre
             self._wda(
                 "POST",
@@ -658,7 +691,8 @@ class IosDriver(Driver):
             self._sleep(PASTE_SETTLE_SECONDS)
             self.tap_identifier(PASTE_ITEM, timeout=15, match=_is_paste_item)
         finally:
-            # WHY: anything on the simulator can read the pasteboard, so clear it even on failure.
+            # WHY: anything on the simulator can read the pasteboard, so clear it even
+            # on failure.
             self._remote(f"xcrun simctl pbcopy {self._quoted_udid}", stdin=b" ")
         self._sleep(SETTLE_SECONDS)
 
@@ -668,8 +702,10 @@ class IosDriver(Driver):
                     return True
             return None
 
-        # WHY: an empty pasteboard would surface later as a 401 that reads as an SDK bug.
-        # WHY: only presence is checked, since WDA does not promise all 1011 characters back.
+        # WHY: an empty pasteboard would surface later as a 401 that reads as an SDK
+        # bug.
+        # WHY: only presence is checked, since WDA does not promise all 1011
+        # characters back.
         if self._poll(took, TOKEN_READBACK_SECONDS, SETTLE_SECONDS) is None:
             raise DriverError(
                 f"the {TOKEN_FIELD!r} field is still empty after the paste; the "
@@ -683,12 +719,14 @@ class IosDriver(Driver):
 
     def present_token(self, token_path: Path) -> None:
         """Pastes the token and taps the example's Pay, without waiting for a sheet."""
-        # WHY: a refused token never gets a sheet, so paste_token's 60 s wait would be wasted.
+        # WHY: a refused token never gets a sheet, so paste_token's 60 s wait would
+        # be wasted.
         self._enter_token_text(read_token(Path(token_path), verb="paste"))
         self.tap_example_pay()
 
     def tap_example_pay(self) -> None:
-        # WHY: identifier only, so a label match cannot reach a second screen's Pay button.
+        # WHY: identifier only, so a label match cannot reach a second screen's Pay
+        # button.
         self.tap_identifier(EXAMPLE_PAY, identifier_only=True)
 
     def enter_token(self, literal: str) -> None:
@@ -704,7 +742,8 @@ class IosDriver(Driver):
         self._sleep(SETTLE_SECONDS)
 
     def airplane(self, on: bool) -> None:
-        # WHY: cutting the simulator's network needs sudo or the GUI, so this raises instead.
+        # WHY: cutting the simulator's network needs sudo or the GUI, so this raises
+        # instead.
         raise NotImplementedError(
             "airplane mode does not exist on the iOS simulator: it shares the "
             "host's network, and cutting that needs sudo or the GUI"
@@ -719,7 +758,8 @@ class IosDriver(Driver):
     def _wait_foreground(
         self, *, timeout: float = 30, interval: float = POLL_INTERVAL_SECONDS
     ) -> None:
-        # WHY: with timeout=0 this looks once and gives up, so a test reaches the failure branch.
+        # WHY: with timeout=0 this looks once and gives up, so a test reaches the
+        # failure branch.
         deadline = time.monotonic() + timeout
         while True:
             live = time.monotonic() < deadline
@@ -735,7 +775,8 @@ class IosDriver(Driver):
 
     def background(self, seconds: float) -> None:
         """Home screen, wait, then re-activate -- never re-launch."""
-        # WHY: activate keeps the running process; a relaunch would drop the console capture.
+        # WHY: activate keeps the running process; a relaunch would drop the console
+        # capture.
         # WHY: /wda/homescreen takes no session; /wda/apps/activate needs one.
         self._wda("POST", "/wda/homescreen", {})
         self._sleep(BACKGROUND_SETTLE_SECONDS)
@@ -883,8 +924,10 @@ class IosDriver(Driver):
 
     def _toggle_control(self, row: tree.Node) -> tree.Node:
         """Returns the inner switch that toggles a `Toggle` row, or the row itself."""
-        # WHY: SwiftUI exposes a Toggle as two switch nodes, and only the unnamed inner one responds to a tap.
-        # WHY: the inner control's centre is tested, because it can overhang the row's right edge.
+        # WHY: SwiftUI exposes a Toggle as two switch nodes, and only the unnamed
+        # inner one responds to a tap.
+        # WHY: the inner control's centre is tested, because it can overhang the
+        # row's right edge.
         left, top, right, bottom = row.bounds
         inside = [
             n
@@ -898,8 +941,10 @@ class IosDriver(Driver):
 
     def save_card(self, *, timeout: float = 30) -> None:
         """Turns the save-card toggle on if it is off, then checks that it is on."""
-        # WHY: a tap on an on toggle turns it off, so the toggle is tapped only when it is off.
-        # WHY: a numeric pad left up swallows the drag that scroll_to makes, so it is dismissed first.
+        # WHY: a tap on an on toggle turns it off, so the toggle is tapped only when
+        # it is off.
+        # WHY: a numeric pad left up swallows the drag that scroll_to makes, so it is
+        # dismissed first.
         self.dismiss_keyboard(required=False)
         if self._switch(SAVE_CARD) is None:
             raise DriverError(
@@ -985,7 +1030,8 @@ class IosDriver(Driver):
 
     def _picker_rows(self, nodes: list[tree.Node]) -> list[tree.Node]:
         """Returns the picker's full-width buttons, rows first, in composition order."""
-        # WHY: a bin is told from a row by its x position, because its label is translated.
+        # WHY: a bin is told from a row by its x position, because its label is
+        # translated.
         buttons = [
             n
             for n in nodes
@@ -1044,7 +1090,8 @@ class IosDriver(Driver):
         rows_before = len(before)
 
         def is_gone(nodes: list[tree.Node]) -> bool | None:
-            # WHY: the dialog is drawn inside the sheet, so it must be gone before the rows are read.
+            # WHY: the dialog is drawn inside the sheet, so it must be gone before the
+            # rows are read.
             if self._matches_in(nodes, REMOVE_DIALOG, True):
                 return None
             if named:
@@ -1084,7 +1131,8 @@ class IosDriver(Driver):
         settle: float = SCROLL_SETTLE_SECONDS,
     ) -> None:
         self._find(outcome, timeout=timeout)
-        # WHY: an outcome button is in the tree before it is on screen, so it is scrolled to.
+        # WHY: an outcome button is in the tree before it is on screen, so it is
+        # scrolled to.
         # WHY: a keyboard left up swallows the swipes that scroll_to makes.
         self.dismiss_keyboard(settle=settle)
         self._tap_node(self.scroll_to(outcome, max_swipes=max_swipes, settle=settle))
@@ -1095,7 +1143,8 @@ class IosDriver(Driver):
         self.tap_identifier(CANCEL_CONFIRM, timeout=30, identifier_only=True)
 
     def cancel_form(self) -> None:
-        # WHY: both cancel buttons are labelled "Cancel", so only identifiers are matched.
+        # WHY: both cancel buttons are labelled "Cancel", so only identifiers are
+        # matched.
         self.tap_identifier(SHEET_CANCEL, timeout=30, identifier_only=True)
         self._sleep(ALERT_SETTLE_SECONDS)
         self.tap_identifier(CANCEL_CONFIRM, timeout=30, identifier_only=True)
@@ -1141,7 +1190,8 @@ class IosDriver(Driver):
         """Returns one accessibility dump, re-fetched until it parses."""
         if attempts < 1:
             raise ValueError(f"attempts must be at least 1, got {attempts}")
-        # WHY: WDA can answer mid-transition with a truncated body, and that raises ParseError.
+        # WHY: WDA can answer mid-transition with a truncated body, and that raises
+        # ParseError.
         for attempt in range(attempts):
             value = self._wda("GET", "/source").get("value")
             if not isinstance(value, str):
@@ -1165,7 +1215,8 @@ class IosDriver(Driver):
 
     def screenshot(self) -> bytes:
         """Returns a PNG of the simulator screen, or raises if none was captured."""
-        # WHY: this Xcode writes a file named `-` instead of stdout, so the shot goes to a file.
+        # WHY: this Xcode writes a file named `-` instead of stdout, so the shot goes
+        # to a file.
         raw = self._remote(
             f"mkdir -p {REMOTE_DIR}; "
             f"said=$(xcrun simctl io {self._quoted_udid} screenshot {REMOTE_SHOT} "
@@ -1181,7 +1232,8 @@ class IosDriver(Driver):
                 f"the simulator returned no screenshot for {self._udid}: simctl "
                 f"said {(said if marker else raw).strip()[:_EXCERPT]!r}"
             )
-        # WHY: without validate=True, b64decode silently drops characters outside the alphabet.
+        # WHY: without validate=True, b64decode silently drops characters outside
+        # the alphabet.
         try:
             return base64.b64decode(packed, validate=True)
         except (binascii.Error, ValueError) as exc:
@@ -1201,7 +1253,8 @@ class IosDriver(Driver):
             )
         elapsed = max(1, int((datetime.now(timezone.utc) - since).total_seconds()) + 5)
         seconds = min(elapsed, LOG_WINDOW_CAP_SECONDS)
-        # WHY: the size is asked for separately, so an error message is not read as app output.
+        # WHY: the size is asked for separately, so an error message is not read as
+        # app output.
         answer = self._remote(
             f"wc -c < {CONSOLE_LOG} 2>&1; printf '%s\\n' "
             f"{shlex.quote(CONSOLE_SIZE)}; "
@@ -1213,7 +1266,8 @@ class IosDriver(Driver):
         except ValueError:
             grown = False
         if not grown:
-            # WHY: a Flutter app prints on every launch, so no growth means the capture did not attach.
+            # WHY: a Flutter app prints on every launch, so no growth means the capture
+            # did not attach.
             self._check_console()
             raise DriverError(
                 f"the console log has not grown past byte {self._console_from} "
