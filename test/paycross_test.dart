@@ -3,13 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:paycross_flutter/paycross_flutter.dart';
 import 'package:paycross_flutter/src/generated/paycross_api.g.dart' as g;
 
-/// Stands in for the native side. Nothing here compiles a line of Kotlin or
-/// Swift, so these tests verify the contract's *shape* and the Dart facade's
-/// behaviour — not that either platform implementation conforms. Only a real
-/// device or simulator can do that.
-///
-/// Subclasses Pigeon's generated client directly, which is what Pigeon now
-/// recommends over its own deprecated generated test handler.
 class FakeHost extends g.PayCrossHostApi {
   FakeHost({this.result, this.error});
 
@@ -65,9 +58,6 @@ void main() {
       expect(success.hasTransactionReference, isTrue);
     });
 
-    /// The already-complete-session case. Both native SDKs report an empty
-    /// transaction id rather than a null, so the flag exists to make the
-    /// difference checkable instead of merchants comparing to ''.
     test('success with no transaction reference is flagged', () async {
       PayCross.debugHostApi = (FakeHost(
         result: g.PcSuccess(
@@ -81,9 +71,6 @@ void main() {
       expect(result.hasTransactionReference, isFalse);
     });
 
-    /// The token the merchant stores against their customer. It is the only
-    /// place the vault reference reaches Dart -- the sheet that saved the card
-    /// is the native SDK's, and nothing else in this API names it.
     test('success carries the token of a card this payment saved', () async {
       PayCross.debugHostApi = (FakeHost(
         result: g.PcSuccess(
@@ -99,8 +86,6 @@ void main() {
       expect(result.savedCardToken, 'tok_1');
     });
 
-    /// The ordinary case. Saving is asked for at session creation, so most
-    /// payments save nothing and the field must not invent a value.
     test('success saves no card when the session did not ask', () async {
       PayCross.debugHostApi = (FakeHost(
         result: g.PcSuccess(
@@ -120,9 +105,6 @@ void main() {
       expect(await PayCross.presentPayment('token'), isA<PayCrossCancelled>());
     });
 
-    /// Dismissing the sheet does not cancel the authorization, so a shopper who
-    /// walks away after a decline leaves a transaction the host has to be able
-    /// to name.
     test('a cancellation carries the attempt it walked away from', () async {
       PayCross.debugHostApi = (FakeHost(
         result: g.PcCancelled(transactionId: 'txn_9'),
@@ -143,9 +125,6 @@ void main() {
       expect(result.transactionId, isNull);
     });
 
-    /// The outcome that can charge a shopper twice. It is its own result case
-    /// rather than a decline, so an exhaustive switch cannot fall into the
-    /// "declined, offer a retry" branch with it.
     test('a pending outcome maps to PayCrossPending with its reason', () async {
       PayCross.debugHostApi = (FakeHost(
         result: g.PcPending(transactionId: 'txn_1', reason: 'poll_timeout'),
@@ -159,8 +138,6 @@ void main() {
       expect(pending.transactionId, 'txn_1');
     });
 
-    /// Same reason recovery crosses as a string: a reason added to the wire
-    /// vocabulary later must not be rewritten into one this version knows.
     test('an unknown pending reason is preserved as unrecognized', () async {
       PayCross.debugHostApi = (FakeHost(
         result: g.PcPending(transactionId: 'txn_1', reason: 'later_value'),
@@ -172,10 +149,6 @@ void main() {
       expect(pending.reasonRaw, 'later_value');
     });
 
-    /// Defensive. Both native SDKs send this outcome as a pending result from
-    /// 0.4.0 / 0.5.0, but a merchant can be running an older native SDK behind
-    /// a newer plugin, and this is the one recovery where reading a decline
-    /// instead of an unknown outcome ends in a double charge.
     test('a failure whose raw recovery is verify_before_retry is pending, not '
         'a decline', () async {
       PayCross.debugHostApi = (FakeHost(
@@ -194,8 +167,6 @@ void main() {
       expect(pending.reasonRaw, 'verify_before_retry');
     });
 
-    /// reasonRaw is what arrived, not what the plugin decided it meant. The
-    /// parse normalises; the record of the server's own spelling does not.
     test(
       'a pending outcome mapped from a failure keeps the server spelling',
       () async {
@@ -214,10 +185,6 @@ void main() {
       },
     );
 
-    /// A lost result is not an integration mistake: the payment may have been
-    /// authorized. It returns as a value so the merchant's own switch has to
-    /// decide what to do about it, instead of landing in a catch block that
-    /// most integrations write once and forget.
     test('a lost result is a pending outcome, not an exception', () async {
       PayCross.debugHostApi = (FakeHost(
         error: PlatformException(
@@ -237,9 +204,6 @@ void main() {
   });
 
   group('pending reason parsing', () {
-    /// The wire vocabulary, agreed verbatim with both native SDKs. Renaming a
-    /// value here is a wire break, not a rename, so it is pinned by a test
-    /// rather than only by the enum's own spelling.
     test('the three wire names map to their cases', () {
       expect(
         PayCrossPendingReason.fromWireName('poll_timeout'),
@@ -262,8 +226,6 @@ void main() {
       );
     });
 
-    /// Unlike recovery, an absent reason has no safe default to fall back on:
-    /// there is no "the server said nothing" reading of an unknown outcome.
     test('anything else is unrecognized', () {
       expect(
         PayCrossPendingReason.fromWireName('later_value'),
@@ -281,10 +243,6 @@ void main() {
   });
 
   group('recovery parsing', () {
-    /// Round-trips the token through the platform channel, which is what a
-    /// merchant actually sees. `verify_before_retry` cannot be read this way
-    /// any more — it maps to `PayCrossPending`, not to a failure — so that one
-    /// token is parsed directly below.
     Future<PayCrossRecovery> parse(String raw) async {
       PayCross.debugHostApi = (FakeHost(
         result: g.PcFailure(transactionId: 'txn_1', recovery: raw),
@@ -304,10 +262,6 @@ void main() {
       );
     });
 
-    /// The parser still knows the token, and still refuses to call it
-    /// retryable. What changed is where it lands: a result carrying it is a
-    /// pending outcome now, so no merchant reaches this case through
-    /// `presentPayment`. The rule is kept because the parser is public API.
     test('verify_before_retry is known, and is not retryable', () {
       final recovery = PayCrossRecovery.fromApiValue('verify_before_retry');
 
@@ -329,9 +283,6 @@ void main() {
       expect(await parse('  CHANGE_METHOD '), isA<RecoveryChangeMethod>());
     });
 
-    /// The reason recovery crosses as a string rather than a Pigeon enum. A
-    /// closed enum would have rewritten this to something wrong; instead the
-    /// raw value survives for telemetry and is not retryable.
     test('an unknown token is preserved and is not retryable', () async {
       final recovery = await parse('issuer_wants_a_phone_call');
       expect(recovery, isA<RecoveryUnrecognized>());
@@ -395,9 +346,6 @@ void main() {
   });
 
   group('configure', () {
-    /// Its own code, not `notConfigured`: configure *was* called here, and
-    /// reusing the "never called" code sent merchants looking for a missing
-    /// call that is right in front of them.
     test('a test card prefill is refused in production', () async {
       PayCross.debugHostApi = FakeHost();
 
@@ -418,10 +366,6 @@ void main() {
       );
     });
 
-    /// A PAN in a crash report is the failure mode this guard exists to
-    /// prevent, so the refusal it throws must not carry one either — not the
-    /// full number, not the last four, not the CVV. Both the raw message and
-    /// toString() are checked, since either can reach a log.
     test('the production-prefill refusal leaks no card data', () async {
       PayCross.debugHostApi = FakeHost();
 
@@ -466,9 +410,6 @@ void main() {
       expect(host.lastConfiguration?.testCardPrefill?.pan, '4111111111111111');
     });
 
-    /// Google requires the merchant id in `merchantInfo` for production Google
-    /// Pay requests. Losing it between Dart and the native SDK is invisible in
-    /// sandbox and breaks the wallet only once the merchant goes live.
     test('a Google Pay merchant id reaches the platform', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -481,8 +422,6 @@ void main() {
       expect(host.lastConfiguration?.googlePayMerchantId, 'BCR2DN4T2ABCDEFG');
     });
 
-    /// Null is what "not configured" means: the native SDK adds `merchantId` to
-    /// `merchantInfo` only when a non-blank id is present.
     test('an absent Google Pay merchant id crosses as null', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -492,11 +431,6 @@ void main() {
       expect(host.lastConfiguration?.googlePayMerchantId, isNull);
     });
 
-    /// Apple's key derivation hashes this string into every payment token's
-    /// key, so losing it between Dart and the native SDK does not produce a
-    /// missing-field error anywhere: the edge reads the payment as a web
-    /// token, the vault derives the wrong key, and the shopper sees a generic
-    /// decline.
     test('an Apple Pay merchant id reaches the platform', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -512,8 +446,6 @@ void main() {
       );
     });
 
-    /// Null is what "not configured" means, and the native SDK renders no
-    /// button at all for it.
     test('an absent Apple Pay merchant id crosses as null', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -523,9 +455,6 @@ void main() {
       expect(host.lastConfiguration?.applePayMerchantId, isNull);
     });
 
-    /// Two wallets, two platforms, one call. Setting either must not disturb
-    /// the other -- a merchant with Google Pay on Android and Apple Pay on iOS
-    /// configures both in the same place, and the demo app is one.
     test('the two wallet ids are independent', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -543,10 +472,6 @@ void main() {
       expect(host.lastConfiguration?.applePayMerchantId, isNull);
     });
 
-    /// Unchanged, not normalised. The native SDK treats an empty identifier as
-    /// unconfigured and refuses to build a token with one; a plugin that
-    /// quietly turned '' into null would be a second opinion about the same
-    /// question, in a layer that has no way to be right.
     test('an empty Apple Pay merchant id crosses unchanged', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -559,9 +484,6 @@ void main() {
       expect(host.lastConfiguration?.applePayMerchantId, '');
     });
 
-    /// The whole point of the parameter: a merchant whose app already knows
-    /// the shopper reads French pins the sheet to it, and the tag has to
-    /// survive the crossing to be the first rung of either native's ladder.
     test('a locale reaches the platform', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -574,10 +496,6 @@ void main() {
       expect(host.lastConfiguration?.locale, 'fr');
     });
 
-    /// Null is the ladder's first rung being empty, not a request for
-    /// English: the session's own locale is consulted next, and only then the
-    /// device. A plugin that sent 'en' here would take both of those away
-    /// from every merchant who set nothing.
     test('an absent locale crosses as null', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -587,10 +505,6 @@ void main() {
       expect(host.lastConfiguration?.locale, isNull);
     });
 
-    /// Unchanged, not corrected and not rejected. Both native SDKs skip a tag
-    /// that is not shaped like one and move to the next candidate, so a typo
-    /// costs a merchant nothing — and a plugin that threw on it would turn a
-    /// harmless mistake into a crash the natives were built not to have.
     test('a malformed tag crosses unchanged', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -604,10 +518,6 @@ void main() {
       }
     });
 
-    /// Not lower-cased and not hyphen-normalised here either. Both natives
-    /// already accept `FR_ca` and read `_` as `-`; doing it again in Dart
-    /// would be a second normaliser that only has to disagree once to send a
-    /// shopper a language nobody chose.
     test('a locale is not normalised on the way across', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -620,9 +530,6 @@ void main() {
       expect(host.lastConfiguration?.locale, 'FR_ca');
     });
 
-    /// The locale is not part of the appearance and must not travel with it.
-    /// A merchant themes the sheet in one release and pins its language in
-    /// another, and either half arriving on its own is the ordinary case.
     test('a locale and an appearance are independent', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -642,8 +549,6 @@ void main() {
       expect(host.lastConfiguration?.locale, 'fr');
     });
 
-    /// The production guard is about test card prefill and nothing else. A
-    /// production Apple Pay configuration is the normal case, not an error.
     test('a production Apple Pay configuration is allowed', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -660,7 +565,6 @@ void main() {
       expect(host.lastConfiguration?.environment, g.PcEnvironment.production);
     });
 
-    /// A PAN must not be reachable through a log line or a crash report.
     test('the prefill redacts itself', () {
       const prefill = PayCrossTestCardPrefill(
         pan: '4111111111111111',
@@ -670,13 +574,6 @@ void main() {
       expect(prefill.toString(), isNot(contains('123')));
     });
 
-    /// Every role, every shape, every button override and the scale, in one
-    /// call: the wire is the whole contract, and a field that silently stops
-    /// crossing is invisible until a merchant's sheet is the wrong colour.
-    ///
-    /// The colours are deliberately not all opaque. Alpha is the top byte of
-    /// the packed value, so a packing that dropped or reordered it would still
-    /// look right for every 0xFF colour anybody tests by hand.
     test('every appearance field crosses', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -766,9 +663,6 @@ void main() {
       expect(crossed.typography?.sizeScaleFactor, 1.1);
     });
 
-    /// A role nobody set must arrive as a real null rather than as a zero:
-    /// 0x00000000 is transparent black, a legal colour, and the natives read
-    /// null as "keep the platform default".
     test('unset roles cross as null, not as zero', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -790,8 +684,6 @@ void main() {
       expect(crossed.typography, isNull);
     });
 
-    /// The whole migration path off the deprecated brandColorArgb: one colour,
-    /// both modes, platform defaults for everything else.
     test('the brand factory fills both palettes', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -808,10 +700,6 @@ void main() {
       expect(crossed.dark?.surface, isNull);
     });
 
-    /// Pigeon has no field defaults, so a themeMode the merchant never named
-    /// has to be written by the Dart wrapper. Without this the natives would
-    /// receive whatever the generated code initialises, and "follow the
-    /// device" would stop being the default the moment anyone set a colour.
     test('themeMode defaults to system on the wire', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -827,9 +715,6 @@ void main() {
       );
     });
 
-    /// The deprecated parameter still works for a whole minor release. A
-    /// merchant who has not migrated must not lose their brand colour to the
-    /// deprecation.
     test('brandColorArgb alone still crosses', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -843,10 +728,6 @@ void main() {
       expect(host.lastConfiguration?.appearance, isNull);
     });
 
-    /// Both set, and the appearance has an opinion about the brand: the newer,
-    /// richer parameter wins. The old one is sent as null rather than
-    /// alongside, so neither native has to hold a second opinion about which
-    /// colour is the brand.
     test(
       'appearance wins over brandColorArgb, which crosses as null',
       () async {
@@ -864,11 +745,6 @@ void main() {
       },
     );
 
-    /// The half-finished migration, and the case that used to lose a colour: a
-    /// merchant adds two corner radii to a `configure` call that still passes
-    /// `brandColorArgb`, and the appearance wins with nothing to say about the
-    /// brand. Dropping it there would take the merchant's brand colour away as
-    /// the reward for adopting the new API.
     test(
       'a brandColorArgb merges into an appearance that names no brand',
       () async {
@@ -887,18 +763,11 @@ void main() {
         final crossed = host.lastConfiguration!.appearance!;
         expect(crossed.light?.brand, 0xFF6750A4);
         expect(crossed.dark?.brand, 0xFF6750A4);
-        // Still not sent alongside: the colour is inside the appearance now, and
-        // two brand colours on the wire is the thing this avoids.
         expect(host.lastConfiguration?.brandColorArgb, isNull);
-        // Merged, not replaced. What the appearance did say survives.
         expect(crossed.shapes?.cornerRadius, 16);
       },
     );
 
-    /// A palette that already names a brand is an opinion, and the merge must
-    /// not overwrite it. One palette naming one is enough: a merchant who set
-    /// a light brand and left dark to the platform chose that, and filling
-    /// dark from the legacy value would be inventing a decision.
     test('a palette that names a brand is left alone', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -918,9 +787,6 @@ void main() {
       expect(host.lastConfiguration?.brandColorArgb, isNull);
     });
 
-    /// The merge fills the brand and nothing else. An `onBrand` the merchant
-    /// left null still has to reach the natives as null, because deriving it
-    /// from the brand's own luminance is their job and not this package's.
     test('the merge fills brand only', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -941,9 +807,6 @@ void main() {
       expect(light.text, isNull);
     });
 
-    /// copyWith keeps what it is not given. The merge above is built on it, so
-    /// a copyWith that quietly cleared a role would take the rest of the
-    /// palette with it.
     test('copyWith replaces only what it is given', () {
       const original = PayCrossColors(
         brand: Color(0xFF6750A4),
@@ -965,8 +828,6 @@ void main() {
       expect(wider.shapes?.cornerRadius, 16);
     });
 
-    /// The question the merge asks, pinned on its own so a change to it fails
-    /// here rather than as a colour nobody can explain.
     test('hasBrand is true when either palette names one', () {
       expect(const PayCrossAppearance().hasBrand, isFalse);
       expect(
@@ -995,10 +856,6 @@ void main() {
       );
     });
 
-    /// Refused in Dart, before anything crosses. Both natives clamp too, for
-    /// callers that reach them directly, but a clamp is a silent correction:
-    /// a Flutter merchant who typed 3.0 wanted something the sheet will never
-    /// do, and should be told rather than quietly given 1.3.
     test('a size scale outside 0.8-1.3 is refused before it crosses', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -1032,8 +889,6 @@ void main() {
       expect(host.lastConfiguration, isNull);
     });
 
-    /// The bounds themselves are legal. A test that only proved the refusal
-    /// would pass just as well against a wrapper that refused everything.
     test('the size scale bounds are accepted', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);
@@ -1052,9 +907,6 @@ void main() {
       }
     });
 
-    /// A negative radius is not a style, it is a mistake, and a native that
-    /// took one would draw nothing or crash a layout pass deep inside the
-    /// sheet where the message names none of this.
     test(
       'a negative or non-finite length is refused before it crosses',
       () async {
@@ -1101,8 +953,6 @@ void main() {
       },
     );
 
-    /// Zero is a real value for all three: a zero radius is a square corner
-    /// and a zero border width is no border. Only negatives are the mistake.
     test('zero lengths are accepted', () async {
       final host = FakeHost();
       PayCross.debugHostApi = (host);

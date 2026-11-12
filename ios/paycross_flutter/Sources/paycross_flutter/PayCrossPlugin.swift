@@ -4,14 +4,8 @@ import PayCross
 import PayCrossCore
 import UIKit
 
-/// Bridges the Flutter surface onto the native iOS SDK.
-///
-/// The native SDK owns its own sheet, card form and 3DS web views. This class
-/// presents it, waits, and translates one result back. It holds no payment
-/// logic: anything it reimplemented would be a second, divergent copy of
-/// behaviour the SDK is already tested for.
+/// Flutter plugin that bridges the Dart API onto the native iOS SDK.
 public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
-
     public static func register(with registrar: FlutterPluginRegistrar) {
         PayCrossHostApiSetup.setUp(
             binaryMessenger: registrar.messenger(),
@@ -21,9 +15,6 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
 
     public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
         PayCrossHostApiSetup.setUp(binaryMessenger: registrar.messenger(), api: nil)
-        // A payment sheet may still be on screen. Nothing can route its result
-        // anywhere now, so say so rather than leaving the caller waiting on a
-        // Future that can never complete. Mirrors Android's onDetachedFromEngine.
         Self.finishPending(.failure(Self.error(
             Self.errorResultUnknown,
             "The Flutter engine detached while a payment was in flight. "
@@ -66,18 +57,8 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
             ))
         }
 
-        // Process-wide, matching Android. Two engines in an add-to-app host get
-        // two plugin instances but share one window, so an instance-scoped flag
-        // would let the second stack a sheet on the first.
-        //
-        // Claimed atomically rather than checked-then-set: the check ran on the
-        // channel thread while the set ran on the main actor, so two calls in
-        // quick succession could both pass a plain guard and present twice.
-        //
-        // The completion is retained in the claim so detachFromEngine can still
-        // complete it. From here on the payment finishes only through
-        // finishPending, which is what makes exactly-once hold between the
-        // sheet's own result and an engine detach racing it.
+        // WHY: the slot is process-wide and claimed atomically, because a check-then-set can present twice.
+        // WHY: the completion is retained in the claim, so finishPending is the only way the call completes.
         guard Self.state.beginPresenting(completion) else {
             return completion(.failure(Self.error(Self.errorBusy, "A payment is already in flight.")))
         }
@@ -89,9 +70,7 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
                 ))
             }
 
-            // Re-applied rather than assumed: a hot restart leaves the Dart side
-            // believing it configured an SDK whose process state was reset, and
-            // PaymentSheet.present traps on a missing configuration in debug.
+            // WHY: PaymentSheet.present traps in debug without a configuration, so it is re-applied on every call.
             Self.apply(configuration)
 
             let result = await PaymentSheet(sessionToken: sessionToken).present(from: presenter)
@@ -99,19 +78,13 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
         }
     }
 
-    /// Completes the outstanding call exactly once, clearing the slot first.
     private static func finishPending(_ result: Result<PcPaymentResult, Error>) {
         state.takePending()?(result)
     }
 
     // MARK: - Presentation
 
-    /// Walks to the view controller actually on screen.
-    ///
-    /// Flutter has no UIViewController of its own to hand out, and the merchant's
-    /// hierarchy is not ours to assume: an add-to-app host may have the Flutter
-    /// view buried, and a sheet presented from the wrong controller either does
-    /// not appear or appears behind what the shopper is looking at.
+    // WHY: An add-to-app host may bury the Flutter view, so the sheet must come from the topmost controller.
     @MainActor
     private static func topmostViewController() -> UIViewController? {
         let scene = UIApplication.shared.connectedScenes
@@ -132,10 +105,6 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
 
     // MARK: - State
 
-    // Static, for the same reason Android's is: per-instance state is wrong when
-    // instances are per-engine and the window is not. Behind a lock because the
-    // reads happen on the platform-channel thread and the writes on the main
-    // actor -- which is precisely what Swift 6 refuses to let us assume away.
     private static let state = PluginState()
 
     private static let pluginVersion = "0.7.4"
@@ -156,18 +125,14 @@ public class PayCrossPlugin: NSObject, FlutterPlugin, PayCrossHostApi {
             testCardPrefill: configuration.testCardPrefill?.toNative(),
             applePayMerchantIdentifier: configuration.applePayMerchantId,
             appearance: configuration.appearance?.toNative()
-                // The deprecated parameter's whole remaining life on iOS. Dart
-                // sends it as null whenever an appearance is given, so the two
-                // cannot both arrive and this coalesce cannot pick wrong.
+                // WHY: Dart sends the deprecated brand colour only when no appearance is given.
                 ?? configuration.brandColorArgb.map {
                     .brand(PayCrossColor(argb: UInt32(truncatingIfNeeded: $0)))
                 },
-            // Straight through. The SDK owns the resolution ladder and skips a
-            // malformed tag; see its LOCALIZATION.md.
+            // WHY: The SDK resolves the locale itself and skips a malformed tag.
             locale: configuration.locale
         )
-        // googlePayMerchantId is deliberately ignored: Google Pay's in-app API is
-        // Android and web only, so there is no iOS wallet for it to configure.
+        // WHY: Google Pay's in-app API is Android and web only, so googlePayMerchantId has no iOS effect.
     }
 }
 
@@ -195,15 +160,9 @@ private extension PcTestCardPrefill {
     }
 }
 
-/// Every colour crosses as an unsigned packed ARGB in an Int64.
-///
-/// `truncatingIfNeeded` rather than an exact conversion, and that is a safety
-/// choice rather than a style one: an exact `UInt32(_:)` traps at runtime on
-/// anything outside 0...0xFFFFFFFF, and a channel is not a place to take a
-/// trap. The truncation is the same one Android's `toInt()` performs, so one
-/// number means one colour on both platforms.
 private extension Int64 {
     var asPayCrossColor: PayCrossColor {
+        // WHY: Truncates like Android's toInt(); an exact UInt32(_:) traps outside 0...0xFFFFFFFF.
         PayCrossColor(argb: UInt32(truncatingIfNeeded: self))
     }
 }
@@ -250,8 +209,7 @@ private extension PcPrimaryButton {
 
 private extension PcTypography {
     func toNative() -> PayCrossTypography {
-        // Already refused outside 0.8...1.3 by the Dart facade. The SDK clamps
-        // as well, for callers that reach it without going through Dart.
+        // WHY: The Dart facade already limits the scale to 0.8...1.3; the SDK clamps it too.
         PayCrossTypography(sizeScaleFactor: sizeScaleFactor)
     }
 }
@@ -266,15 +224,10 @@ private extension PcThemeMode {
     }
 }
 
-// Internal rather than private, like `PaymentResult.toPigeon()` above it and
-// unlike the per-struct mappings it calls: this is the one entry point
-// RunnerTests reaches, and `@testable import` sees internal but not private.
+// WHY: Internal, not private: RunnerTests reaches this through @testable import.
 extension PcAppearance {
     func toNative() -> PayCrossAppearance {
-        // The SDK's own sub-structs are non-optional and empty by default, and
-        // an empty one means exactly what a null here means: every role in it
-        // falls through to the back-office brand colour and then to the
-        // platform. So the substitution changes nothing the sheet draws.
+        // WHY: An empty SDK sub-struct draws the same as null, so the ?? defaults change nothing.
         PayCrossAppearance(
             light: light?.toNative() ?? PayCrossColors(),
             dark: dark?.toNative() ?? PayCrossColors(),
@@ -303,21 +256,15 @@ extension PaymentResult {
         case let .failed(transactionID, recovery):
             return PcFailure(
                 transactionId: transactionID,
-                // The wire token, not the case name. Dart re-parses it with the
-                // same rules, and `.unrecognized` round-trips the server's own
-                // string rather than collapsing to a known case.
+                // WHY: The wire token, not the case name: .unrecognized keeps the server's own string.
                 recovery: recovery.apiValue
             )
 
         case let .pending(transactionID, reason):
-            // Its own case, not a `.failed` with a verify-before-retry
-            // recovery. That reading is what made the one outcome that can
-            // charge a shopper twice arrive in Dart looking like a decline.
+            // WHY: Pending has its own case; as a failure it would read as a decline in Dart.
             return PcPending(
                 transactionId: transactionID,
-                // The enum's raw value is the wire vocabulary itself, agreed
-                // verbatim with the Android SDK, so there is no second
-                // spelling here to drift from it.
+                // WHY: The raw value is the wire vocabulary shared verbatim with the Android SDK.
                 reason: reason.rawValue
             )
 
@@ -343,10 +290,7 @@ extension Recovery {
 
 // MARK: - Shared state
 
-/// Process-wide plugin state, serialised by a lock.
-///
-/// `@unchecked Sendable` is the honest annotation here: safety comes from the
-/// lock, which the compiler cannot verify, rather than from the type system.
+// WHY: @unchecked Sendable: the lock keeps this safe, which the compiler cannot verify.
 private final class PluginState: @unchecked Sendable {
     private let lock = NSLock()
     private var storedConfiguration: PcConfiguration?
@@ -359,9 +303,6 @@ private final class PluginState: @unchecked Sendable {
 
     var isPresenting: Bool { lock.withLock { pending != nil } }
 
-    /// Claims the presentation slot and retains the caller's completion,
-    /// returning false if the slot was already taken. Test and set are one
-    /// critical section so two callers cannot both win.
     func beginPresenting(_ completion: @escaping (Result<PcPaymentResult, Error>) -> Void) -> Bool {
         lock.withLock {
             if pending != nil { return false }
@@ -370,8 +311,6 @@ private final class PluginState: @unchecked Sendable {
         }
     }
 
-    /// Releases the slot and hands back the retained completion, or nil if
-    /// something else already finished this payment.
     func takePending() -> ((Result<PcPaymentResult, Error>) -> Void)? {
         lock.withLock {
             defer { pending = nil }
