@@ -1,0 +1,27 @@
+name: SBOM
+
+# CycloneDX SBOM of the lock files to Dependency-Track (GitHub OIDC, no stored key).
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: SBOM to Dependency-Track
+        continue-on-error: true
+        uses: paycross/github-actions/sbom-action@v1
+        with:
+          project-name: paycross/paycross-flutter
+          scan-ref: .
+          scan-type: fs
