@@ -1,6 +1,7 @@
 name: SBOM
 
 # CycloneDX SBOM of the lock files to Dependency-Track (GitHub OIDC, no stored key).
+# Inline on purpose: this repository is public and cannot use the private paycross/github-actions.
 on:
   push:
     branches:
@@ -18,10 +19,54 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Generate SBOM
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          format: cyclonedx
+          scan-ref: .
+          output: sbom.json
+          scan-type: fs
+          version: v0.76.2
+
       - name: SBOM to Dependency-Track
         continue-on-error: true
-        uses: paycross/github-actions/sbom-action@v1
-        with:
-          project-name: paycross/paycross-flutter
-          scan-ref: .
-          scan-type: fs
+        timeout-minutes: 5
+        env:
+          DT_URL: https://sbom.advailo.cloud
+          PROJECT: paycross-flutter
+        run: |
+          # GitHub OIDC token -> session of Dependency-Track service account github-ci-paycross (no stored key)
+          [ -s sbom.json ] || { echo "::warning::no SBOM generated"; exit 0; }
+          VERSION="$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
+          OIDC=$(curl -sf --max-time 60 -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${DT_URL}" | jq -r .value)
+          echo "::add-mask::${OIDC}"
+          for TRY in 1 2 3; do
+            CODE=$(curl -s --max-time 60 -o exchange.json -w "%{http_code}" -X POST -H "User-Agent: Advailo SBOM" \
+              -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+              -d "subject_token_type=urn:ietf:params:oauth:token-type:jwt" \
+              -d "subject_token=${OIDC}" \
+              -d "workload_identity_provider=github-actions" \
+              -d "service_account=github-ci-paycross" \
+              "${DT_URL}/api/v2/oauth/token")
+            SESSION=$(jq -r '.access_token // empty' exchange.json 2>/dev/null || true)
+            [ -n "${SESSION}" ] && break
+            echo "token exchange attempt $TRY: HTTP $CODE $(head -c 120 exchange.json | tr -d '\n')"
+            sleep 5
+          done
+          rm -f exchange.json
+          [ -n "${SESSION}" ] || { echo "::warning::Dependency-Track token exchange failed — SBOM not uploaded"; exit 0; }
+          echo "::add-mask::${SESSION}"
+          AUTH="Authorization: Bearer ${SESSION}"
+          # Versionless parent project (created when missing, 409 = already there)
+          GROUP=""
+          BODY=$(jq -cn --arg name "$PROJECT" --arg group "$GROUP" '{name: $name, classifier: "APPLICATION", active: true} + (if $group != "" then {parent: {uuid: $group}} else {} end)')
+          PARENT=$(curl -s --max-time 60 -o /dev/null -w "%{http_code}" -X PUT -H "${AUTH}" -H "User-Agent: Advailo SBOM" -H "Content-Type: application/json" -d "$BODY" "${DT_URL}/api/v1/project")
+          echo "parent project ${PROJECT}: HTTP ${PARENT} (201 created, 409 exists)"
+          STATUS=$(curl -s --max-time 60 -o /dev/null -w "%{http_code}" -X POST -H "${AUTH}" -H "User-Agent: Advailo SBOM" \
+            -F "autoCreate=true" -F "projectName=${PROJECT}" -F "projectVersion=${VERSION}" \
+            -F "parentName=${PROJECT}" -F "isLatest=true" -F "bom=@sbom.json;type=application/json" --max-time 180 \
+            "${DT_URL}/api/v1/bom")
+          echo "BOM upload status: $STATUS"
+          [ "$STATUS" -lt 400 ] || echo "::warning::SBOM upload failed with status $STATUS — not blocking the pipeline"
