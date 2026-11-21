@@ -34,7 +34,7 @@ jobs:
         timeout-minutes: 5
         env:
           DT_URL: https://sbom.advailo.cloud
-          PROJECT: paycross/paycross-flutter
+          PROJECT: paycross-flutter
         run: |
           # GitHub OIDC token -> session of Dependency-Track service account github-ci-paycross (no stored key)
           [ -s sbom.json ] || { echo "::warning::no SBOM generated"; exit 0; }
